@@ -124,6 +124,20 @@ func (rb *RedisBackend) GetTopicStats(topic string) (int64, error) {
 	return length.Val(), nil
 }
 
+// AcknowledgeMessages acknowledges processed messages
+// For Redis lists, this is a no-op since messages are consumed immediately
+// In a production environment, you might want to use Redis Streams for proper acknowledgment
+func (rb *RedisBackend) AcknowledgeMessages(consumerID string, messageIDs []string) ([]string, []string, error) {
+	// For Redis lists (LPUSH/BRPOP), messages are consumed immediately
+	// so acknowledgment is implicit. All messages are considered acknowledged.
+	acked := make([]string, len(messageIDs))
+	copy(acked, messageIDs)
+	var failed []string // empty slice
+
+	logging.Debugf("Acknowledged %d messages for consumer %s (Redis lists - implicit acknowledgment)", len(messageIDs), consumerID)
+	return acked, failed, nil
+}
+
 // Close closes the Redis connection
 func (rb *RedisBackend) Close() error {
 	return rb.client.Close()

@@ -64,8 +64,8 @@ func (mqs *MessageQueueService) ConsumeTelemetry(consumerGroup, consumerID strin
 }
 
 // AcknowledgeMessages acknowledges processed messages
-func (mqs *MessageQueueService) AcknowledgeMessages(consumerID string, messageIDs []string) error {
-	acked, failed, err := mqs.queue.Acknowledge(consumerID, messageIDs)
+func (mqs *MessageQueueService) AcknowledgeMessages(consumerGroup string, messages []*Message) error {
+	acked, failed, err := mqs.queue.Acknowledge(consumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 		return err

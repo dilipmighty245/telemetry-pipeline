@@ -299,7 +299,7 @@ func (cs *CollectorService) collectBatch() error {
 	cs.addToBuffer(telemetryData)
 
 	// Acknowledge processed messages
-	err = cs.messageQueue.AcknowledgeMessages(cs.config.CollectorID, messageIDs)
+	err = cs.messageQueue.AcknowledgeMessages(cs.config.ConsumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 		// Don't return error here as data is already collected

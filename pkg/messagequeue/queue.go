@@ -3,6 +3,7 @@ package messagequeue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,11 +22,36 @@ type Message struct {
 	ID        string            `json:"id"`
 	Topic     string            `json:"topic"`
 	Payload   []byte            `json:"payload"`
+	Timestamp time.Time         `json:"timestamp"`
 	CreatedAt time.Time         `json:"created_at"`
 	ExpiresAt time.Time         `json:"expires_at"`
 	Headers   map[string]string `json:"headers"`
 	Processed bool              `json:"processed"`
 	Retries   int               `json:"retries"`
+
+	// Redis Streams specific fields
+	StreamID  string `json:"stream_id,omitempty"`  // Redis Stream message ID
+	StreamKey string `json:"stream_key,omitempty"` // Redis Stream key
+}
+
+// HeadersJSON returns headers as JSON string for Redis storage
+func (m *Message) HeadersJSON() string {
+	if len(m.Headers) == 0 {
+		return "{}"
+	}
+
+	// Simple JSON serialization for headers
+	result := "{"
+	first := true
+	for k, v := range m.Headers {
+		if !first {
+			result += ","
+		}
+		result += fmt.Sprintf(`"%s":"%s"`, k, v)
+		first = false
+	}
+	result += "}"
+	return result
 }
 
 // Topic represents a message topic/queue
@@ -48,12 +74,13 @@ type Consumer struct {
 	mu           sync.RWMutex
 }
 
-// MessageQueue represents the message queue (in-memory or Redis-backed)
+// MessageQueue represents the message queue (in-memory or Redis Streams-backed)
 type MessageQueue struct {
-	topics       map[string]*Topic
-	mu           sync.RWMutex
-	stats        *QueueStats
-	redisBackend *RedisBackend // Optional Redis backend
+	topics              map[string]*Topic
+	mu                  sync.RWMutex
+	stats               *QueueStats
+	redisBackend        *RedisBackend        // Legacy Redis lists backend (deprecated)
+	redisStreamsBackend *RedisStreamsBackend // New Redis Streams backend for production
 }
 
 // QueueStats represents queue statistics
@@ -85,14 +112,23 @@ func NewMessageQueue() *MessageQueue {
 		},
 	}
 
-	// Try to initialize Redis backend if available
-	logging.Infof("Attempting to initialize Redis backend...")
-	redisBackend, err := NewRedisBackend()
+	// Try to initialize Redis Streams backend first (production-grade)
+	logging.Infof("Attempting to initialize Redis Streams backend...")
+	redisStreamsBackend, err := NewRedisStreamsBackend()
 	if err != nil {
-		logging.Infof("Redis backend not available, using in-memory queue: %v", err)
+		logging.Infof("Redis Streams backend not available, trying legacy Redis backend: %v", err)
+
+		// Fall back to legacy Redis backend
+		redisBackend, err := NewRedisBackend()
+		if err != nil {
+			logging.Infof("Redis backend not available, using in-memory queue: %v", err)
+		} else {
+			mq.redisBackend = redisBackend
+			logging.Infof("Successfully initialized legacy Redis-backed message queue")
+		}
 	} else {
-		mq.redisBackend = redisBackend
-		logging.Infof("Successfully initialized Redis-backed message queue")
+		mq.redisStreamsBackend = redisStreamsBackend
+		logging.Infof("Successfully initialized Redis Streams-backed message queue (production-grade)")
 	}
 
 	return mq
@@ -145,6 +181,7 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 		ID:        generateMessageID(),
 		Topic:     topic,
 		Payload:   payload,
+		Timestamp: time.Now(),
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second),
 		Headers:   headers,
@@ -152,7 +189,17 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 		Retries:   0,
 	}
 
-	// Use Redis backend if available
+	// Use Redis Streams backend if available (preferred for production)
+	if mq.redisStreamsBackend != nil {
+		err := mq.redisStreamsBackend.PublishMessage(topic, msg)
+		if err != nil {
+			logging.Errorf("Failed to publish to Redis Streams backend: %v", err)
+			return nil, err
+		}
+		return msg, nil
+	}
+
+	// Fall back to legacy Redis backend
 	if mq.redisBackend != nil {
 		err := mq.redisBackend.PublishMessage(topic, msg)
 		if err != nil {
@@ -191,7 +238,17 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 
 // Consume consumes messages from a topic
 func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
-	// Use Redis backend if available
+	// Use Redis Streams backend if available (preferred for production)
+	if mq.redisStreamsBackend != nil {
+		messages, err := mq.redisStreamsBackend.ConsumeMessages(topic, consumerGroup, consumerID, maxMessages, timeoutSeconds)
+		if err != nil {
+			logging.Errorf("Failed to consume from Redis Streams backend: %v", err)
+			return nil, err
+		}
+		return messages, nil
+	}
+
+	// Fall back to legacy Redis backend
 	if mq.redisBackend != nil {
 		// For Redis, we don't need to check if topic exists - it will return empty if no messages
 		messages, err := mq.redisBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
@@ -250,31 +307,38 @@ func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consu
 }
 
 // Acknowledge acknowledges processed messages
-func (mq *MessageQueue) Acknowledge(consumerID string, messageIDs []string) ([]string, []string, error) {
+func (mq *MessageQueue) Acknowledge(consumerGroup string, messages []*Message) ([]string, []string, error) {
+	// Use Redis Streams backend if available (preferred for production)
+	if mq.redisStreamsBackend != nil {
+		return mq.redisStreamsBackend.AcknowledgeMessages(consumerGroup, messages)
+	}
+
+	// Fall back to legacy Redis backend (convert messages to IDs)
+	if mq.redisBackend != nil {
+		messageIDs := make([]string, len(messages))
+		for i, msg := range messages {
+			messageIDs[i] = msg.ID
+		}
+		return mq.redisBackend.AcknowledgeMessages("", messageIDs) // Legacy doesn't use consumer group
+	}
+
+	// Fall back to in-memory implementation
 	var acked []string
 	var failed []string
 
 	mq.mu.RLock()
 	defer mq.mu.RUnlock()
 
-	for _, msgID := range messageIDs {
+	for _, message := range messages {
 		found := false
 		for _, topic := range mq.topics {
 			topic.mu.Lock()
 			for _, msg := range topic.Messages {
-				if msg.ID == msgID {
+				if msg.ID == message.ID {
 					msg.Processed = true
 					found = true
 
-					// Add to consumer's processed list
-					if consumer, exists := topic.Consumers[consumerID]; exists {
-						consumer.mu.Lock()
-						consumer.ProcessedIDs = append(consumer.ProcessedIDs, msgID)
-						consumer.LastSeen = time.Now()
-						consumer.mu.Unlock()
-					}
-
-					acked = append(acked, msgID)
+					acked = append(acked, message.ID)
 					mq.updateStats(topic.Name, 0, 1, 0, 0)
 					break
 				}
@@ -286,11 +350,11 @@ func (mq *MessageQueue) Acknowledge(consumerID string, messageIDs []string) ([]s
 		}
 
 		if !found {
-			failed = append(failed, msgID)
+			failed = append(failed, message.ID)
 		}
 	}
 
-	logging.Debugf("Consumer %s acknowledged %d messages, failed %d", consumerID, len(acked), len(failed))
+	logging.Debugf("Consumer group %s acknowledged %d messages, failed %d", consumerGroup, len(acked), len(failed))
 	return acked, failed, nil
 }
 

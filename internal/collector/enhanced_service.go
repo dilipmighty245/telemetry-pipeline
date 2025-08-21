@@ -347,7 +347,7 @@ func (ecs *EnhancedCollectorService) collectBatchEnhanced(batchSize int) error {
 	ecs.addToBuffer(telemetryData)
 
 	// Acknowledge processed messages
-	err = ecs.messageQueue.AcknowledgeMessages(ecs.config.CollectorID, messageIDs)
+	err = ecs.messageQueue.AcknowledgeMessages(ecs.config.ConsumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 	}

@@ -127,8 +127,8 @@ func TestAcknowledgeMessages(t *testing.T) {
 	require.Len(t, messages, 3)
 
 	// Acknowledge first two messages
-	messageIDs := []string{messages[0].ID, messages[1].ID}
-	acked, failed, err := mq.Acknowledge("consumer-1", messageIDs)
+	messagesToAck := []*Message{messages[0], messages[1]}
+	acked, failed, err := mq.Acknowledge("test-group", messagesToAck)
 	assert.NoError(t, err)
 	assert.Len(t, acked, 2)
 	assert.Len(t, failed, 0)
