@@ -173,3 +173,131 @@ Create api-gateway image name
 {{- $tag := .Values.apiGateway.image.tag | default .Values.image.tag | default .Chart.AppVersion -}}
 {{- printf "%s/%s:%s" $registry $repository $tag }}
 {{- end }}
+
+{{/*
+Determine Redis host based on configuration
+*/}}
+{{- define "telemetry-pipeline.redisHost" -}}
+{{- if .Values.externalRedis.enabled }}
+{{- .Values.externalRedis.host }}
+{{- else }}
+{{- printf "%s-redis-master" (include "telemetry-pipeline.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Determine Redis port based on configuration
+*/}}
+{{- define "telemetry-pipeline.redisPort" -}}
+{{- if .Values.externalRedis.enabled }}
+{{- .Values.externalRedis.port | toString }}
+{{- else }}
+{{- printf "6379" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create Redis connection URL
+*/}}
+{{- define "telemetry-pipeline.redisURL" -}}
+{{- if .Values.externalRedis.enabled }}
+{{- if .Values.externalRedis.tls.enabled }}
+{{- printf "rediss://%s:%s" (include "telemetry-pipeline.redisHost" .) (include "telemetry-pipeline.redisPort" .) }}
+{{- else }}
+{{- printf "redis://%s:%s" (include "telemetry-pipeline.redisHost" .) (include "telemetry-pipeline.redisPort" .) }}
+{{- end }}
+{{- else }}
+{{- printf "redis://%s:%s" (include "telemetry-pipeline.redisHost" .) (include "telemetry-pipeline.redisPort" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Determine deployment mode
+*/}}
+{{- define "telemetry-pipeline.deploymentMode" -}}
+{{- if and .Values.streamer.enabled .Values.collector.enabled .Values.apiGateway.enabled }}
+{{- printf "same-cluster" }}
+{{- else if and .Values.streamer.enabled (not .Values.collector.enabled) (not .Values.apiGateway.enabled) }}
+{{- printf "edge-cluster" }}
+{{- else if and (not .Values.streamer.enabled) .Values.collector.enabled .Values.apiGateway.enabled }}
+{{- printf "central-cluster" }}
+{{- else }}
+{{- printf "custom" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create deployment mode labels
+*/}}
+{{- define "telemetry-pipeline.deploymentModeLabels" -}}
+deployment-mode: {{ include "telemetry-pipeline.deploymentMode" . }}
+{{- if .Values.externalRedis.enabled }}
+redis-mode: "external"
+{{- else }}
+redis-mode: "embedded"
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+database-mode: "embedded"
+{{- else }}
+database-mode: "external"
+{{- end }}
+{{- end }}
+
+{{/*
+Create environment variables for Redis connection
+*/}}
+{{- define "telemetry-pipeline.redisEnvVars" -}}
+- name: REDIS_URL
+  value: {{ include "telemetry-pipeline.redisURL" . | quote }}
+{{- if .Values.externalRedis.enabled }}
+{{- if .Values.externalRedis.auth.enabled }}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.externalRedis.auth.existingSecret | default (printf "%s-redis-auth" (include "telemetry-pipeline.fullname" .)) }}
+      key: {{ .Values.externalRedis.auth.existingSecretPasswordKey | default "password" }}
+{{- end }}
+{{- if .Values.externalRedis.tls.enabled }}
+- name: REDIS_TLS_ENABLED
+  value: "true"
+{{- if .Values.externalRedis.tls.caCert }}
+- name: REDIS_CA_CERT
+  valueFrom:
+    secretKeyRef:
+      name: {{ printf "%s-redis-ca" (include "telemetry-pipeline.fullname" .) }}
+      key: ca.crt
+{{- end }}
+{{- end }}
+{{- else }}
+{{- if .Values.redis.auth.enabled }}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ printf "%s-redis" (include "telemetry-pipeline.fullname" .) }}
+      key: redis-password
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create environment variables for database connection
+*/}}
+{{- define "telemetry-pipeline.databaseEnvVars" -}}
+- name: DB_HOST
+  value: {{ include "telemetry-pipeline.databaseHost" . | quote }}
+- name: DB_PORT
+  value: {{ include "telemetry-pipeline.databasePort" . | quote }}
+- name: DB_NAME
+  value: {{ include "telemetry-pipeline.databaseName" . | quote }}
+- name: DB_USER
+  value: {{ include "telemetry-pipeline.databaseUsername" . | quote }}
+- name: DB_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "telemetry-pipeline.databaseSecretName" . }}
+      key: {{ include "telemetry-pipeline.databaseSecretPasswordKey" . }}
+{{- if not .Values.postgresql.enabled }}
+- name: DB_SSL_MODE
+  value: {{ .Values.externalDatabase.sslMode | quote }}
+{{- end }}
+{{- end }}

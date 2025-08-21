@@ -1,0 +1,29 @@
+# Example values for CSV data from ConfigMap
+# This configuration loads CSV data from a Kubernetes ConfigMap
+
+# Inherit from base values
+streamer:
+  enabled: true
+  replicaCount: 2
+  
+  config:
+    # CSV Source Configuration - ConfigMap
+    csvSource:
+      type: "configmap"
+      configMapName: "telemetry-csv-data"
+      configMapKey: "telemetry.csv"
+    
+    # Other streamer settings
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+
+# Usage:
+# 1. Create ConfigMap with CSV data:
+#    kubectl create configmap telemetry-csv-data --from-file=telemetry.csv=your_data.csv -n telemetry-system
+#
+# 2. Deploy with this values file:
+#    helm upgrade --install telemetry-pipeline ./deployments/helm/telemetry-pipeline \
+#      --namespace telemetry-system --create-namespace \
+#      --values ./deployments/helm/telemetry-pipeline/values-csv-configmap.yaml

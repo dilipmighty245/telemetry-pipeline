@@ -18,6 +18,7 @@ spec:
       labels:
         {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: streamer
+        {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 8 }}
         {{- with .Values.streamer.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -40,7 +41,16 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           args:
+            {{- $csvSourceType := .Values.streamer.config.csvSource.type | default "embedded" }}
+            {{- if eq $csvSourceType "embedded" }}
             - -csv={{ .Values.streamer.config.csvFile }}
+            {{- else if eq $csvSourceType "configmap" }}
+            - -csv=/csv-data/{{ .Values.streamer.config.csvSource.configMapKey | default "telemetry.csv" }}
+            {{- else if eq $csvSourceType "pvc" }}
+            - -csv={{ .Values.streamer.config.csvSource.mountPath | default "/data" }}/{{ .Values.streamer.config.csvSource.fileName | default "telemetry_data.csv" }}
+            {{- else if eq $csvSourceType "url" }}
+            - -csv=/tmp/downloaded_telemetry.csv
+            {{- end }}
             - -batch-size=$(STREAMER_BATCH_SIZE)
             - -stream-interval=$(STREAMER_STREAM_INTERVAL)
             - -loop=$(STREAMER_LOOP_MODE)
@@ -66,14 +76,75 @@ spec:
                 configMapKeyRef:
                   name: {{ include "telemetry-pipeline.fullname" . }}-config
                   key: streamer-log-level
+            # CSV Source configuration environment variables
+            - name: CSV_SOURCE_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: csv-source-type
+            {{- if eq $csvSourceType "url" }}
+            - name: CSV_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: csv-url
+            - name: CSV_REFRESH_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: csv-refresh-interval
+            {{- end }}
+            {{- include "telemetry-pipeline.redisEnvVars" . | nindent 12 }}
           resources:
             {{- toYaml .Values.streamer.resources | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- $csvSourceType := .Values.streamer.config.csvSource.type | default "embedded" }}
+            {{- if eq $csvSourceType "configmap" }}
+            - name: csv-data
+              mountPath: /csv-data
+              readOnly: true
+            {{- else if eq $csvSourceType "pvc" }}
+            - name: csv-pvc
+              mountPath: {{ .Values.streamer.config.csvSource.mountPath | default "/data" }}
+              readOnly: true
+            {{- end }}
+          {{- if eq $csvSourceType "url" }}
+          initContainers:
+            - name: csv-downloader
+              image: curlimages/curl:latest
+              command: ["/bin/sh"]
+              args:
+                - -c
+                - |
+                  echo "Downloading CSV from $(CSV_URL)..."
+                  curl -L -o /tmp/downloaded_telemetry.csv "$(CSV_URL)"
+                  echo "Download completed. File size: $(wc -c < /tmp/downloaded_telemetry.csv) bytes"
+              env:
+                - name: CSV_URL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: {{ include "telemetry-pipeline.fullname" . }}-config
+                      key: csv-url
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+          {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if eq $csvSourceType "configmap" }}
+        - name: csv-data
+          configMap:
+            name: {{ .Values.streamer.config.csvSource.configMapName }}
+        {{- else if eq $csvSourceType "pvc" }}
+        - name: csv-pvc
+          persistentVolumeClaim:
+            claimName: {{ .Values.streamer.config.csvSource.pvcName }}
+        {{- end }}
       {{- with .Values.streamer.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

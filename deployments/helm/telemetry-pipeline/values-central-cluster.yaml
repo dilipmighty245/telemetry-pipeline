@@ -1,0 +1,379 @@
+# Central Cluster Configuration - Collectors and API Gateway
+# This configuration deploys collectors, API gateway, and database for central processing
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: telemetry-pipeline
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Streamer Configuration - DISABLED for central cluster
+streamer:
+  enabled: false
+
+# Collector Configuration - ENABLED for central cluster
+collector:
+  enabled: true
+  replicaCount: 5  # Higher capacity for central processing
+  
+  image:
+    repository: telemetry-pipeline-collector
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    batchSize: 200  # Larger batches for central processing
+    pollInterval: "1s"
+    bufferSize: 2000
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 1500m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Central cluster node selection
+  nodeSelector:
+    node-type: cpu
+  
+  tolerations:
+  - key: high-memory
+    operator: Exists
+    effect: NoSchedule
+  
+  # Prefer high-memory nodes for processing
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: memory-type
+            operator: In
+            values: ["high-memory"]
+    # Anti-affinity to spread collectors across nodes
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: ["collector"]
+          topologyKey: kubernetes.io/hostname
+  
+  podAnnotations:
+    cluster-role: "central-collector"
+  podLabels:
+    deployment-type: "central"
+
+# API Gateway Configuration - ENABLED for central cluster
+apiGateway:
+  enabled: true
+  replicaCount: 3
+  
+  image:
+    repository: telemetry-pipeline-api-gateway
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    port: 8080
+    logLevel: "info"
+  
+  service:
+    type: LoadBalancer  # Expose externally
+    port: 80
+    targetPort: 8080
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+  
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    hosts:
+      - host: telemetry-api.company.com  # Replace with actual domain
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: api-gateway-tls
+        hosts:
+          - telemetry-api.company.com
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 300m
+      memory: 256Mi
+  
+  nodeSelector:
+    node-type: cpu
+  
+  podAnnotations:
+    cluster-role: "central-api"
+  podLabels:
+    deployment-type: "central"
+
+# PostgreSQL Configuration - ENABLED for central cluster
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: ""  # Set via --set or external secret
+    username: "telemetry"
+    password: ""  # Set via --set or external secret
+    database: "telemetry"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "fast-ssd"
+    
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+    
+    # PostgreSQL-specific configuration for time-series data
+    extendedConfiguration: |
+      # Performance tuning for time-series workloads
+      shared_preload_libraries = 'timescaledb'
+      max_connections = 200
+      shared_buffers = 1GB
+      effective_cache_size = 3GB
+      maintenance_work_mem = 256MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 8MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+      
+      # TimescaleDB specific settings
+      timescaledb.max_background_workers = 8
+    
+    initdb:
+      scripts:
+        01-init-timescaledb.sql: |
+          -- Enable TimescaleDB extension
+          CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+          
+          -- Create telemetry table if not exists
+          CREATE TABLE IF NOT EXISTS telemetry_data (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ NOT NULL,
+            gpu_id TEXT NOT NULL,
+            device TEXT NOT NULL,
+            hostname TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            value TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          -- Convert to hypertable for time-series optimization
+          SELECT create_hypertable('telemetry_data', 'timestamp', if_not_exists => TRUE);
+          
+          -- Create indexes for common queries
+          CREATE INDEX IF NOT EXISTS idx_telemetry_gpu_timestamp 
+            ON telemetry_data (gpu_id, timestamp DESC);
+          CREATE INDEX IF NOT EXISTS idx_telemetry_hostname_timestamp 
+            ON telemetry_data (hostname, timestamp DESC);
+          CREATE INDEX IF NOT EXISTS idx_telemetry_metric_timestamp 
+            ON telemetry_data (metric_name, timestamp DESC);
+
+# External Database Configuration (alternative to built-in PostgreSQL)
+externalDatabase:
+  host: ""
+  port: 5432
+  username: "telemetry"
+  password: ""
+  database: "telemetry"
+  sslMode: "require"
+  existingSecret: "database-credentials"
+  existingSecretPasswordKey: "password"
+
+# External Redis Configuration - REQUIRED for cross-cluster
+externalRedis:
+  enabled: true
+  host: "redis.shared-infra.company.com"  # Replace with actual Redis host
+  port: 6379
+  password: ""  # Set via --set or external secret
+  database: 0
+  tls:
+    enabled: true
+    skipVerify: false
+    caCert: ""  # CA certificate for TLS verification
+  auth:
+    enabled: true
+    existingSecret: "redis-auth"
+    existingSecretPasswordKey: "password"
+
+# Monitoring - Comprehensive monitoring for central cluster
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: ""
+    labels:
+      cluster-type: "central"
+    interval: 15s  # More frequent monitoring
+    scrapeTimeout: 10s
+
+# Horizontal Pod Autoscaler - Aggressive scaling for central cluster
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 15  # Higher scaling for central processing
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics for message queue lag
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+# Pod Disruption Budget - Higher availability requirements
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2  # Ensure multiple replicas always available
+
+# Network Policies - Secure central cluster communication
+networkPolicy:
+  enabled: true
+  ingress:
+  # Allow ingress from edge clusters (streamers via Redis)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow ingress to API Gateway
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow egress to external Redis
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380  # Redis Sentinel port
+  # Allow egress to database
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+# Common labels for central cluster
+commonLabels:
+  cluster-type: "central"
+  deployment-pattern: "distributed"
+
+# Common annotations
+commonAnnotations:
+  deployment.kubernetes.io/cluster-role: "central-processing"
+
+# Extra manifests for central-specific resources
+extraManifests:
+- |
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: central-cluster-info
+    namespace: {{ .Release.Namespace }}
+  data:
+    cluster-type: "central"
+    role: "data-processing"
+    components: "collector,api-gateway,database"
+    redis-endpoint: "{{ .Values.externalRedis.host }}:{{ .Values.externalRedis.port }}"
+    database-endpoint: "{{ include "telemetry-pipeline.databaseHost" . }}:{{ include "telemetry-pipeline.databasePort" . }}"
+
+# Backup configuration for central cluster
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: "30d"
+  storage:
+    type: "s3"
+    bucket: "telemetry-backups"
+    region: "us-west-2"
+    accessKey: ""  # Set via secret
+    secretKey: ""  # Set via secret
+
+# Resource quotas for central cluster
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "10"
+    requests.memory: "20Gi"
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    persistentvolumeclaims: "10"
+    services.loadbalancers: "2"

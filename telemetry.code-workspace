@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": "../ElasticGpyTelemetry"
+		},
+		{
+			"path": "../prtc"
+		},
+		{
+			"path": "../graph-framework-for-microservices"
+		},
+		{
+			"path": "../go-protos"
+		},
+		{
+			"path": "../lib-go"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}

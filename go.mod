@@ -5,9 +5,12 @@ go 1.23
 toolchain go1.23.6
 
 require (
+	github.com/gin-contrib/cors v1.4.0
+	github.com/gin-gonic/gin v1.9.1
 	github.com/gorilla/mux v1.8.0
 	github.com/stretchr/testify v1.8.4
 	github.com/swaggo/http-swagger v1.3.4
+	github.com/swaggo/swag v1.16.1
 	go.uber.org/zap v1.24.0
 	gorm.io/driver/postgres v1.5.2
 	gorm.io/gorm v1.25.4

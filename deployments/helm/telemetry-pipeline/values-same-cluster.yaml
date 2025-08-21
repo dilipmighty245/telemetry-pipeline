@@ -1,0 +1,350 @@
+# Same Cluster Configuration - All Components
+# This configuration deploys all components (streamers, collectors, API gateway, database) in a single cluster
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: telemetry-pipeline
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Streamer Configuration - ENABLED for same cluster
+streamer:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-streamer
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    csvFile: "dcgm_metrics_20250718_134233.csv"
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Balanced node selection for same cluster
+  nodeSelector: {}
+  tolerations: []
+  
+  # Spread streamers across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: ["streamer"]
+          topologyKey: kubernetes.io/hostname
+  
+  podAnnotations:
+    cluster-role: "same-cluster-streamer"
+  podLabels:
+    deployment-type: "same-cluster"
+
+# Collector Configuration - ENABLED for same cluster
+collector:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-collector
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    batchSize: 100
+    pollInterval: "1s"
+    bufferSize: 1000
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Balanced node selection for same cluster
+  nodeSelector: {}
+  tolerations: []
+  
+  # Spread collectors across nodes, avoid co-location with streamers
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: ["collector"]
+          topologyKey: kubernetes.io/hostname
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: ["streamer"]
+          topologyKey: kubernetes.io/hostname
+  
+  podAnnotations:
+    cluster-role: "same-cluster-collector"
+  podLabels:
+    deployment-type: "same-cluster"
+
+# API Gateway Configuration - ENABLED for same cluster
+apiGateway:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-api-gateway
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    port: 8080
+    logLevel: "info"
+  
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    annotations: {}
+  
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    hosts:
+      - host: telemetry-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 128Mi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations:
+    cluster-role: "same-cluster-api"
+  podLabels:
+    deployment-type: "same-cluster"
+
+# PostgreSQL Configuration - ENABLED for same cluster
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres"
+    username: "telemetry"
+    password: "telemetry"
+    database: "telemetry"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+    
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    
+    # Basic PostgreSQL configuration for same cluster
+    extendedConfiguration: |
+      # Performance tuning for single cluster deployment
+      max_connections = 100
+      shared_buffers = 256MB
+      effective_cache_size = 1GB
+      maintenance_work_mem = 64MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 4MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+
+# External Database Configuration (disabled for same cluster)
+externalDatabase:
+  host: ""
+  port: 5432
+  username: "telemetry"
+  password: ""
+  database: "telemetry"
+  sslMode: "disable"
+  existingSecret: ""
+  existingSecretPasswordKey: "password"
+
+# External Redis Configuration - DISABLED for same cluster (using embedded Redis)
+externalRedis:
+  enabled: false
+  host: ""
+  port: 6379
+  password: ""
+  database: 0
+  tls:
+    enabled: false
+    skipVerify: false
+    caCert: ""
+  auth:
+    enabled: false
+    existingSecret: ""
+    existingSecretPasswordKey: "password"
+
+# Redis Configuration - ENABLED for same cluster
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: "redis-password"
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# Monitoring - Standard monitoring for same cluster
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: ""
+    labels:
+      cluster-type: "same-cluster"
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Horizontal Pod Autoscaler - Moderate scaling for same cluster
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network Policies - Basic security for same cluster
+networkPolicy:
+  enabled: true
+  ingress:
+  # Allow ingress to API Gateway
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow all egress within cluster
+  - to: []
+
+# Common labels for same cluster
+commonLabels:
+  cluster-type: "same-cluster"
+  deployment-pattern: "monolithic"
+
+# Common annotations
+commonAnnotations:
+  deployment.kubernetes.io/cluster-role: "all-in-one"
+
+# Extra manifests for same-cluster specific resources
+extraManifests:
+- |
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: same-cluster-info
+    namespace: {{ .Release.Namespace }}
+  data:
+    cluster-type: "same-cluster"
+    role: "all-in-one"
+    components: "streamer,collector,api-gateway,database,redis"
+    redis-endpoint: "{{ include "telemetry-pipeline.fullname" . }}-redis:6379"
+    database-endpoint: "{{ include "telemetry-pipeline.databaseHost" . }}:{{ include "telemetry-pipeline.databasePort" . }}"
+    deployment-mode: "monolithic"
+
+# Resource quotas for same cluster (moderate limits)
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "5"
+    requests.memory: "8Gi"
+    limits.cpu: "10"
+    limits.memory: "16Gi"
+    persistentvolumeclaims: "10"
+    services.loadbalancers: "1"

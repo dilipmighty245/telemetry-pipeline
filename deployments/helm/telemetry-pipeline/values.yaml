@@ -55,6 +55,27 @@ streamer:
     streamInterval: "1s"
     loopMode: true
     logLevel: "info"
+    
+    # CSV Source Configuration - Multiple options supported
+    csvSource:
+      # Option 1: Use embedded CSV file (default)
+      type: "embedded"  # Options: embedded, configmap, pvc, url
+      
+      # Option 2: Load CSV from ConfigMap
+      # type: "configmap"
+      # configMapName: "telemetry-csv-data"
+      # configMapKey: "telemetry.csv"
+      
+      # Option 3: Load CSV from Persistent Volume
+      # type: "pvc"
+      # pvcName: "telemetry-csv-pvc"
+      # mountPath: "/data"
+      # fileName: "telemetry_data.csv"
+      
+      # Option 4: Download CSV from URL
+      # type: "url"
+      # url: "https://example.com/telemetry_data.csv"
+      # refreshInterval: "1h"  # How often to refresh from URL
   
   resources:
     limits:
@@ -216,6 +237,41 @@ commonLabels: {}
 
 # Common annotations
 commonAnnotations: {}
+
+# External Redis Configuration (for cross-cluster deployment)
+externalRedis:
+  enabled: false
+  host: ""
+  port: 6379
+  password: ""
+  database: 0
+  tls:
+    enabled: false
+    skipVerify: false
+    caCert: ""
+  auth:
+    enabled: false
+    existingSecret: ""
+    existingSecretPasswordKey: "password"
+
+# Redis Configuration (embedded, disabled when externalRedis.enabled = true)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: "redis-password"
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
 
 # Extra manifests to deploy
 extraManifests: []

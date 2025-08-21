@@ -5,12 +5,27 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 4 }}
 data:
   # Streamer configuration
   streamer-batch-size: {{ .Values.streamer.config.batchSize | quote }}
   streamer-stream-interval: {{ .Values.streamer.config.streamInterval | quote }}
   streamer-loop-mode: {{ .Values.streamer.config.loopMode | quote }}
   streamer-log-level: {{ .Values.streamer.config.logLevel | quote }}
+  
+  # CSV Source configuration
+  csv-source-type: {{ .Values.streamer.config.csvSource.type | default "embedded" | quote }}
+  {{- if eq (.Values.streamer.config.csvSource.type | default "embedded") "configmap" }}
+  csv-configmap-name: {{ .Values.streamer.config.csvSource.configMapName | quote }}
+  csv-configmap-key: {{ .Values.streamer.config.csvSource.configMapKey | quote }}
+  {{- else if eq (.Values.streamer.config.csvSource.type | default "embedded") "pvc" }}
+  csv-pvc-name: {{ .Values.streamer.config.csvSource.pvcName | quote }}
+  csv-mount-path: {{ .Values.streamer.config.csvSource.mountPath | quote }}
+  csv-file-name: {{ .Values.streamer.config.csvSource.fileName | quote }}
+  {{- else if eq (.Values.streamer.config.csvSource.type | default "embedded") "url" }}
+  csv-url: {{ .Values.streamer.config.csvSource.url | quote }}
+  csv-refresh-interval: {{ .Values.streamer.config.csvSource.refreshInterval | default "1h" | quote }}
+  {{- end }}
   
   # Collector configuration
   collector-batch-size: {{ .Values.collector.config.batchSize | quote }}
@@ -28,3 +43,17 @@ data:
   database-name: {{ include "telemetry-pipeline.databaseName" . | quote }}
   database-username: {{ include "telemetry-pipeline.databaseUsername" . | quote }}
   database-sslmode: {{ .Values.externalDatabase.sslMode | default "disable" | quote }}
+  
+  # Redis configuration
+  redis-host: {{ include "telemetry-pipeline.redisHost" . | quote }}
+  redis-port: {{ include "telemetry-pipeline.redisPort" . | quote }}
+  
+  # Deployment mode information
+  deployment-mode: {{ include "telemetry-pipeline.deploymentMode" . | quote }}
+  {{- $components := list -}}
+  {{- if .Values.streamer.enabled }}{{ $components = append $components "streamer" }}{{- end }}
+  {{- if .Values.collector.enabled }}{{ $components = append $components "collector" }}{{- end }}
+  {{- if .Values.apiGateway.enabled }}{{ $components = append $components "api-gateway" }}{{- end }}
+  {{- if .Values.postgresql.enabled }}{{ $components = append $components "postgresql" }}{{- end }}
+  {{- if and .Values.redis.enabled (not .Values.externalRedis.enabled) }}{{ $components = append $components "redis" }}{{- end }}
+  components-enabled: {{ join "," $components | quote }}
