@@ -89,7 +89,6 @@ func run(args []string, _ io.Writer) error {
 
 	// Create message queue service
 	mqService := messagequeue.NewMessageQueueService()
-	defer mqService.Stop()
 
 	// Create streamer configuration
 	config := &streamer.StreamerConfig{
@@ -107,6 +106,7 @@ func run(args []string, _ io.Writer) error {
 	// Create streamer service
 	streamerService, err := streamer.NewStreamerService(config, mqService)
 	if err != nil {
+		mqService.Stop() // Clean up message queue on error
 		return err
 	}
 
@@ -137,7 +137,25 @@ func run(args []string, _ io.Writer) error {
 		}
 		<-egCtx.Done()
 		logging.Infof("shutting down streamer service...")
-		return streamerService.Stop()
+
+		// Create timeout context for graceful shutdown
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+
+		// Stop streamer service first
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- streamerService.Stop()
+		}()
+
+		select {
+		case err := <-stopDone:
+			logging.Infof("streamer service stopped gracefully")
+			return err
+		case <-shutdownCtx.Done():
+			logging.Warnf("streamer service shutdown timed out after 10 seconds")
+			return context.DeadlineExceeded
+		}
 	})
 
 	// metrics reporter
@@ -149,6 +167,11 @@ func run(args []string, _ io.Writer) error {
 	errGrp.Go(func() error {
 		<-doneCh
 		logging.Infof("attempting graceful shutdown of Streamer Service")
+
+		// Stop message queue service last
+		mqService.Stop()
+		logging.Infof("message queue service stopped")
+
 		return nil
 	})
 

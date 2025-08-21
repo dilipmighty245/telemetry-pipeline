@@ -95,7 +95,6 @@ func run(args []string, _ io.Writer) error {
 
 	// Create message queue service
 	mqService := messagequeue.NewMessageQueueService()
-	defer mqService.Stop()
 
 	// Create database configuration
 	dbConfig := &collector.DatabaseConfig{
@@ -123,6 +122,7 @@ func run(args []string, _ io.Writer) error {
 	// Create collector service
 	collectorService, err := collector.NewCollectorService(config, mqService)
 	if err != nil {
+		mqService.Stop() // Clean up message queue on error
 		return err
 	}
 
@@ -153,7 +153,25 @@ func run(args []string, _ io.Writer) error {
 		}
 		<-egCtx.Done()
 		logging.Infof("shutting down collector service...")
-		return collectorService.Stop()
+
+		// Create timeout context for graceful shutdown
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+
+		// Stop collector service first
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- collectorService.Stop()
+		}()
+
+		select {
+		case err := <-stopDone:
+			logging.Infof("collector service stopped gracefully")
+			return err
+		case <-shutdownCtx.Done():
+			logging.Warnf("collector service shutdown timed out after 10 seconds")
+			return context.DeadlineExceeded
+		}
 	})
 
 	// metrics reporter
@@ -165,6 +183,11 @@ func run(args []string, _ io.Writer) error {
 	errGrp.Go(func() error {
 		<-doneCh
 		logging.Infof("attempting graceful shutdown of Collector Service")
+
+		// Stop message queue service last
+		mqService.Stop()
+		logging.Infof("message queue service stopped")
+
 		return nil
 	})
 

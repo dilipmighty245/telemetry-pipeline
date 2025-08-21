@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/dilipmighty245/telemetry-pipeline/docs" // swagger docs
 	"github.com/dilipmighty245/telemetry-pipeline/internal/api"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
