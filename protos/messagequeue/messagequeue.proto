@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package messagequeue;
 
-option go_package = "github.com/cf/telemetry-pipeline/pkg/proto/messagequeue";
+option go_package = "github.com/dilipmighty245/telemetry-pipeline/pkg/proto/messagequeue";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";

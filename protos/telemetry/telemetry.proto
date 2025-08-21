@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package telemetry;
 
-option go_package = "github.com/cf/telemetry-pipeline/pkg/proto/telemetry";
+option go_package = "github.com/dilipmighty245/telemetry-pipeline/pkg/proto/telemetry";
 
 import "google/protobuf/timestamp.proto";
 

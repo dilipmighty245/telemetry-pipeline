@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 )
 
 // MessageQueueService provides a high-level interface for the message queue

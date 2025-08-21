@@ -4,9 +4,9 @@ description: Elastic GPU Telemetry Pipeline with Message Queue
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/cf/telemetry-pipeline
+home: https://github.com/dilipmighty245/telemetry-pipeline
 sources:
-  - https://github.com/cf/telemetry-pipeline
+  - https://github.com/dilipmighty245/telemetry-pipeline
 maintainers:
   - name: CF Team
     email: team@cf.com

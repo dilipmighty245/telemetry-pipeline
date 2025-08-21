@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/internal/streaming"
-	"github.com/cf/telemetry-pipeline/pkg/logging"
-	"github.com/cf/telemetry-pipeline/pkg/messagequeue"
-	"github.com/cf/telemetry-pipeline/pkg/models"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 )
 
 // EnhancedCollectorConfig extends CollectorConfig with streaming capabilities

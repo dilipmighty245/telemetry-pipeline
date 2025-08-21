@@ -3,15 +3,24 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
+	"net/http"
+	_ "net/http/pprof" // register pprof handlers
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/internal/streamer"
-	"github.com/cf/telemetry-pipeline/pkg/logging"
-	"github.com/cf/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	httpDebugAddr = ":8084"         // pprof bind address
+	httpTimeout   = 3 * time.Second // timeouts used to protect the server
 )
 
 var (
@@ -26,12 +35,42 @@ var (
 )
 
 func main() {
-	flag.Parse()
+	if err := run(os.Args, os.Stdout); err != nil {
+		switch err {
+		case context.Canceled:
+			// not considered error
+		case http.ErrServerClosed:
+			// not considered error
+		default:
+			logging.Fatalf("could not run Streamer Service: %v", err)
+		}
+	}
+}
+
+// run accepts the program arguments and where to send output (default: stdout)
+func run(args []string, _ io.Writer) error {
+	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
+	csvFile := flags.String("csv", "dcgm_metrics_20250718_134233.csv", "Path to CSV file containing telemetry data")
+	batchSize := flags.Int("batch-size", 100, "Number of records to process in each batch")
+	streamInterval := flags.Duration("stream-interval", 1*time.Second, "Interval between streaming batches")
+	loopMode := flags.Bool("loop", true, "Enable loop mode to continuously stream data")
+	streamerID := flags.String("streamer-id", "", "Unique identifier for this streamer instance")
+	maxRetries := flags.Int("max-retries", 3, "Maximum number of retries for failed operations")
+	retryDelay := flags.Duration("retry-delay", 1*time.Second, "Delay between retries")
+	logLevel := flags.String("log-level", "info", "Log level (debug, info, warn, error, fatal)")
+
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
 
 	// Set log level
 	logging.SetLogLevel(*logLevel, "")
+	logging.Infof("set log level to %q", *logLevel)
+	logging.Infof("starting Telemetry Streamer Service")
 
-	logging.Infof("Starting Telemetry Streamer Service")
+	// Ensure CSV file path is absolute if it's relative
+	ensureAbsolutePath(csvFile)
+
 	logging.Infof("CSV File: %s", *csvFile)
 	logging.Infof("Batch Size: %d", *batchSize)
 	logging.Infof("Stream Interval: %v", *streamInterval)
@@ -39,7 +78,7 @@ func main() {
 
 	// Validate CSV file exists
 	if _, err := os.Stat(*csvFile); os.IsNotExist(err) {
-		logging.Fatalf("CSV file does not exist: %s", *csvFile)
+		return err
 	}
 
 	// Generate streamer ID if not provided
@@ -68,54 +107,63 @@ func main() {
 	// Create streamer service
 	streamerService, err := streamer.NewStreamerService(config, mqService)
 	if err != nil {
-		logging.Fatalf("Failed to create streamer service: %v", err)
+		return err
 	}
 
-	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	doneCh := make(chan struct{})
+	errGrp, egCtx := errgroup.WithContext(ctx)
 
-	go func() {
-		<-sigChan
-		logging.Infof("Received shutdown signal, stopping streamer service...")
-		cancel()
-	}()
+	// signal handler
+	errGrp.Go(func() error {
+		err := handleSignals(egCtx, cancel)
+		doneCh <- struct{}{}
+		return err
+	})
 
-	// Start streamer service
-	err = streamerService.Start()
-	if err != nil {
-		logging.Fatalf("Failed to start streamer service: %v", err)
-	}
+	// pprof handler
+	errGrp.Go(func() error {
+		logging.Infof("starting pprof server on %s", httpDebugAddr)
+		return pprofHandler(egCtx)
+	})
 
-	// Start metrics reporting goroutine
-	go metricsReporter(ctx, streamerService)
+	// streamer service
+	errGrp.Go(func() error {
+		err := streamerService.Start()
+		if err != nil {
+			return err
+		}
+		<-egCtx.Done()
+		logging.Infof("shutting down streamer service...")
+		return streamerService.Stop()
+	})
 
-	// Wait for shutdown signal
-	<-ctx.Done()
+	// metrics reporter
+	errGrp.Go(func() error {
+		return metricsReporter(egCtx, streamerService)
+	})
 
-	// Graceful shutdown
-	logging.Infof("Shutting down streamer service...")
-	err = streamerService.Stop()
-	if err != nil {
-		logging.Errorf("Error stopping streamer service: %v", err)
-	}
+	// graceful shutdown handler
+	errGrp.Go(func() error {
+		<-doneCh
+		logging.Infof("attempting graceful shutdown of Streamer Service")
+		return nil
+	})
 
-	logging.Infof("Telemetry Streamer Service stopped")
+	return errGrp.Wait()
 }
 
 // metricsReporter periodically reports metrics
-func metricsReporter(ctx context.Context, service *streamer.StreamerService) {
+func metricsReporter(ctx context.Context, service *streamer.StreamerService) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-ticker.C:
 			metrics := service.GetMetrics()
 			logging.Infof("Streamer Metrics - Records: %d, Batches: %d, Errors: %d, Rate: %.2f records/sec",
@@ -131,9 +179,44 @@ func metricsReporter(ctx context.Context, service *streamer.StreamerService) {
 	}
 }
 
-func init() {
-	// Ensure CSV file path is absolute if it's relative
-	flag.Parse()
+// handleSignals will handle Interrupts or termination signals
+func handleSignals(ctx context.Context, cancel context.CancelFunc) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	select {
+	case s := <-sigCh:
+		logging.Infof("got signal %v, stopping", s)
+		cancel()
+		return nil
+	case <-ctx.Done():
+		logging.Infof("context is done")
+		return ctx.Err()
+	}
+}
+
+// pprofHandler launches a http server and serves pprof debug information under
+// http://<address>/debug/pprof
+func pprofHandler(ctx context.Context) error {
+	srv := http.Server{
+		Addr:         httpDebugAddr,
+		ReadTimeout:  httpTimeout,
+		WriteTimeout: httpTimeout,
+	}
+
+	go func() {
+		<-ctx.Done()
+		logging.Infof("attempting graceful shutdown of pprof server")
+		srv.SetKeepAlivesEnabled(false)
+		closeCtx, closeFn := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeFn()
+		_ = srv.Shutdown(closeCtx)
+	}()
+
+	return srv.ListenAndServe()
+}
+
+// ensureAbsolutePath ensures CSV file path is absolute if it's relative
+func ensureAbsolutePath(csvFile *string) {
 	if *csvFile != "" && !filepath.IsAbs(*csvFile) {
 		wd, err := os.Getwd()
 		if err != nil {

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/pkg/logging"
-	"github.com/cf/telemetry-pipeline/pkg/messagequeue"
-	"github.com/cf/telemetry-pipeline/pkg/models"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 )
 
 // StreamerConfig represents configuration for the streamer service

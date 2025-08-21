@@ -3,15 +3,24 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
+	"net/http"
+	_ "net/http/pprof" // register pprof handlers
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/internal/collector"
-	"github.com/cf/telemetry-pipeline/pkg/logging"
-	"github.com/cf/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	httpDebugAddr = ":8083"         // pprof bind address
+	httpTimeout   = 3 * time.Second // timeouts used to protect the server
 )
 
 var (
@@ -34,13 +43,51 @@ var (
 )
 
 func main() {
-	flag.Parse()
+	if err := run(os.Args, os.Stdout); err != nil {
+		switch err {
+		case context.Canceled:
+			// not considered error
+		case http.ErrServerClosed:
+			// not considered error
+		default:
+			logging.Fatalf("could not run Collector Service: %v", err)
+		}
+	}
+}
+
+// run accepts the program arguments and where to send output (default: stdout)
+func run(args []string, _ io.Writer) error {
+	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
+	collectorID := flags.String("collector-id", "", "Unique identifier for this collector instance")
+	consumerGroup := flags.String("consumer-group", "telemetry-collectors", "Consumer group name")
+	batchSize := flags.Int("batch-size", 100, "Number of messages to process in each batch")
+	pollInterval := flags.Duration("poll-interval", 1*time.Second, "Interval between polling for messages")
+	maxRetries := flags.Int("max-retries", 3, "Maximum number of retries for failed operations")
+	retryDelay := flags.Duration("retry-delay", 1*time.Second, "Delay between retries")
+	bufferSize := flags.Int("buffer-size", 1000, "Internal buffer size for batching")
+	logLevel := flags.String("log-level", "info", "Log level (debug, info, warn, error, fatal)")
+
+	// Database configuration
+	dbHost := flags.String("db-host", "localhost", "Database host")
+	dbPort := flags.Int("db-port", 5433, "Database port")
+	dbUser := flags.String("db-user", "postgres", "Database user")
+	dbPassword := flags.String("db-password", "postgres", "Database password")
+	dbName := flags.String("db-name", "telemetry", "Database name")
+	dbSSLMode := flags.String("db-sslmode", "disable", "Database SSL mode")
+
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
 
 	// Set log level
 	logging.SetLogLevel(*logLevel, "")
+	logging.Infof("set log level to %q", *logLevel)
+	logging.Infof("starting Telemetry Collector Service")
 
-	logging.Infof("Starting Telemetry Collector Service")
-	logging.Infof("Collector ID: %s", getCollectorID())
+	// Override with environment variables if available
+	overrideWithEnvVars(dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+
+	logging.Infof("Collector ID: %s", getCollectorID(*collectorID))
 	logging.Infof("Consumer Group: %s", *consumerGroup)
 	logging.Infof("Batch Size: %d", *batchSize)
 	logging.Infof("Poll Interval: %v", *pollInterval)
@@ -62,7 +109,7 @@ func main() {
 
 	// Create collector configuration
 	config := &collector.CollectorConfig{
-		CollectorID:    getCollectorID(),
+		CollectorID:    getCollectorID(*collectorID),
 		ConsumerGroup:  *consumerGroup,
 		BatchSize:      *batchSize,
 		PollInterval:   *pollInterval,
@@ -76,54 +123,63 @@ func main() {
 	// Create collector service
 	collectorService, err := collector.NewCollectorService(config, mqService)
 	if err != nil {
-		logging.Fatalf("Failed to create collector service: %v", err)
+		return err
 	}
 
-	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	doneCh := make(chan struct{})
+	errGrp, egCtx := errgroup.WithContext(ctx)
 
-	go func() {
-		<-sigChan
-		logging.Infof("Received shutdown signal, stopping collector service...")
-		cancel()
-	}()
+	// signal handler
+	errGrp.Go(func() error {
+		err := handleSignals(egCtx, cancel)
+		doneCh <- struct{}{}
+		return err
+	})
 
-	// Start collector service
-	err = collectorService.Start()
-	if err != nil {
-		logging.Fatalf("Failed to start collector service: %v", err)
-	}
+	// pprof handler
+	errGrp.Go(func() error {
+		logging.Infof("starting pprof server on %s", httpDebugAddr)
+		return pprofHandler(egCtx)
+	})
 
-	// Start metrics reporting goroutine
-	go metricsReporter(ctx, collectorService)
+	// collector service
+	errGrp.Go(func() error {
+		err := collectorService.Start()
+		if err != nil {
+			return err
+		}
+		<-egCtx.Done()
+		logging.Infof("shutting down collector service...")
+		return collectorService.Stop()
+	})
 
-	// Wait for shutdown signal
-	<-ctx.Done()
+	// metrics reporter
+	errGrp.Go(func() error {
+		return metricsReporter(egCtx, collectorService)
+	})
 
-	// Graceful shutdown
-	logging.Infof("Shutting down collector service...")
-	err = collectorService.Stop()
-	if err != nil {
-		logging.Errorf("Error stopping collector service: %v", err)
-	}
+	// graceful shutdown handler
+	errGrp.Go(func() error {
+		<-doneCh
+		logging.Infof("attempting graceful shutdown of Collector Service")
+		return nil
+	})
 
-	logging.Infof("Telemetry Collector Service stopped")
+	return errGrp.Wait()
 }
 
 // metricsReporter periodically reports metrics
-func metricsReporter(ctx context.Context, service *collector.CollectorService) {
+func metricsReporter(ctx context.Context, service *collector.CollectorService) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-ticker.C:
 			metrics := service.GetMetrics()
 			logging.Infof("Collector Metrics - Collected: %d, Persisted: %d, Batches: %d, Errors: %d, Rate: %.2f records/sec",
@@ -150,9 +206,9 @@ func metricsReporter(ctx context.Context, service *collector.CollectorService) {
 }
 
 // getCollectorID generates a collector ID if not provided
-func getCollectorID() string {
-	if *collectorID != "" {
-		return *collectorID
+func getCollectorID(collectorID string) string {
+	if collectorID != "" {
+		return collectorID
 	}
 
 	hostname, err := os.Hostname()
@@ -164,16 +220,44 @@ func getCollectorID() string {
 	return hostname + "-collector-" + strconv.Itoa(pid) + "-" + time.Now().Format("20060102150405")
 }
 
-// getEnvOrDefault returns environment variable value or default
-func getEnvOrDefault(envVar, defaultValue string) string {
-	if value := os.Getenv(envVar); value != "" {
-		return value
+// handleSignals will handle Interrupts or termination signals
+func handleSignals(ctx context.Context, cancel context.CancelFunc) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	select {
+	case s := <-sigCh:
+		logging.Infof("got signal %v, stopping", s)
+		cancel()
+		return nil
+	case <-ctx.Done():
+		logging.Infof("context is done")
+		return ctx.Err()
 	}
-	return defaultValue
 }
 
-func init() {
-	// Override with environment variables if available
+// pprofHandler launches a http server and serves pprof debug information under
+// http://<address>/debug/pprof
+func pprofHandler(ctx context.Context) error {
+	srv := http.Server{
+		Addr:         httpDebugAddr,
+		ReadTimeout:  httpTimeout,
+		WriteTimeout: httpTimeout,
+	}
+
+	go func() {
+		<-ctx.Done()
+		logging.Infof("attempting graceful shutdown of pprof server")
+		srv.SetKeepAlivesEnabled(false)
+		closeCtx, closeFn := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeFn()
+		_ = srv.Shutdown(closeCtx)
+	}()
+
+	return srv.ListenAndServe()
+}
+
+// overrideWithEnvVars overrides flag values with environment variables if available
+func overrideWithEnvVars(dbHost *string, dbPort *int, dbUser *string, dbPassword *string, dbName *string, dbSSLMode *string) {
 	if envHost := os.Getenv("DB_HOST"); envHost != "" {
 		*dbHost = envHost
 	}

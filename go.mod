@@ -1,4 +1,4 @@
-module github.com/cf/telemetry-pipeline
+module github.com/dilipmighty245/telemetry-pipeline
 
 go 1.23
 
@@ -13,6 +13,7 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.1
 	go.uber.org/zap v1.24.0
+	golang.org/x/sync v0.8.0
 	gorm.io/driver/postgres v1.5.2
 	gorm.io/gorm v1.25.4
 )

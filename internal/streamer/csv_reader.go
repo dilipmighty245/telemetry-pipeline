@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/pkg/logging"
-	"github.com/cf/telemetry-pipeline/pkg/models"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 )
 
 // CSVReader handles reading telemetry data from CSV files

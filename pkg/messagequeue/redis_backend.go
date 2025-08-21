@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cf/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/redis/go-redis/v9"
 )
 

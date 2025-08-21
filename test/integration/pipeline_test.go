@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cf/telemetry-pipeline/internal/collector"
-	"github.com/cf/telemetry-pipeline/internal/streamer"
-	"github.com/cf/telemetry-pipeline/pkg/messagequeue"
-	"github.com/cf/telemetry-pipeline/pkg/models"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 )
 
 // TestTelemetryPipelineIntegration tests the complete pipeline flow
