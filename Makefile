@@ -38,6 +38,8 @@ deps: ## Install dependencies
 	@echo "Installing development tools..."
 	go install github.com/swaggo/swag/cmd/swag@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Development tools installed in $(shell go env GOPATH)/bin/"
+	@echo "Make sure $(shell go env GOPATH)/bin is in your PATH"
 
 # Build targets
 build: build-streamer build-collector build-api-gateway ## Build all services
@@ -60,7 +62,7 @@ build-api-gateway: ## Build API gateway service
 # Generate OpenAPI specification
 generate-swagger: ## Generate OpenAPI/Swagger specification
 	@echo "Generating OpenAPI specification..."
-	swag init -g cmd/api-gateway/main.go -o ./docs --parseInternal --parseDependency
+	$(shell go env GOPATH)/bin/swag init -g cmd/api-gateway/main.go -o ./docs --parseInternal --parseDependency
 	@echo "OpenAPI specification generated in ./docs/"
 
 # Testing
@@ -224,10 +226,58 @@ dev-run: ## Run all services locally for development
 # Database helpers
 db-setup: ## Setup local PostgreSQL database
 	@echo "Setting up local database..."
-	docker run --name telemetry-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=telemetry -p 5432:5432 -d postgres:15
+	@echo "Cleaning up any existing database container..."
+	@docker stop telemetry-postgres 2>/dev/null || true
+	@docker rm telemetry-postgres 2>/dev/null || true
+	@echo "Starting PostgreSQL container..."
+	docker run --name telemetry-postgres \
+		-e POSTGRES_PASSWORD=postgres \
+		-e POSTGRES_USER=postgres \
+		-e POSTGRES_DB=telemetry \
+		-p 5433:5432 \
+		-d postgres:15
 	@echo "Waiting for database to start..."
-	sleep 10
-	@echo "Database ready at localhost:5432"
+	@for i in {1..30}; do \
+		if docker exec telemetry-postgres pg_isready -U postgres -d telemetry >/dev/null 2>&1; then \
+			echo "Database is ready!"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "Database failed to start after 30 attempts"; \
+			exit 1; \
+		fi; \
+		echo "Waiting for database... ($$i/30)"; \
+		sleep 1; \
+	done
+	@echo "Database ready at localhost:5433"
+	@echo "Database: telemetry, User: postgres, Password: postgres, Port: 5433"
+
+db-status: ## Check database status
+	@echo "Checking database status..."
+	@if docker ps | grep -q telemetry-postgres; then \
+		echo "✅ PostgreSQL container is running"; \
+		if docker exec telemetry-postgres pg_isready -U postgres -d telemetry >/dev/null 2>&1; then \
+			echo "✅ Database 'telemetry' is ready"; \
+		else \
+			echo "❌ Database is not ready"; \
+		fi; \
+	else \
+		echo "❌ PostgreSQL container is not running"; \
+		echo "Run 'make db-setup' to start the database"; \
+	fi
+
+db-connect: ## Connect to the database (requires psql)
+	@echo "Connecting to database..."
+	@if ! command -v psql >/dev/null 2>&1; then \
+		echo "❌ psql not found. Install PostgreSQL client or use Docker:"; \
+		echo "   docker exec -it telemetry-postgres psql -U postgres -d telemetry"; \
+	else \
+		psql -h localhost -p 5433 -U postgres -d telemetry; \
+	fi
+
+db-logs: ## Show database logs
+	@echo "Database logs:"
+	@docker logs telemetry-postgres
 
 db-cleanup: ## Stop and remove local database
 	@echo "Cleaning up local database..."

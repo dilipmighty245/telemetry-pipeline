@@ -26,7 +26,7 @@ var (
 
 	// Database configuration
 	dbHost     = flag.String("db-host", "localhost", "Database host")
-	dbPort     = flag.Int("db-port", 5432, "Database port")
+	dbPort     = flag.Int("db-port", 5433, "Database port")
 	dbUser     = flag.String("db-user", "postgres", "Database user")
 	dbPassword = flag.String("db-password", "postgres", "Database password")
 	dbName     = flag.String("db-name", "telemetry", "Database name")

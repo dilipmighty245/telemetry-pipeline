@@ -4,12 +4,15 @@ A scalable, elastic telemetry pipeline for AI clusters with custom message queue
 
 ## 🏗️ System Architecture
 
-The system consists of four main components:
+The system consists of five main components:
 
-1. **Telemetry Streamer**: Reads CSV telemetry data and streams it to the message queue
-2. **Message Queue**: Custom in-memory message queue library for reliable message delivery  
-3. **Telemetry Collector**: Consumes messages from the queue and persists to PostgreSQL
-4. **API Gateway**: REST API for querying telemetry data with auto-generated OpenAPI spec
+1. **Telemetry Streamer**: Reads CSV telemetry data and streams it to Redis message queue
+2. **Redis Message Queue**: Reliable message broker for inter-service communication  
+3. **Telemetry Collector**: Consumes messages from Redis and persists to PostgreSQL
+4. **PostgreSQL Database**: Stores processed telemetry data with optimized schema
+5. **API Gateway**: REST API for querying telemetry data with auto-generated OpenAPI spec
+
+**Data Flow**: `CSV File → Streamer → Redis → Collector → PostgreSQL → API Gateway → REST API`
 
 ## 🚀 Quick Start
 
@@ -17,6 +20,7 @@ The system consists of four main components:
 
 - Go 1.21+
 - Docker & Docker Compose
+- Redis (for message queue - required for multi-service communication)
 - Kubernetes cluster (for production deployment)
 - Helm 3.0+ (for Kubernetes deployment)
 
@@ -114,10 +118,13 @@ If you want to build and test each component individually:
 make deps
 make build
 
-# 2. Setup local database
+# 2. Setup local database (PostgreSQL in Docker)
 make db-setup
 
-# 3. Run each service in separate terminals:
+# 3. Verify database is ready
+make db-status
+
+# 4. Run each service in separate terminals:
 
 # Terminal 1: Start Streamer
 make run-streamer
@@ -199,11 +206,20 @@ docker exec -it telemetry-postgres psql -U postgres -d telemetry
    - Use absolute path: `-csv=/full/path/to/your/file.csv`
 
 2. **Database connection issues:**
+   - Check database status: `make db-status`
    - Check if PostgreSQL is running: `docker ps | grep postgres`
-   - Verify database credentials in docker-compose.yml
+   - View database logs: `make db-logs`
+   - Restart database: `make db-cleanup && make db-setup`
+   - Connect to database: `make db-connect`
 
-3. **Port conflicts:**
-   - PostgreSQL: 5432
+3. **Message queue connection issues:**
+   - **"topic not found" errors**: Start Redis: `docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine`
+   - **Services can't communicate**: Set `REDIS_URL=redis://localhost:6379` for all services
+   - Check Redis status: `docker ps | grep redis`
+   - View Redis logs: `docker logs telemetry-redis`
+
+4. **Port conflicts:**
+   - PostgreSQL: 5433 (Docker container)
    - Redis: 6379  
    - API Gateway: 8080
    - Adminer: 8081
@@ -233,6 +249,85 @@ curl http://localhost:8080/api/v1/stats
 #   "unique_gpus": 2,
 #   "unique_hosts": 2
 # }
+```
+
+### 🚀 Complete Production-Ready Pipeline Setup
+
+For a fully functional telemetry pipeline with all components communicating properly:
+
+#### Prerequisites
+- Docker (for PostgreSQL and Redis)
+- Go 1.21+ 
+- Make
+
+#### Step-by-Step Setup
+
+```bash
+# 1. Setup database (PostgreSQL on port 5433)
+make db-setup
+
+# 2. Setup Redis message queue
+docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine
+
+# 3. Verify infrastructure is running
+make db-status
+docker ps | grep redis
+
+# 4. Start all services with Redis connectivity
+REDIS_URL=redis://localhost:6379 make run-streamer &
+REDIS_URL=redis://localhost:6379 make run-collector &  
+REDIS_URL=redis://localhost:6379 make run-api-gateway &
+
+# 5. Test the complete pipeline
+curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/stats
+curl http://localhost:8080/api/v1/gpus | head -20
+```
+
+#### Expected Results
+When working correctly, you should see:
+- **Streamer**: Publishing messages to Redis topic (`Published message to Redis topic telemetry`)
+- **Collector**: Consuming messages and persisting to database (`Consumed X messages`, `Persisted X records`)
+- **API Stats**: `{"total_records": >0, "unique_gpus": >0, "unique_hosts": >0}`
+
+#### Performance Tuning
+
+For high-throughput scenarios, adjust these parameters:
+
+```bash
+# Increase batch sizes and intervals for better performance
+REDIS_URL=redis://localhost:6379 ./bin/streamer -batch-size=50 -stream-interval=2s &
+REDIS_URL=redis://localhost:6379 ./bin/collector -batch-size=200 -poll-interval=500ms &
+```
+
+#### Troubleshooting Pipeline Issues
+
+**Queue Full Errors:**
+```bash
+# Increase Redis memory limit
+docker stop telemetry-redis && docker rm telemetry-redis
+docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine redis-server --maxmemory 512mb
+```
+
+**High CPU/Memory Usage:**
+```bash
+# Reduce streaming frequency
+REDIS_URL=redis://localhost:6379 ./bin/streamer -stream-interval=5s -batch-size=25 &
+```
+
+**Message Acknowledgment Issues:**
+- This is normal under high load - the system is designed to handle temporary acknowledgment failures
+- Data is still processed and stored correctly in the database
+
+#### Infrastructure Cleanup
+
+```bash
+# Stop all services
+pkill -f "streamer\|collector\|api-gateway"
+
+# Clean up containers
+docker stop telemetry-redis telemetry-postgres
+docker rm telemetry-redis telemetry-postgres
 ```
 
 ## 🐳 Docker & Kubernetes Deployment
@@ -416,7 +511,7 @@ The system provides different configuration files for various deployment scenari
 
 #### Database Configuration
 - `DB_HOST`: PostgreSQL host (default: localhost)
-- `DB_PORT`: PostgreSQL port (default: 5432)
+- `DB_PORT`: PostgreSQL port (default: 5433 for local Docker container)
 - `DB_USER`: Database user (default: postgres)
 - `DB_PASSWORD`: Database password (default: postgres)
 - `DB_NAME`: Database name (default: telemetry)
@@ -610,6 +705,13 @@ make test               # Run tests
 make docker-build       # Build Docker images
 make generate-swagger   # Generate OpenAPI spec
 make clean             # Clean build artifacts
+
+# Database Management
+make db-setup           # Setup local PostgreSQL database
+make db-status          # Check database status
+make db-connect         # Connect to database
+make db-logs            # Show database logs
+make db-cleanup         # Stop and remove database
 
 # CSV Data Management
 make csv-help                                    # Show CSV management help
