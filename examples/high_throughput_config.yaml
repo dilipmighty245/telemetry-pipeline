@@ -1,0 +1,135 @@
+# High-Throughput Telemetry Pipeline Configuration
+# Inspired by newStreamAdapter patterns from prtc project
+
+# Enhanced Collector Configuration
+collector:
+  collector_id: "high-throughput-collector"
+  consumer_group: "telemetry-collectors"
+  batch_size: 500  # Base batch size (will be adaptive)
+  poll_interval: "500ms"  # Faster polling
+  max_retries: 3
+  retry_delay: "1s"
+  buffer_size: 2000  # Larger buffer
+  enable_metrics: true
+  
+  # Enhanced features
+  enable_streaming: true
+  stream_destination: "http://your-analytics-endpoint/telemetry"
+  
+  enable_circuit_breaker: true
+  circuit_breaker_config:
+    failure_threshold: 5
+    recovery_timeout: "30s"
+    half_open_requests: 3
+  
+  enable_adaptive_batching: true
+  min_batch_size: 100
+  max_batch_size: 2000
+  
+  enable_load_balancing: true
+  workers: 8  # Multiple workers for parallel processing
+  
+  # Streaming adapter configuration
+  streaming_config:
+    channel_size: 2000
+    batch_size: 1000
+    workers: 10
+    max_retries: 3
+    retry_delay: "1s"
+    flush_interval: "3s"
+    http_timeout: "30s"
+    enable_metrics: true
+    partition_by: "hostname"  # or "gpu_id" or "none"
+
+# Enhanced Streamer Configuration
+streamer:
+  csv_file_path: "/data/dcgm_metrics.csv"
+  batch_size: 1000  # Larger batches for streaming
+  stream_interval: "200ms"  # Faster streaming
+  loop_mode: true
+  max_retries: 3
+  retry_delay: "1s"
+  enable_metrics: true
+  streamer_id: "high-throughput-streamer"
+  buffer_size: 2000
+  
+  # Enhanced features
+  enable_streaming: true
+  stream_destination: "http://your-message-queue/telemetry"
+  
+  enable_parallel_streaming: true
+  parallel_workers: 6
+  
+  enable_rate_limit: true
+  rate_limit: 5000.0  # 5000 records per second
+  burst_size: 500
+  
+  enable_back_pressure: true
+  back_pressure_threshold: 80.0  # 80% channel utilization
+  back_pressure_delay: "100ms"
+  
+  # Streaming adapter configuration
+  streaming_config:
+    channel_size: 3000  # Higher for streaming workload
+    batch_size: 1500
+    workers: 12
+    max_retries: 3
+    retry_delay: "1s"
+    flush_interval: "2s"  # Faster flush for streaming
+    http_timeout: "30s"
+    enable_metrics: true
+    partition_by: "hostname"
+
+# Database Configuration (for collector)
+database:
+  host: "localhost"
+  port: 5432
+  database: "telemetry"
+  username: "telemetry_user"
+  password: "telemetry_pass"
+  max_connections: 50  # Connection pool
+  max_idle_connections: 10
+  connection_max_lifetime: "1h"
+  
+# Message Queue Configuration
+message_queue:
+  type: "redis"  # or "kafka", "rabbitmq"
+  redis:
+    host: "localhost"
+    port: 6379
+    password: ""
+    db: 0
+    pool_size: 50  # Connection pool
+    min_idle_conns: 10
+    max_retries: 3
+    retry_delay: "1s"
+
+# Monitoring and Metrics
+monitoring:
+  enable_prometheus: true
+  prometheus_port: 9090
+  metrics_interval: "30s"
+  
+  # Health check endpoints
+  health_check_port: 8080
+  health_check_path: "/health"
+  
+  # Logging
+  log_level: "info"
+  log_format: "json"
+  log_output: "stdout"
+
+# Performance Tuning
+performance:
+  # Go runtime tuning
+  gomaxprocs: 0  # Use all available CPUs
+  gc_percent: 100  # Default GC target percentage
+  
+  # Memory management
+  max_memory_usage: "2GB"
+  memory_limit_action: "throttle"  # or "reject"
+  
+  # Network tuning
+  tcp_keep_alive: "30s"
+  tcp_no_delay: true
+  socket_buffer_size: 65536
