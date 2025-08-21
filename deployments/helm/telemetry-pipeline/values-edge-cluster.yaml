@@ -1,0 +1,222 @@
+# Edge Cluster Configuration - Streamers Only
+# This configuration deploys only streamers for edge/data source clusters
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: telemetry-pipeline
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Streamer Configuration - ENABLED for edge cluster
+streamer:
+  enabled: true
+  replicaCount: 3  # Adjust based on edge cluster capacity
+  
+  image:
+    repository: telemetry-pipeline-streamer
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    csvFile: "dcgm_metrics_20250718_134233.csv"
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Edge-specific node selection
+  nodeSelector:
+    node-type: edge
+  
+  tolerations:
+  - key: edge-node
+    operator: Exists
+    effect: NoSchedule
+  
+  # Prefer GPU nodes if available
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: accelerator
+            operator: In
+            values: ["nvidia-gpu"]
+  
+  podAnnotations:
+    cluster-role: "edge-streamer"
+  podLabels:
+    deployment-type: "edge"
+
+# Collector Configuration - DISABLED for edge cluster
+collector:
+  enabled: false
+
+# API Gateway Configuration - DISABLED for edge cluster
+apiGateway:
+  enabled: false
+
+# PostgreSQL Configuration - DISABLED for edge cluster
+postgresql:
+  enabled: false
+
+# External Database Configuration (not used in edge)
+externalDatabase:
+  host: ""
+  port: 5432
+  username: ""
+  password: ""
+  database: ""
+  sslMode: "disable"
+  existingSecret: ""
+  existingSecretPasswordKey: "password"
+
+# External Redis Configuration - REQUIRED for cross-cluster
+externalRedis:
+  enabled: true
+  host: "redis.shared-infra.company.com"  # Replace with actual Redis host
+  port: 6379
+  password: ""  # Set via --set or external secret
+  database: 0
+  tls:
+    enabled: true
+    skipVerify: false
+    caCert: ""  # CA certificate for TLS verification
+  auth:
+    enabled: true
+    existingSecret: "redis-auth"
+    existingSecretPasswordKey: "password"
+
+# Monitoring - Basic monitoring for edge
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: ""
+    labels:
+      cluster-type: "edge"
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Horizontal Pod Autoscaler - Conservative for edge
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5  # Limited for edge cluster
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget - Ensure availability
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network Policies - Secure edge communication
+networkPolicy:
+  enabled: true
+  ingress: []
+  egress:
+  # Allow egress to external Redis
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380  # Redis Sentinel port
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+# Common labels for edge cluster
+commonLabels:
+  cluster-type: "edge"
+  deployment-pattern: "distributed"
+
+# Common annotations
+commonAnnotations:
+  deployment.kubernetes.io/cluster-role: "edge-data-source"
+
+# Extra manifests for edge-specific resources
+extraManifests:
+- |
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: edge-cluster-info
+    namespace: {{ .Release.Namespace }}
+  data:
+    cluster-type: "edge"
+    role: "data-source"
+    components: "streamer"
+    redis-endpoint: "{{ .Values.externalRedis.host }}:{{ .Values.externalRedis.port }}"
+
+# Edge-specific CSV data configuration
+csvData:
+  # ConfigMap containing CSV data
+  configMapName: "telemetry-csv-data"
+  # Volume mount configuration
+  volumeMounts:
+    enabled: true
+    mountPath: "/data/csv"
+    readOnly: true
+  # For edge deployments, CSV data might come from local storage
+  persistentVolume:
+    enabled: false  # Set to true if using persistent storage
+    storageClass: "fast-local-ssd"
+    size: "10Gi"
+    accessMode: "ReadOnlyMany"
+
+# Resource quotas for edge cluster
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "2"
+    requests.memory: "4Gi"
+    limits.cpu: "4"
+    limits.memory: "8Gi"
+    persistentvolumeclaims: "5"

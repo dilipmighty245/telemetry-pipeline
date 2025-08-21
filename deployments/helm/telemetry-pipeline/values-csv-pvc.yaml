@@ -1,0 +1,48 @@
+# Example values for CSV data from Persistent Volume Claim
+# This configuration loads CSV data from a PVC
+
+# Inherit from base values
+streamer:
+  enabled: true
+  replicaCount: 2
+  
+  config:
+    # CSV Source Configuration - PVC
+    csvSource:
+      type: "pvc"
+      pvcName: "telemetry-csv-pvc"
+      mountPath: "/data"
+      fileName: "telemetry_data.csv"
+    
+    # Other streamer settings
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+
+# Usage:
+# 1. Create PVC and upload CSV data:
+#    kubectl apply -f - <<EOF
+#    apiVersion: v1
+#    kind: PersistentVolumeClaim
+#    metadata:
+#      name: telemetry-csv-pvc
+#      namespace: telemetry-system
+#    spec:
+#      accessModes:
+#        - ReadWriteOnce
+#      resources:
+#        requests:
+#          storage: 1Gi
+#    EOF
+#
+# 2. Upload CSV data to PVC (using a temporary pod):
+#    kubectl run csv-uploader --image=busybox --rm -it --restart=Never \
+#      --overrides='{"spec":{"containers":[{"name":"csv-uploader","image":"busybox","command":["sleep","3600"],"volumeMounts":[{"mountPath":"/data","name":"csv-volume"}]}],"volumes":[{"name":"csv-volume","persistentVolumeClaim":{"claimName":"telemetry-csv-pvc"}}]}}' \
+#      -n telemetry-system
+#    # Inside the pod: copy your CSV file to /data/telemetry_data.csv
+#
+# 3. Deploy with this values file:
+#    helm upgrade --install telemetry-pipeline ./deployments/helm/telemetry-pipeline \
+#      --namespace telemetry-system --create-namespace \
+#      --values ./deployments/helm/telemetry-pipeline/values-csv-pvc.yaml

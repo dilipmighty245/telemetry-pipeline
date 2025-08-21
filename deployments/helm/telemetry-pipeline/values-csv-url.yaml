@@ -1,0 +1,32 @@
+# Example values for CSV data from URL
+# This configuration downloads CSV data from a URL at startup
+
+# Inherit from base values
+streamer:
+  enabled: true
+  replicaCount: 2
+  
+  config:
+    # CSV Source Configuration - URL
+    csvSource:
+      type: "url"
+      url: "https://raw.githubusercontent.com/example/telemetry-data/main/sample_data.csv"
+      refreshInterval: "1h"  # How often to refresh (not implemented in basic version)
+    
+    # Other streamer settings
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+
+# Usage:
+# 1. Deploy with this values file:
+#    helm upgrade --install telemetry-pipeline ./deployments/helm/telemetry-pipeline \
+#      --namespace telemetry-system --create-namespace \
+#      --values ./deployments/helm/telemetry-pipeline/values-csv-url.yaml \
+#      --set streamer.config.csvSource.url="https://your-domain.com/path/to/data.csv"
+#
+# 2. The CSV will be downloaded automatically by an init container before the streamer starts
+#
+# Note: Ensure the URL is accessible from your Kubernetes cluster
+# For private URLs, you may need to add authentication headers or use secrets

@@ -1,0 +1,23 @@
+apiVersion: v2
+name: telemetry-pipeline
+description: Elastic GPU Telemetry Pipeline with Message Queue
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/dilipmighty245/telemetry-pipeline
+sources:
+  - https://github.com/dilipmighty245/telemetry-pipeline
+maintainers:
+  - name: CF Team
+    email: team@cf.com
+keywords:
+  - telemetry
+  - gpu
+  - monitoring
+  - pipeline
+  - kubernetes
+dependencies:
+  - name: postgresql
+    version: 12.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

@@ -1,0 +1,71 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+---
+{{- if .Values.streamer.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-streamer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: streamer
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: streamer
+{{- end }}
+---
+{{- if .Values.collector.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collector
+{{- end }}
+---
+{{- if .Values.apiGateway.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-api-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+{{- end }}
+{{- end }}

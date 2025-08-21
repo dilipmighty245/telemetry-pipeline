@@ -1,0 +1,52 @@
+# Build stage
+FROM golang:1.23-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod and sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o collector ./cmd/collector
+
+# Final stage
+FROM alpine:latest
+
+# Install ca-certificates for HTTPS and PostgreSQL client
+RUN apk --no-cache add ca-certificates tzdata postgresql-client
+
+# Create non-root user
+RUN adduser -D -s /bin/sh appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/collector .
+
+# Change ownership to appuser
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose port (if needed for metrics/health)
+EXPOSE 8082
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD ps aux | grep -v grep | grep collector || exit 1
+
+# Command to run
+ENTRYPOINT ["./collector"]
+CMD ["-log-level=info"]

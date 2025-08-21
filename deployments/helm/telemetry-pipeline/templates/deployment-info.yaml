@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-deployment-info
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    {{- include "telemetry-pipeline.deploymentModeLabels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+data:
+  deployment-summary: |
+    Telemetry Pipeline Deployment Summary
+    ====================================
+    
+    Release Name: {{ .Release.Name }}
+    Namespace: {{ .Release.Namespace }}
+    Chart Version: {{ .Chart.Version }}
+    App Version: {{ .Chart.AppVersion }}
+    Deployment Mode: {{ include "telemetry-pipeline.deploymentMode" . }}
+    
+    Components Enabled:
+    {{- if .Values.streamer.enabled }}
+    ✓ Streamer ({{ .Values.streamer.replicaCount }} replicas)
+    {{- else }}
+    ✗ Streamer (disabled)
+    {{- end }}
+    {{- if .Values.collector.enabled }}
+    ✓ Collector ({{ .Values.collector.replicaCount }} replicas)
+    {{- else }}
+    ✗ Collector (disabled)
+    {{- end }}
+    {{- if .Values.apiGateway.enabled }}
+    ✓ API Gateway ({{ .Values.apiGateway.replicaCount }} replicas)
+    {{- else }}
+    ✗ API Gateway (disabled)
+    {{- end }}
+    {{- if .Values.postgresql.enabled }}
+    ✓ PostgreSQL (embedded)
+    {{- else if .Values.externalDatabase.host }}
+    ✓ PostgreSQL (external: {{ .Values.externalDatabase.host }})
+    {{- else }}
+    ✗ PostgreSQL (not configured)
+    {{- end }}
+    {{- if .Values.externalRedis.enabled }}
+    ✓ Redis (external: {{ .Values.externalRedis.host }})
+    {{- else if .Values.redis.enabled }}
+    ✓ Redis (embedded)
+    {{- else }}
+    ✗ Redis (not configured)
+    {{- end }}
+    
+    Network Configuration:
+    Redis URL: {{ include "telemetry-pipeline.redisURL" . }}
+    Database Host: {{ include "telemetry-pipeline.databaseHost" . }}:{{ include "telemetry-pipeline.databasePort" . }}
+    
+    Security Configuration:
+    {{- if .Values.externalRedis.tls.enabled }}
+    ✓ Redis TLS enabled
+    {{- else }}
+    ✗ Redis TLS disabled
+    {{- end }}
+    {{- if ne (.Values.externalDatabase.sslMode | default "disable") "disable" }}
+    ✓ Database SSL enabled ({{ .Values.externalDatabase.sslMode }})
+    {{- else }}
+    ✗ Database SSL disabled
+    {{- end }}
+    {{- if .Values.networkPolicy.enabled }}
+    ✓ Network policies enabled
+    {{- else }}
+    ✗ Network policies disabled
+    {{- end }}
+    
+    Monitoring Configuration:
+    {{- if .Values.monitoring.enabled }}
+    ✓ Monitoring enabled
+    {{- else }}
+    ✗ Monitoring disabled
+    {{- end }}
+    {{- if .Values.autoscaling.enabled }}
+    ✓ Auto-scaling enabled ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas)
+    {{- else }}
+    ✗ Auto-scaling disabled
+    {{- end }}
+    
+    Next Steps:
+    {{- if eq (include "telemetry-pipeline.deploymentMode" .) "same-cluster" }}
+    1. Verify all pods are running: kubectl get pods -n {{ .Release.Namespace }}
+    2. Test API endpoint: kubectl port-forward svc/{{ include "telemetry-pipeline.fullname" . }}-api-gateway 8080:80 -n {{ .Release.Namespace }}
+    3. Access API at: http://localhost:8080/health
+    {{- else if eq (include "telemetry-pipeline.deploymentMode" .) "edge-cluster" }}
+    1. Verify streamers are running: kubectl get pods -n {{ .Release.Namespace }}
+    2. Check Redis connectivity: kubectl logs deployment/{{ include "telemetry-pipeline.fullname" . }}-streamer -n {{ .Release.Namespace }}
+    3. Ensure central cluster is deployed to process messages
+    {{- else if eq (include "telemetry-pipeline.deploymentMode" .) "central-cluster" }}
+    1. Verify collectors and API are running: kubectl get pods -n {{ .Release.Namespace }}
+    2. Test API endpoint: kubectl port-forward svc/{{ include "telemetry-pipeline.fullname" . }}-api-gateway 8080:80 -n {{ .Release.Namespace }}
+    3. Ensure edge clusters are deployed to generate messages
+    {{- end }}
+    
+    For troubleshooting, check:
+    - Pod logs: kubectl logs -f deployment/<component-name> -n {{ .Release.Namespace }}
+    - Events: kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp'
+    - Configuration: kubectl get configmap {{ include "telemetry-pipeline.fullname" . }}-config -n {{ .Release.Namespace }} -o yaml

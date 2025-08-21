@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package messagequeue;
+
+option go_package = "github.com/dilipmighty245/telemetry-pipeline/pkg/proto/messagequeue";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Message represents a single message in the queue
+message Message {
+    string id = 1;
+    string topic = 2;
+    bytes payload = 3;
+    google.protobuf.Timestamp created_at = 4;
+    google.protobuf.Timestamp expires_at = 5;
+    int32 retry_count = 6;
+    map<string, string> headers = 7;
+}
+
+// PublishRequest for publishing messages to the queue
+message PublishRequest {
+    string topic = 1;
+    bytes payload = 2;
+    map<string, string> headers = 3;
+    int32 ttl_seconds = 4; // Time to live
+}
+
+// PublishResponse for publish acknowledgment
+message PublishResponse {
+    string message_id = 1;
+    bool success = 2;
+    string error_message = 3;
+    google.protobuf.Timestamp published_at = 4;
+}
+
+// ConsumeRequest for consuming messages from the queue
+message ConsumeRequest {
+    string topic = 1;
+    string consumer_group = 2;
+    string consumer_id = 3;
+    int32 max_messages = 4;
+    int32 timeout_seconds = 5;
+}
+
+// ConsumeResponse containing consumed messages
+message ConsumeResponse {
+    repeated Message messages = 1;
+    bool has_more = 2;
+}
+
+// AckRequest for acknowledging processed messages
+message AckRequest {
+    repeated string message_ids = 1;
+    string consumer_id = 2;
+}
+
+// AckResponse for acknowledgment confirmation
+message AckResponse {
+    repeated string acked_message_ids = 1;
+    repeated string failed_message_ids = 2;
+    bool success = 3;
+}
+
+// CreateTopicRequest for creating new topics
+message CreateTopicRequest {
+    string topic = 1;
+    int32 partitions = 2;
+    int32 replication_factor = 3;
+    map<string, string> config = 4;
+}
+
+// CreateTopicResponse for topic creation confirmation
+message CreateTopicResponse {
+    string topic = 1;
+    bool success = 2;
+    string message = 3;
+}
+
+// TopicInfo represents topic metadata
+message TopicInfo {
+    string name = 1;
+    int32 partitions = 2;
+    int32 replication_factor = 3;
+    int64 message_count = 4;
+    google.protobuf.Timestamp created_at = 5;
+    map<string, string> config = 6;
+}
+
+// ListTopicsResponse for listing all topics
+message ListTopicsResponse {
+    repeated TopicInfo topics = 1;
+}
+
+// QueueStats represents queue statistics
+message QueueStats {
+    string topic = 1;
+    int64 total_messages = 2;
+    int64 pending_messages = 3;
+    int64 processed_messages = 4;
+    int64 failed_messages = 5;
+    google.protobuf.Timestamp last_updated = 6;
+}
+
+// StatsResponse for queue statistics
+message StatsResponse {
+    repeated QueueStats stats = 1;
+}
+
+// Message Queue Service
+service MessageQueue {
+    // Publish a message to the queue
+    rpc Publish(PublishRequest) returns (PublishResponse);
+    
+    // Consume messages from the queue
+    rpc Consume(ConsumeRequest) returns (stream ConsumeResponse);
+    
+    // Acknowledge processed messages
+    rpc Acknowledge(AckRequest) returns (AckResponse);
+    
+    // Create a new topic
+    rpc CreateTopic(CreateTopicRequest) returns (CreateTopicResponse);
+    
+    // List all topics
+    rpc ListTopics(google.protobuf.Empty) returns (ListTopicsResponse);
+    
+    // Get queue statistics
+    rpc GetStats(google.protobuf.Empty) returns (StatsResponse);
+    
+    // Health check
+    rpc Health(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

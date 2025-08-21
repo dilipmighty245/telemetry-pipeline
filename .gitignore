@@ -1,0 +1,99 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+telemetry.code-workspace
+# Build output directory
+bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Kubernetes manifests (generated)
+kubernetes-manifests*.yaml
+
+# Docker
+.dockerignore
+
+# Helm
+charts/*.tgz
+
+# Local environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Generated documentation
+docs/docs.go
+docs/swagger.json
+docs/swagger.yaml
+
+# Local development databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated protobuf files (if regenerated)
+*.pb.go
+
+# Build artifacts
+dist/
+build/
+
+# Node modules (if any frontend components)
+node_modules/
+
+# Python cache (if any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local CSV data files (keep sample file)
+# dcgm_metrics_*.csv
+# !dcgm_metrics_20250718_134233.csv
