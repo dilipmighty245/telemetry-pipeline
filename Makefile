@@ -294,8 +294,7 @@ generate-protos: ## Generate Go code from protobuf files
 # Clean up
 clean: ## Clean build artifacts
 	@echo "Cleaning up..."
-	rm -rf $(BINARY_DIR)
-	rm -rf docs/
+	rm -rf $(BINARY_DIR)	
 	rm -f coverage.out coverage.html
 	rm -f kubernetes-manifests.yaml
 	go clean -cache
