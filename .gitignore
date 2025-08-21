@@ -5,6 +5,7 @@
 *.so
 *.dylib
 
+telemetry.code-workspace
 # Build output directory
 bin/
 
