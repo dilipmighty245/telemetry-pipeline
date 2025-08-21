@@ -129,7 +129,30 @@ make run-collector
 make run-api-gateway
 ```
 
+#### Option 3: Direct Binary Execution
 
+After building, you can run the binaries directly with custom parameters:
+
+```bash
+# Build the services
+make build
+
+# Run streamer with custom parameters
+./bin/streamer \
+  -csv=dcgm_metrics_20250718_134233.csv \
+  -loop=true \
+  -batch-size=50 \
+  -stream-interval=2s \
+  -log-level=debug
+
+# Run collector with custom parameters (in another terminal)
+./bin/collector \
+  -batch-size=100 \
+  -poll-interval=1s \
+  -log-level=debug \
+  -db-host=localhost \
+  -db-password=postgres
+```
 
 #### Configuration Options
 
