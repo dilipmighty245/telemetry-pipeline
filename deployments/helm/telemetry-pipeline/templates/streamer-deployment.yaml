@@ -1,0 +1,89 @@
+{{- if .Values.streamer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-streamer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: streamer
+spec:
+  replicas: {{ .Values.streamer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: streamer
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: streamer
+        {{- with .Values.streamer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.streamer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "telemetry-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: streamer
+          image: {{ include "telemetry-pipeline.streamer.image" . }}
+          imagePullPolicy: {{ .Values.streamer.image.pullPolicy | default .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - -csv={{ .Values.streamer.config.csvFile }}
+            - -batch-size=$(STREAMER_BATCH_SIZE)
+            - -stream-interval=$(STREAMER_STREAM_INTERVAL)
+            - -loop=$(STREAMER_LOOP_MODE)
+            - -log-level=$(STREAMER_LOG_LEVEL)
+          env:
+            - name: STREAMER_BATCH_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: streamer-batch-size
+            - name: STREAMER_STREAM_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: streamer-stream-interval
+            - name: STREAMER_LOOP_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: streamer-loop-mode
+            - name: STREAMER_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: streamer-log-level
+          resources:
+            {{- toYaml .Values.streamer.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.streamer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.streamer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.streamer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,118 @@
+{{- if .Values.collector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+spec:
+  replicas: {{ .Values.collector.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collector
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: collector
+        {{- with .Values.collector.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.collector.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "telemetry-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: collector
+          image: {{ include "telemetry-pipeline.collector.image" . }}
+          imagePullPolicy: {{ .Values.collector.image.pullPolicy | default .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - -batch-size=$(COLLECTOR_BATCH_SIZE)
+            - -poll-interval=$(COLLECTOR_POLL_INTERVAL)
+            - -buffer-size=$(COLLECTOR_BUFFER_SIZE)
+            - -log-level=$(COLLECTOR_LOG_LEVEL)
+          env:
+            - name: COLLECTOR_BATCH_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: collector-batch-size
+            - name: COLLECTOR_POLL_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: collector-poll-interval
+            - name: COLLECTOR_BUFFER_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: collector-buffer-size
+            - name: COLLECTOR_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: collector-log-level
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: database-host
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: database-port
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: database-name
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: database-username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "telemetry-pipeline.databaseSecretName" . }}
+                  key: {{ include "telemetry-pipeline.databaseSecretPasswordKey" . }}
+            - name: DB_SSLMODE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "telemetry-pipeline.fullname" . }}-config
+                  key: database-sslmode
+          resources:
+            {{- toYaml .Values.collector.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.collector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.collector.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.collector.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

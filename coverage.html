@@ -1,0 +1,3397 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>api-gateway: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/cf/telemetry-pipeline/cmd/api-gateway/main.go (0.0%)</option>
+				
+				<option value="file1">github.com/cf/telemetry-pipeline/cmd/collector/main.go (0.0%)</option>
+				
+				<option value="file2">github.com/cf/telemetry-pipeline/cmd/streamer/main.go (0.0%)</option>
+				
+				<option value="file3">github.com/cf/telemetry-pipeline/internal/api/handlers.go (0.0%)</option>
+				
+				<option value="file4">github.com/cf/telemetry-pipeline/internal/api/router.go (0.0%)</option>
+				
+				<option value="file5">github.com/cf/telemetry-pipeline/internal/collector/database.go (0.0%)</option>
+				
+				<option value="file6">github.com/cf/telemetry-pipeline/internal/collector/service.go (0.0%)</option>
+				
+				<option value="file7">github.com/cf/telemetry-pipeline/internal/streamer/csv_reader.go (80.9%)</option>
+				
+				<option value="file8">github.com/cf/telemetry-pipeline/internal/streamer/service.go (0.0%)</option>
+				
+				<option value="file9">github.com/cf/telemetry-pipeline/pkg/logging/logging.go (42.1%)</option>
+				
+				<option value="file10">github.com/cf/telemetry-pipeline/pkg/messagequeue/queue.go (94.4%)</option>
+				
+				<option value="file11">github.com/cf/telemetry-pipeline/pkg/messagequeue/service.go (0.0%)</option>
+				
+				<option value="file12">github.com/cf/telemetry-pipeline/pkg/models/telemetry.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Package main provides the API Gateway service
+//
+// @title Telemetry Pipeline API
+// @version 1.0
+// @description Elastic GPU Telemetry Pipeline REST API
+// @termsOfService http://swagger.io/terms/
+//
+// @contact.name API Support
+// @contact.url http://www.example.com/support
+// @contact.email support@example.com
+//
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+//
+// @host localhost:8080
+// @BasePath /
+// @schemes http https
+//
+// @securityDefinitions.basic BasicAuth
+//
+// @externalDocs.description OpenAPI
+// @externalDocs.url https://swagger.io/resources/open-api/
+package main
+
+import (
+        "context"
+        "flag"
+        "net/http"
+        "os"
+        "os/signal"
+        "strconv"
+        "syscall"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/internal/api"
+        "github.com/cf/telemetry-pipeline/internal/collector"
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+)
+
+var (
+        port     = flag.Int("port", 8080, "HTTP server port")
+        logLevel = flag.String("log-level", "info", "Log level (debug, info, warn, error, fatal)")
+
+        // Database configuration
+        dbHost     = flag.String("db-host", "localhost", "Database host")
+        dbPort     = flag.Int("db-port", 5432, "Database port")
+        dbUser     = flag.String("db-user", "postgres", "Database user")
+        dbPassword = flag.String("db-password", "postgres", "Database password")
+        dbName     = flag.String("db-name", "telemetry", "Database name")
+        dbSSLMode  = flag.String("db-sslmode", "disable", "Database SSL mode")
+)
+
+func main() <span class="cov0" title="0">{
+        flag.Parse()
+
+        // Set log level
+        logging.SetLogLevel(*logLevel, "")
+
+        logging.Infof("Starting Telemetry API Gateway")
+        logging.Infof("Port: %d", *port)
+        logging.Infof("Database: %s@%s:%d/%s", *dbUser, *dbHost, *dbPort, *dbName)
+
+        // Create database configuration
+        dbConfig := &amp;collector.DatabaseConfig{
+                Host:     *dbHost,
+                Port:     *dbPort,
+                User:     *dbUser,
+                Password: *dbPassword,
+                DBName:   *dbName,
+                SSLMode:  *dbSSLMode,
+        }
+
+        // Create database service
+        dbService, err := collector.NewDatabaseService(dbConfig)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to create database service: %v", err)
+        }</span>
+        <span class="cov0" title="0">defer dbService.Close()
+
+        // Create API handler
+        apiHandler := api.NewAPIHandler(dbService)
+
+        // Setup router
+        router := api.SetupRouter(apiHandler)
+
+        // Create HTTP server
+        server := &amp;http.Server{
+                Addr:         ":" + strconv.Itoa(*port),
+                Handler:      router,
+                ReadTimeout:  15 * time.Second,
+                WriteTimeout: 15 * time.Second,
+                IdleTimeout:  60 * time.Second,
+        }
+
+        // Create context for graceful shutdown
+        ctx, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        // Handle shutdown signals
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+        go func() </span><span class="cov0" title="0">{
+                &lt;-sigChan
+                logging.Infof("Received shutdown signal, stopping API gateway...")
+                cancel()
+
+                // Graceful shutdown with timeout
+                shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+                defer shutdownCancel()
+
+                if err := server.Shutdown(shutdownCtx); err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Error during server shutdown: %v", err)
+                }</span>
+        }()
+
+        // Start HTTP server
+        <span class="cov0" title="0">logging.Infof("API Gateway listening on port %d", *port)
+        logging.Infof("Swagger documentation available at http://localhost:%d/swagger/index.html", *port)
+
+        if err := server.ListenAndServe(); err != nil &amp;&amp; err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to start HTTP server: %v", err)
+        }</span>
+
+        // Wait for shutdown to complete
+        <span class="cov0" title="0">&lt;-ctx.Done()
+        logging.Infof("Telemetry API Gateway stopped")</span>
+}
+
+func init() <span class="cov0" title="0">{
+        // Override with environment variables if available
+        if envPort := os.Getenv("PORT"); envPort != "" </span><span class="cov0" title="0">{
+                if p, err := strconv.Atoi(envPort); err == nil </span><span class="cov0" title="0">{
+                        *port = p
+                }</span>
+        }
+        <span class="cov0" title="0">if envHost := os.Getenv("DB_HOST"); envHost != "" </span><span class="cov0" title="0">{
+                *dbHost = envHost
+        }</span>
+        <span class="cov0" title="0">if envPort := os.Getenv("DB_PORT"); envPort != "" </span><span class="cov0" title="0">{
+                if p, err := strconv.Atoi(envPort); err == nil </span><span class="cov0" title="0">{
+                        *dbPort = p
+                }</span>
+        }
+        <span class="cov0" title="0">if envUser := os.Getenv("DB_USER"); envUser != "" </span><span class="cov0" title="0">{
+                *dbUser = envUser
+        }</span>
+        <span class="cov0" title="0">if envPassword := os.Getenv("DB_PASSWORD"); envPassword != "" </span><span class="cov0" title="0">{
+                *dbPassword = envPassword
+        }</span>
+        <span class="cov0" title="0">if envName := os.Getenv("DB_NAME"); envName != "" </span><span class="cov0" title="0">{
+                *dbName = envName
+        }</span>
+        <span class="cov0" title="0">if envSSLMode := os.Getenv("DB_SSLMODE"); envSSLMode != "" </span><span class="cov0" title="0">{
+                *dbSSLMode = envSSLMode
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package main
+
+import (
+        "context"
+        "flag"
+        "os"
+        "os/signal"
+        "strconv"
+        "syscall"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/internal/collector"
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/messagequeue"
+)
+
+var (
+        collectorID   = flag.String("collector-id", "", "Unique identifier for this collector instance")
+        consumerGroup = flag.String("consumer-group", "telemetry-collectors", "Consumer group name")
+        batchSize     = flag.Int("batch-size", 100, "Number of messages to process in each batch")
+        pollInterval  = flag.Duration("poll-interval", 1*time.Second, "Interval between polling for messages")
+        maxRetries    = flag.Int("max-retries", 3, "Maximum number of retries for failed operations")
+        retryDelay    = flag.Duration("retry-delay", 1*time.Second, "Delay between retries")
+        bufferSize    = flag.Int("buffer-size", 1000, "Internal buffer size for batching")
+        logLevel      = flag.String("log-level", "info", "Log level (debug, info, warn, error, fatal)")
+
+        // Database configuration
+        dbHost     = flag.String("db-host", "localhost", "Database host")
+        dbPort     = flag.Int("db-port", 5432, "Database port")
+        dbUser     = flag.String("db-user", "postgres", "Database user")
+        dbPassword = flag.String("db-password", "postgres", "Database password")
+        dbName     = flag.String("db-name", "telemetry", "Database name")
+        dbSSLMode  = flag.String("db-sslmode", "disable", "Database SSL mode")
+)
+
+func main() <span class="cov0" title="0">{
+        flag.Parse()
+
+        // Set log level
+        logging.SetLogLevel(*logLevel, "")
+
+        logging.Infof("Starting Telemetry Collector Service")
+        logging.Infof("Collector ID: %s", getCollectorID())
+        logging.Infof("Consumer Group: %s", *consumerGroup)
+        logging.Infof("Batch Size: %d", *batchSize)
+        logging.Infof("Poll Interval: %v", *pollInterval)
+        logging.Infof("Database: %s@%s:%d/%s", *dbUser, *dbHost, *dbPort, *dbName)
+
+        // Create message queue service
+        mqService := messagequeue.NewMessageQueueService()
+        defer mqService.Stop()
+
+        // Create database configuration
+        dbConfig := &amp;collector.DatabaseConfig{
+                Host:     *dbHost,
+                Port:     *dbPort,
+                User:     *dbUser,
+                Password: *dbPassword,
+                DBName:   *dbName,
+                SSLMode:  *dbSSLMode,
+        }
+
+        // Create collector configuration
+        config := &amp;collector.CollectorConfig{
+                CollectorID:    getCollectorID(),
+                ConsumerGroup:  *consumerGroup,
+                BatchSize:      *batchSize,
+                PollInterval:   *pollInterval,
+                MaxRetries:     *maxRetries,
+                RetryDelay:     *retryDelay,
+                BufferSize:     *bufferSize,
+                EnableMetrics:  true,
+                DatabaseConfig: dbConfig,
+        }
+
+        // Create collector service
+        collectorService, err := collector.NewCollectorService(config, mqService)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to create collector service: %v", err)
+        }</span>
+
+        // Create context for graceful shutdown
+        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        // Handle shutdown signals
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+        go func() </span><span class="cov0" title="0">{
+                &lt;-sigChan
+                logging.Infof("Received shutdown signal, stopping collector service...")
+                cancel()
+        }</span>()
+
+        // Start collector service
+        <span class="cov0" title="0">err = collectorService.Start()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to start collector service: %v", err)
+        }</span>
+
+        // Start metrics reporting goroutine
+        <span class="cov0" title="0">go metricsReporter(ctx, collectorService)
+
+        // Wait for shutdown signal
+        &lt;-ctx.Done()
+
+        // Graceful shutdown
+        logging.Infof("Shutting down collector service...")
+        err = collectorService.Stop()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Error stopping collector service: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Telemetry Collector Service stopped")</span>
+}
+
+// metricsReporter periodically reports metrics
+func metricsReporter(ctx context.Context, service *collector.CollectorService) <span class="cov0" title="0">{
+        ticker := time.NewTicker(30 * time.Second)
+        defer ticker.Stop()
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        metrics := service.GetMetrics()
+                        logging.Infof("Collector Metrics - Collected: %d, Persisted: %d, Batches: %d, Errors: %d, Rate: %.2f records/sec",
+                                metrics.TotalRecordsCollected,
+                                metrics.TotalRecordsPersisted,
+                                metrics.TotalBatchesCollected,
+                                metrics.TotalErrors,
+                                metrics.CollectionRate)
+
+                        if lastError := service.GetLastError(); lastError != nil </span><span class="cov0" title="0">{
+                                logging.Warnf("Last error: %v", lastError)
+                        }</span>
+
+                        // Report database stats if available
+                        <span class="cov0" title="0">if dbService := service.GetDatabaseService(); dbService != nil </span><span class="cov0" title="0">{
+                                stats, err := dbService.GetTelemetryStats()
+                                if err == nil </span><span class="cov0" title="0">{
+                                        logging.Infof("Database Stats - Total Records: %v, Unique GPUs: %v, Unique Hosts: %v",
+                                                stats["total_records"], stats["unique_gpus"], stats["unique_hosts"])
+                                }</span>
+                        }
+                }
+        }
+}
+
+// getCollectorID generates a collector ID if not provided
+func getCollectorID() string <span class="cov0" title="0">{
+        if *collectorID != "" </span><span class="cov0" title="0">{
+                return *collectorID
+        }</span>
+
+        <span class="cov0" title="0">hostname, err := os.Hostname()
+        if err != nil </span><span class="cov0" title="0">{
+                hostname = "unknown"
+        }</span>
+
+        <span class="cov0" title="0">pid := os.Getpid()
+        return hostname + "-collector-" + strconv.Itoa(pid) + "-" + time.Now().Format("20060102150405")</span>
+}
+
+// getEnvOrDefault returns environment variable value or default
+func getEnvOrDefault(envVar, defaultValue string) string <span class="cov0" title="0">{
+        if value := os.Getenv(envVar); value != "" </span><span class="cov0" title="0">{
+                return value
+        }</span>
+        <span class="cov0" title="0">return defaultValue</span>
+}
+
+func init() <span class="cov0" title="0">{
+        // Override with environment variables if available
+        if envHost := os.Getenv("DB_HOST"); envHost != "" </span><span class="cov0" title="0">{
+                *dbHost = envHost
+        }</span>
+        <span class="cov0" title="0">if envPort := os.Getenv("DB_PORT"); envPort != "" </span><span class="cov0" title="0">{
+                if port, err := strconv.Atoi(envPort); err == nil </span><span class="cov0" title="0">{
+                        *dbPort = port
+                }</span>
+        }
+        <span class="cov0" title="0">if envUser := os.Getenv("DB_USER"); envUser != "" </span><span class="cov0" title="0">{
+                *dbUser = envUser
+        }</span>
+        <span class="cov0" title="0">if envPassword := os.Getenv("DB_PASSWORD"); envPassword != "" </span><span class="cov0" title="0">{
+                *dbPassword = envPassword
+        }</span>
+        <span class="cov0" title="0">if envName := os.Getenv("DB_NAME"); envName != "" </span><span class="cov0" title="0">{
+                *dbName = envName
+        }</span>
+        <span class="cov0" title="0">if envSSLMode := os.Getenv("DB_SSLMODE"); envSSLMode != "" </span><span class="cov0" title="0">{
+                *dbSSLMode = envSSLMode
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package main
+
+import (
+        "context"
+        "flag"
+        "os"
+        "os/signal"
+        "path/filepath"
+        "syscall"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/internal/streamer"
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/messagequeue"
+)
+
+var (
+        csvFile        = flag.String("csv", "dcgm_metrics_20250718_134233.csv", "Path to CSV file containing telemetry data")
+        batchSize      = flag.Int("batch-size", 100, "Number of records to process in each batch")
+        streamInterval = flag.Duration("stream-interval", 1*time.Second, "Interval between streaming batches")
+        loopMode       = flag.Bool("loop", true, "Enable loop mode to continuously stream data")
+        streamerID     = flag.String("streamer-id", "", "Unique identifier for this streamer instance")
+        maxRetries     = flag.Int("max-retries", 3, "Maximum number of retries for failed operations")
+        retryDelay     = flag.Duration("retry-delay", 1*time.Second, "Delay between retries")
+        logLevel       = flag.String("log-level", "info", "Log level (debug, info, warn, error, fatal)")
+)
+
+func main() <span class="cov0" title="0">{
+        flag.Parse()
+
+        // Set log level
+        logging.SetLogLevel(*logLevel, "")
+
+        logging.Infof("Starting Telemetry Streamer Service")
+        logging.Infof("CSV File: %s", *csvFile)
+        logging.Infof("Batch Size: %d", *batchSize)
+        logging.Infof("Stream Interval: %v", *streamInterval)
+        logging.Infof("Loop Mode: %v", *loopMode)
+
+        // Validate CSV file exists
+        if _, err := os.Stat(*csvFile); os.IsNotExist(err) </span><span class="cov0" title="0">{
+                logging.Fatalf("CSV file does not exist: %s", *csvFile)
+        }</span>
+
+        // Generate streamer ID if not provided
+        <span class="cov0" title="0">if *streamerID == "" </span><span class="cov0" title="0">{
+                hostname, _ := os.Hostname()
+                *streamerID = hostname + "-streamer-" + time.Now().Format("20060102150405")
+        }</span>
+
+        // Create message queue service
+        <span class="cov0" title="0">mqService := messagequeue.NewMessageQueueService()
+        defer mqService.Stop()
+
+        // Create streamer configuration
+        config := &amp;streamer.StreamerConfig{
+                CSVFilePath:    *csvFile,
+                BatchSize:      *batchSize,
+                StreamInterval: *streamInterval,
+                LoopMode:       *loopMode,
+                MaxRetries:     *maxRetries,
+                RetryDelay:     *retryDelay,
+                EnableMetrics:  true,
+                StreamerID:     *streamerID,
+                BufferSize:     1000,
+        }
+
+        // Create streamer service
+        streamerService, err := streamer.NewStreamerService(config, mqService)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to create streamer service: %v", err)
+        }</span>
+
+        // Create context for graceful shutdown
+        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        // Handle shutdown signals
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+        go func() </span><span class="cov0" title="0">{
+                &lt;-sigChan
+                logging.Infof("Received shutdown signal, stopping streamer service...")
+                cancel()
+        }</span>()
+
+        // Start streamer service
+        <span class="cov0" title="0">err = streamerService.Start()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Fatalf("Failed to start streamer service: %v", err)
+        }</span>
+
+        // Start metrics reporting goroutine
+        <span class="cov0" title="0">go metricsReporter(ctx, streamerService)
+
+        // Wait for shutdown signal
+        &lt;-ctx.Done()
+
+        // Graceful shutdown
+        logging.Infof("Shutting down streamer service...")
+        err = streamerService.Stop()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Error stopping streamer service: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Telemetry Streamer Service stopped")</span>
+}
+
+// metricsReporter periodically reports metrics
+func metricsReporter(ctx context.Context, service *streamer.StreamerService) <span class="cov0" title="0">{
+        ticker := time.NewTicker(30 * time.Second)
+        defer ticker.Stop()
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        metrics := service.GetMetrics()
+                        logging.Infof("Streamer Metrics - Records: %d, Batches: %d, Errors: %d, Rate: %.2f records/sec",
+                                metrics.TotalRecordsStreamed,
+                                metrics.TotalBatchesStreamed,
+                                metrics.TotalErrors,
+                                metrics.StreamingRate)
+
+                        if lastError := service.GetLastError(); lastError != nil </span><span class="cov0" title="0">{
+                                logging.Warnf("Last error: %v", lastError)
+                        }</span>
+                }
+        }
+}
+
+func init() <span class="cov0" title="0">{
+        // Ensure CSV file path is absolute if it's relative
+        flag.Parse()
+        if *csvFile != "" &amp;&amp; !filepath.IsAbs(*csvFile) </span><span class="cov0" title="0">{
+                wd, err := os.Getwd()
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to get working directory: %v", err)
+                }</span> else<span class="cov0" title="0"> {
+                        *csvFile = filepath.Join(wd, *csvFile)
+                }</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package api
+
+import (
+        "encoding/json"
+        "net/http"
+        "strconv"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/internal/collector"
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/models"
+        "github.com/gorilla/mux"
+)
+
+// APIHandler handles HTTP requests for the telemetry API
+type APIHandler struct {
+        database *collector.DatabaseService
+}
+
+// NewAPIHandler creates a new API handler
+func NewAPIHandler(database *collector.DatabaseService) *APIHandler <span class="cov0" title="0">{
+        return &amp;APIHandler{
+                database: database,
+        }
+}</span>
+
+// HealthResponse represents health check response
+type HealthResponse struct {
+        Status    string    `json:"status"`
+        Timestamp time.Time `json:"timestamp"`
+        Service   string    `json:"service"`
+}
+
+// ErrorResponse represents error response
+type ErrorResponse struct {
+        Error   string `json:"error"`
+        Code    int    `json:"code"`
+        Message string `json:"message"`
+}
+
+// ListGPUsResponse represents the response for listing GPUs
+type ListGPUsResponse struct {
+        GPUs  []models.GPU `json:"gpus"`
+        Count int          `json:"count"`
+}
+
+// Health godoc
+// @Summary Health check
+// @Description Returns the health status of the API service
+// @Tags health
+// @Produce json
+// @Success 200 {object} HealthResponse
+// @Router /health [get]
+func (h *APIHandler) Health(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        response := HealthResponse{
+                Status:    "healthy",
+                Timestamp: time.Now(),
+                Service:   "telemetry-api",
+        }
+
+        // Check database health
+        if h.database != nil &amp;&amp; !h.database.Health() </span><span class="cov0" title="0">{
+                response.Status = "unhealthy"
+                w.WriteHeader(http.StatusServiceUnavailable)
+        }</span>
+
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)</span>
+}
+
+// ListGPUs godoc
+// @Summary List all GPUs
+// @Description Returns a list of all GPUs for which telemetry data is available
+// @Tags gpus
+// @Produce json
+// @Success 200 {object} ListGPUsResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/gpus [get]
+func (h *APIHandler) ListGPUs(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        if h.database == nil </span><span class="cov0" title="0">{
+                h.writeError(w, "Database service not available", http.StatusServiceUnavailable)
+                return
+        }</span>
+
+        <span class="cov0" title="0">gpus, err := h.database.GetGPUs()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to get GPUs: %v", err)
+                h.writeError(w, "Failed to retrieve GPUs", http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov0" title="0">response := ListGPUsResponse{
+                GPUs:  gpus,
+                Count: len(gpus),
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+
+        logging.Debugf("Listed %d GPUs", len(gpus))</span>
+}
+
+// GetGPUTelemetry godoc
+// @Summary Get telemetry data for a specific GPU
+// @Description Returns telemetry data for a specific GPU with optional time window filters
+// @Tags gpus
+// @Produce json
+// @Param id path string true "GPU ID"
+// @Param start_time query string false "Start time (RFC3339 format)"
+// @Param end_time query string false "End time (RFC3339 format)"
+// @Param limit query int false "Maximum number of records to return (default: 100, max: 1000)"
+// @Param offset query int false "Number of records to skip (default: 0)"
+// @Success 200 {object} models.TelemetryQueryResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/gpus/{id}/telemetry [get]
+func (h *APIHandler) GetGPUTelemetry(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        if h.database == nil </span><span class="cov0" title="0">{
+                h.writeError(w, "Database service not available", http.StatusServiceUnavailable)
+                return
+        }</span>
+
+        // Extract GPU ID from path
+        <span class="cov0" title="0">vars := mux.Vars(r)
+        gpuID := vars["id"]
+        if gpuID == "" </span><span class="cov0" title="0">{
+                h.writeError(w, "GPU ID is required", http.StatusBadRequest)
+                return
+        }</span>
+
+        // Parse query parameters
+        <span class="cov0" title="0">query := &amp;models.TelemetryQuery{
+                GPUID:  gpuID,
+                Limit:  100, // Default limit
+                Offset: 0,   // Default offset
+        }
+
+        // Parse start_time
+        if startTimeStr := r.URL.Query().Get("start_time"); startTimeStr != "" </span><span class="cov0" title="0">{
+                startTime, err := time.Parse(time.RFC3339, startTimeStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        h.writeError(w, "Invalid start_time format, use RFC3339", http.StatusBadRequest)
+                        return
+                }</span>
+                <span class="cov0" title="0">query.StartTime = startTime</span>
+        }
+
+        // Parse end_time
+        <span class="cov0" title="0">if endTimeStr := r.URL.Query().Get("end_time"); endTimeStr != "" </span><span class="cov0" title="0">{
+                endTime, err := time.Parse(time.RFC3339, endTimeStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        h.writeError(w, "Invalid end_time format, use RFC3339", http.StatusBadRequest)
+                        return
+                }</span>
+                <span class="cov0" title="0">query.EndTime = endTime</span>
+        }
+
+        // Parse limit
+        <span class="cov0" title="0">if limitStr := r.URL.Query().Get("limit"); limitStr != "" </span><span class="cov0" title="0">{
+                limit, err := strconv.Atoi(limitStr)
+                if err != nil || limit &lt;= 0 </span><span class="cov0" title="0">{
+                        h.writeError(w, "Invalid limit parameter", http.StatusBadRequest)
+                        return
+                }</span>
+                <span class="cov0" title="0">if limit &gt; 1000 </span><span class="cov0" title="0">{
+                        limit = 1000 // Cap at 1000
+                }</span>
+                <span class="cov0" title="0">query.Limit = limit</span>
+        }
+
+        // Parse offset
+        <span class="cov0" title="0">if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" </span><span class="cov0" title="0">{
+                offset, err := strconv.Atoi(offsetStr)
+                if err != nil || offset &lt; 0 </span><span class="cov0" title="0">{
+                        h.writeError(w, "Invalid offset parameter", http.StatusBadRequest)
+                        return
+                }</span>
+                <span class="cov0" title="0">query.Offset = offset</span>
+        }
+
+        // Validate time range
+        <span class="cov0" title="0">if !query.StartTime.IsZero() &amp;&amp; !query.EndTime.IsZero() &amp;&amp; query.StartTime.After(query.EndTime) </span><span class="cov0" title="0">{
+                h.writeError(w, "start_time cannot be after end_time", http.StatusBadRequest)
+                return
+        }</span>
+
+        // Query telemetry data
+        <span class="cov0" title="0">response, err := h.database.QueryTelemetryData(query)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to query telemetry data for GPU %s: %v", gpuID, err)
+                h.writeError(w, "Failed to retrieve telemetry data", http.StatusInternalServerError)
+                return
+        }</span>
+
+        // Check if GPU exists (if no data found)
+        <span class="cov0" title="0">if len(response.DataPoints) == 0 &amp;&amp; response.TotalCount == 0 </span><span class="cov0" title="0">{
+                // Check if GPU exists at all
+                gpus, err := h.database.GetGPUs()
+                if err == nil </span><span class="cov0" title="0">{
+                        found := false
+                        for _, gpu := range gpus </span><span class="cov0" title="0">{
+                                if gpu.GPUID == gpuID </span><span class="cov0" title="0">{
+                                        found = true
+                                        break</span>
+                                }
+                        }
+                        <span class="cov0" title="0">if !found </span><span class="cov0" title="0">{
+                                h.writeError(w, "GPU not found", http.StatusNotFound)
+                                return
+                        }</span>
+                }
+        }
+
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+
+        logging.Debugf("Retrieved %d telemetry records for GPU %s", len(response.DataPoints), gpuID)</span>
+}
+
+// GetStats godoc
+// @Summary Get telemetry statistics
+// @Description Returns overall statistics about the telemetry data
+// @Tags stats
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/stats [get]
+func (h *APIHandler) GetStats(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        if h.database == nil </span><span class="cov0" title="0">{
+                h.writeError(w, "Database service not available", http.StatusServiceUnavailable)
+                return
+        }</span>
+
+        <span class="cov0" title="0">stats, err := h.database.GetTelemetryStats()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to get telemetry stats: %v", err)
+                h.writeError(w, "Failed to retrieve statistics", http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(stats)
+
+        logging.Debugf("Retrieved telemetry statistics")</span>
+}
+
+// writeError writes an error response
+func (h *APIHandler) writeError(w http.ResponseWriter, message string, code int) <span class="cov0" title="0">{
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(code)
+
+        errorResponse := ErrorResponse{
+                Error:   http.StatusText(code),
+                Code:    code,
+                Message: message,
+        }
+
+        json.NewEncoder(w).Encode(errorResponse)
+}</span>
+
+// CORS middleware
+func (h *APIHandler) CORS(next http.Handler) http.Handler <span class="cov0" title="0">{
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                w.Header().Set("Access-Control-Allow-Origin", "*")
+                w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+                if r.Method == "OPTIONS" </span><span class="cov0" title="0">{
+                        w.WriteHeader(http.StatusOK)
+                        return
+                }</span>
+
+                <span class="cov0" title="0">next.ServeHTTP(w, r)</span>
+        })
+}
+
+// LoggingMiddleware logs HTTP requests
+func (h *APIHandler) LoggingMiddleware(next http.Handler) http.Handler <span class="cov0" title="0">{
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                start := time.Now()
+
+                // Create a response writer wrapper to capture status code
+                wrapper := &amp;responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+                next.ServeHTTP(wrapper, r)
+
+                duration := time.Since(start)
+                logging.Infof("%s %s %d %v", r.Method, r.URL.Path, wrapper.statusCode, duration)
+        }</span>)
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+        http.ResponseWriter
+        statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) <span class="cov0" title="0">{
+        rw.statusCode = code
+        rw.ResponseWriter.WriteHeader(code)
+}</span>
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package api
+
+import (
+        "net/http"
+
+        "github.com/gorilla/mux"
+        httpSwagger "github.com/swaggo/http-swagger"
+)
+
+// SetupRouter sets up the HTTP router with all routes
+func SetupRouter(handler *APIHandler) *mux.Router <span class="cov0" title="0">{
+        router := mux.NewRouter()
+
+        // Apply middleware
+        router.Use(handler.CORS)
+        router.Use(handler.LoggingMiddleware)
+
+        // Health check endpoint
+        router.HandleFunc("/health", handler.Health).Methods("GET")
+
+        // API v1 routes
+        v1 := router.PathPrefix("/api/v1").Subrouter()
+
+        // GPU endpoints
+        v1.HandleFunc("/gpus", handler.ListGPUs).Methods("GET")
+        v1.HandleFunc("/gpus/{id}/telemetry", handler.GetGPUTelemetry).Methods("GET")
+
+        // Stats endpoint
+        v1.HandleFunc("/stats", handler.GetStats).Methods("GET")
+
+        // Swagger documentation
+        router.PathPrefix("/swagger/").Handler(httpSwagger.WrapHandler)
+
+        // Serve static files (if any)
+        router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
+
+        return router
+}</span>
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package collector
+
+import (
+        "strconv"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/models"
+        "gorm.io/driver/postgres"
+        "gorm.io/gorm"
+        "gorm.io/gorm/logger"
+)
+
+// DatabaseConfig represents database configuration
+type DatabaseConfig struct {
+        Host     string `json:"host"`
+        Port     int    `json:"port"`
+        User     string `json:"user"`
+        Password string `json:"password"`
+        DBName   string `json:"dbname"`
+        SSLMode  string `json:"sslmode"`
+}
+
+// DatabaseService handles database operations for telemetry data
+type DatabaseService struct {
+        db     *gorm.DB
+        config *DatabaseConfig
+}
+
+// NewDatabaseService creates a new database service
+func NewDatabaseService(config *DatabaseConfig) (*DatabaseService, error) <span class="cov0" title="0">{
+        // Build connection string
+        dsn := buildConnectionString(config)
+
+        // Configure GORM logger
+        gormLogger := logger.New(
+                &amp;gormLogWriter{},
+                logger.Config{
+                        SlowThreshold:             time.Second,
+                        LogLevel:                  logger.Warn,
+                        IgnoreRecordNotFoundError: true,
+                        Colorful:                  false,
+                },
+        )
+
+        // Connect to database
+        db, err := gorm.Open(postgres.Open(dsn), &amp;gorm.Config{
+                Logger: gormLogger,
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to connect to database: %v", err)
+                return nil, err
+        }</span>
+
+        // Configure connection pool
+        <span class="cov0" title="0">sqlDB, err := db.DB()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to get database instance: %v", err)
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">sqlDB.SetMaxOpenConns(25)
+        sqlDB.SetMaxIdleConns(5)
+        sqlDB.SetConnMaxLifetime(5 * time.Minute)
+
+        service := &amp;DatabaseService{
+                db:     db,
+                config: config,
+        }
+
+        // Auto-migrate the schema
+        err = service.migrate()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to migrate database schema: %v", err)
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Connected to database %s@%s:%d/%s", config.User, config.Host, config.Port, config.DBName)
+        return service, nil</span>
+}
+
+// migrate performs database schema migration
+func (ds *DatabaseService) migrate() error <span class="cov0" title="0">{
+        err := ds.db.AutoMigrate(&amp;models.TelemetryData{})
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Create indexes for better query performance
+        <span class="cov0" title="0">err = ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_data (timestamp)").Error
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Warnf("Failed to create timestamp index: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">err = ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_telemetry_gpu_timestamp ON telemetry_data (gpu_id, timestamp)").Error
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Warnf("Failed to create gpu_id+timestamp index: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">err = ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_telemetry_hostname ON telemetry_data (hostname)").Error
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Warnf("Failed to create hostname index: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Database schema migration completed")
+        return nil</span>
+}
+
+// SaveTelemetryData saves a single telemetry data point
+func (ds *DatabaseService) SaveTelemetryData(data *models.TelemetryData) error <span class="cov0" title="0">{
+        result := ds.db.Create(data)
+        if result.Error != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to save telemetry data: %v", result.Error)
+                return result.Error
+        }</span>
+
+        <span class="cov0" title="0">logging.Debugf("Saved telemetry data: GPU %s, Metric %s, Value %f",
+                data.GPUID, data.MetricName, data.Value)
+        return nil</span>
+}
+
+// SaveTelemetryDataBatch saves multiple telemetry data points in a batch
+func (ds *DatabaseService) SaveTelemetryDataBatch(dataList []*models.TelemetryData) error <span class="cov0" title="0">{
+        if len(dataList) == 0 </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        // Use batch insert for better performance
+        <span class="cov0" title="0">batchSize := 100
+        for i := 0; i &lt; len(dataList); i += batchSize </span><span class="cov0" title="0">{
+                end := i + batchSize
+                if end &gt; len(dataList) </span><span class="cov0" title="0">{
+                        end = len(dataList)
+                }</span>
+
+                <span class="cov0" title="0">batch := dataList[i:end]
+                result := ds.db.CreateInBatches(batch, batchSize)
+                if result.Error != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to save telemetry data batch: %v", result.Error)
+                        return result.Error
+                }</span>
+        }
+
+        <span class="cov0" title="0">logging.Debugf("Saved batch of %d telemetry data points", len(dataList))
+        return nil</span>
+}
+
+// GetGPUs returns all unique GPUs that have telemetry data
+func (ds *DatabaseService) GetGPUs() ([]models.GPU, error) <span class="cov0" title="0">{
+        var gpus []models.GPU
+
+        result := ds.db.Model(&amp;models.TelemetryData{}).
+                Select("DISTINCT gpu_id, uuid, model_name, hostname, device").
+                Where("gpu_id != '' AND uuid != ''").
+                Scan(&amp;gpus)
+
+        if result.Error != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to get GPUs: %v", result.Error)
+                return nil, result.Error
+        }</span>
+
+        <span class="cov0" title="0">logging.Debugf("Found %d unique GPUs", len(gpus))
+        return gpus, nil</span>
+}
+
+// QueryTelemetryData queries telemetry data based on the provided query parameters
+func (ds *DatabaseService) QueryTelemetryData(query *models.TelemetryQuery) (*models.TelemetryQueryResponse, error) <span class="cov0" title="0">{
+        var telemetryData []models.TelemetryData
+        var totalCount int64
+
+        // Build the base query
+        baseQuery := ds.db.Model(&amp;models.TelemetryData{})
+
+        // Apply filters
+        if query.GPUID != "" </span><span class="cov0" title="0">{
+                baseQuery = baseQuery.Where("gpu_id = ?", query.GPUID)
+        }</span>
+
+        <span class="cov0" title="0">if !query.StartTime.IsZero() </span><span class="cov0" title="0">{
+                baseQuery = baseQuery.Where("timestamp &gt;= ?", query.StartTime)
+        }</span>
+
+        <span class="cov0" title="0">if !query.EndTime.IsZero() </span><span class="cov0" title="0">{
+                baseQuery = baseQuery.Where("timestamp &lt;= ?", query.EndTime)
+        }</span>
+
+        // Get total count
+        <span class="cov0" title="0">err := baseQuery.Count(&amp;totalCount).Error
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to count telemetry data: %v", err)
+                return nil, err
+        }</span>
+
+        // Apply pagination and ordering
+        <span class="cov0" title="0">query.Limit = max(query.Limit, 1000) // Cap at 1000 records
+        if query.Limit &lt;= 0 </span><span class="cov0" title="0">{
+                query.Limit = 100 // Default limit
+        }</span>
+
+        <span class="cov0" title="0">dataQuery := baseQuery.
+                Order("timestamp DESC").
+                Limit(query.Limit).
+                Offset(query.Offset)
+
+        err = dataQuery.Find(&amp;telemetryData).Error
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to query telemetry data: %v", err)
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">response := &amp;models.TelemetryQueryResponse{
+                DataPoints: telemetryData,
+                TotalCount: totalCount,
+                HasMore:    int64(query.Offset+len(telemetryData)) &lt; totalCount,
+        }
+
+        logging.Debugf("Queried %d telemetry records (total: %d)", len(telemetryData), totalCount)
+        return response, nil</span>
+}
+
+// GetTelemetryStats returns statistics about stored telemetry data
+func (ds *DatabaseService) GetTelemetryStats() (map[string]interface{}, error) <span class="cov0" title="0">{
+        stats := make(map[string]interface{})
+
+        // Total records
+        var totalRecords int64
+        err := ds.db.Model(&amp;models.TelemetryData{}).Count(&amp;totalRecords).Error
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">stats["total_records"] = totalRecords
+
+        // Unique GPUs
+        var uniqueGPUs int64
+        err = ds.db.Model(&amp;models.TelemetryData{}).
+                Distinct("gpu_id").
+                Count(&amp;uniqueGPUs).Error
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">stats["unique_gpus"] = uniqueGPUs
+
+        // Unique hosts
+        var uniqueHosts int64
+        err = ds.db.Model(&amp;models.TelemetryData{}).
+                Distinct("hostname").
+                Count(&amp;uniqueHosts).Error
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">stats["unique_hosts"] = uniqueHosts
+
+        // Date range
+        var minTime, maxTime time.Time
+        err = ds.db.Model(&amp;models.TelemetryData{}).
+                Select("MIN(timestamp) as min_time, MAX(timestamp) as max_time").
+                Scan(&amp;struct {
+                        MinTime time.Time `gorm:"column:min_time"`
+                        MaxTime time.Time `gorm:"column:max_time"`
+                }{MinTime: minTime, MaxTime: maxTime}).Error
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">stats["earliest_timestamp"] = minTime
+        stats["latest_timestamp"] = maxTime
+
+        return stats, nil</span>
+}
+
+// Health checks the health of the database connection
+func (ds *DatabaseService) Health() bool <span class="cov0" title="0">{
+        sqlDB, err := ds.db.DB()
+        if err != nil </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov0" title="0">err = sqlDB.Ping()
+        return err == nil</span>
+}
+
+// Close closes the database connection
+func (ds *DatabaseService) Close() error <span class="cov0" title="0">{
+        sqlDB, err := ds.db.DB()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">err = sqlDB.Close()
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to close database connection: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Database connection closed")
+        return nil</span>
+}
+
+// buildConnectionString builds PostgreSQL connection string from config
+func buildConnectionString(config *DatabaseConfig) string <span class="cov0" title="0">{
+        if config.SSLMode == "" </span><span class="cov0" title="0">{
+                config.SSLMode = "disable"
+        }</span>
+
+        <span class="cov0" title="0">return "host=" + config.Host +
+                " port=" + strconv.Itoa(config.Port) +
+                " user=" + config.User +
+                " password=" + config.Password +
+                " dbname=" + config.DBName +
+                " sslmode=" + config.SSLMode</span>
+}
+
+// gormLogWriter implements GORM logger interface using our logging package
+type gormLogWriter struct{}
+
+func (w *gormLogWriter) Printf(format string, args ...interface{}) <span class="cov0" title="0">{
+        logging.Debugf(format, args...)
+}</span>
+
+// Helper function to get max of two integers
+func max(a, b int) int <span class="cov0" title="0">{
+        if a &gt; b </span><span class="cov0" title="0">{
+                return a
+        }</span>
+        <span class="cov0" title="0">return b</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package collector
+
+import (
+        "context"
+        "encoding/json"
+        "sync"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/messagequeue"
+        "github.com/cf/telemetry-pipeline/pkg/models"
+)
+
+// CollectorConfig represents configuration for the collector service
+type CollectorConfig struct {
+        CollectorID    string          `json:"collector_id"`
+        ConsumerGroup  string          `json:"consumer_group"`
+        BatchSize      int             `json:"batch_size"`
+        PollInterval   time.Duration   `json:"poll_interval"`
+        MaxRetries     int             `json:"max_retries"`
+        RetryDelay     time.Duration   `json:"retry_delay"`
+        BufferSize     int             `json:"buffer_size"`
+        EnableMetrics  bool            `json:"enable_metrics"`
+        DatabaseConfig *DatabaseConfig `json:"database_config"`
+}
+
+// CollectorService handles collecting telemetry data from message queue and persisting to database
+type CollectorService struct {
+        config         *CollectorConfig
+        messageQueue   *messagequeue.MessageQueueService
+        database       *DatabaseService
+        ctx            context.Context
+        cancel         context.CancelFunc
+        wg             sync.WaitGroup
+        isRunning      bool
+        mu             sync.RWMutex
+        metrics        *CollectorMetrics
+        lastError      error
+        totalCollected int64
+        buffer         []*models.TelemetryData
+        bufferMu       sync.Mutex
+}
+
+// CollectorMetrics tracks collection metrics
+type CollectorMetrics struct {
+        TotalRecordsCollected int64     `json:"total_records_collected"`
+        TotalBatchesCollected int64     `json:"total_batches_collected"`
+        TotalRecordsPersisted int64     `json:"total_records_persisted"`
+        TotalErrors           int64     `json:"total_errors"`
+        LastCollectionTime    time.Time `json:"last_collection_time"`
+        LastPersistTime       time.Time `json:"last_persist_time"`
+        CollectionRate        float64   `json:"collection_rate"` // records per second
+        StartTime             time.Time `json:"start_time"`
+        mu                    sync.RWMutex
+}
+
+// NewCollectorService creates a new collector service
+func NewCollectorService(config *CollectorConfig, mqService *messagequeue.MessageQueueService) (*CollectorService, error) <span class="cov0" title="0">{
+        // Set default values
+        if config.BatchSize &lt;= 0 </span><span class="cov0" title="0">{
+                config.BatchSize = 100
+        }</span>
+        <span class="cov0" title="0">if config.PollInterval &lt;= 0 </span><span class="cov0" title="0">{
+                config.PollInterval = 1 * time.Second
+        }</span>
+        <span class="cov0" title="0">if config.MaxRetries &lt;= 0 </span><span class="cov0" title="0">{
+                config.MaxRetries = 3
+        }</span>
+        <span class="cov0" title="0">if config.RetryDelay &lt;= 0 </span><span class="cov0" title="0">{
+                config.RetryDelay = 1 * time.Second
+        }</span>
+        <span class="cov0" title="0">if config.CollectorID == "" </span><span class="cov0" title="0">{
+                config.CollectorID = "collector-" + time.Now().Format("20060102150405")
+        }</span>
+        <span class="cov0" title="0">if config.ConsumerGroup == "" </span><span class="cov0" title="0">{
+                config.ConsumerGroup = "telemetry-collectors"
+        }</span>
+        <span class="cov0" title="0">if config.BufferSize &lt;= 0 </span><span class="cov0" title="0">{
+                config.BufferSize = 1000
+        }</span>
+
+        // Create database service
+        <span class="cov0" title="0">var dbService *DatabaseService
+        var err error
+        if config.DatabaseConfig != nil </span><span class="cov0" title="0">{
+                dbService, err = NewDatabaseService(config.DatabaseConfig)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+        }
+
+        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
+
+        service := &amp;CollectorService{
+                config:       config,
+                messageQueue: mqService,
+                database:     dbService,
+                ctx:          ctx,
+                cancel:       cancel,
+                metrics: &amp;CollectorMetrics{
+                        StartTime: time.Now(),
+                },
+                buffer: make([]*models.TelemetryData, 0, config.BufferSize),
+        }
+
+        logging.Infof("Created collector service %s", config.CollectorID)
+        return service, nil</span>
+}
+
+// Start starts the collector service
+func (cs *CollectorService) Start() error <span class="cov0" title="0">{
+        cs.mu.Lock()
+        defer cs.mu.Unlock()
+
+        if cs.isRunning </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">cs.isRunning = true
+        cs.wg.Add(2) // Collection and persistence loops
+
+        go cs.collectionLoop()
+        go cs.persistenceLoop()
+
+        logging.Infof("Started collector service %s", cs.config.CollectorID)
+        return nil</span>
+}
+
+// Stop stops the collector service
+func (cs *CollectorService) Stop() error <span class="cov0" title="0">{
+        cs.mu.Lock()
+        defer cs.mu.Unlock()
+
+        if !cs.isRunning </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">cs.isRunning = false
+        cs.cancel()
+
+        // Wait for loops to finish
+        cs.wg.Wait()
+
+        // Flush remaining buffer
+        cs.flushBuffer()
+
+        // Close database connection
+        if cs.database != nil </span><span class="cov0" title="0">{
+                cs.database.Close()
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Stopped collector service %s", cs.config.CollectorID)
+        return nil</span>
+}
+
+// IsRunning returns whether the service is currently running
+func (cs *CollectorService) IsRunning() bool <span class="cov0" title="0">{
+        cs.mu.RLock()
+        defer cs.mu.RUnlock()
+        return cs.isRunning
+}</span>
+
+// GetMetrics returns current collection metrics
+func (cs *CollectorService) GetMetrics() *CollectorMetrics <span class="cov0" title="0">{
+        cs.metrics.mu.RLock()
+        defer cs.metrics.mu.RUnlock()
+
+        // Calculate collection rate
+        elapsed := time.Since(cs.metrics.StartTime).Seconds()
+        if elapsed &gt; 0 </span><span class="cov0" title="0">{
+                cs.metrics.CollectionRate = float64(cs.metrics.TotalRecordsCollected) / elapsed
+        }</span>
+
+        // Create a copy of metrics
+        <span class="cov0" title="0">return &amp;CollectorMetrics{
+                TotalRecordsCollected: cs.metrics.TotalRecordsCollected,
+                TotalBatchesCollected: cs.metrics.TotalBatchesCollected,
+                TotalRecordsPersisted: cs.metrics.TotalRecordsPersisted,
+                TotalErrors:           cs.metrics.TotalErrors,
+                LastCollectionTime:    cs.metrics.LastCollectionTime,
+                LastPersistTime:       cs.metrics.LastPersistTime,
+                CollectionRate:        cs.metrics.CollectionRate,
+                StartTime:             cs.metrics.StartTime,
+        }</span>
+}
+
+// GetLastError returns the last error encountered
+func (cs *CollectorService) GetLastError() error <span class="cov0" title="0">{
+        cs.mu.RLock()
+        defer cs.mu.RUnlock()
+        return cs.lastError
+}</span>
+
+// GetTotalCollected returns total number of records collected
+func (cs *CollectorService) GetTotalCollected() int64 <span class="cov0" title="0">{
+        return cs.totalCollected
+}</span>
+
+// GetDatabaseService returns the database service instance
+func (cs *CollectorService) GetDatabaseService() *DatabaseService <span class="cov0" title="0">{
+        return cs.database
+}</span>
+
+// collectionLoop is the main collection loop
+func (cs *CollectorService) collectionLoop() <span class="cov0" title="0">{
+        defer cs.wg.Done()
+        defer func() </span><span class="cov0" title="0">{
+                if r := recover(); r != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Collector service %s collection loop panic: %v", cs.config.CollectorID, r)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">ticker := time.NewTicker(cs.config.PollInterval)
+        defer ticker.Stop()
+
+        logging.Infof("Started collection loop for service %s", cs.config.CollectorID)
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-cs.ctx.Done():<span class="cov0" title="0">
+                        logging.Infof("Collection loop stopped for service %s", cs.config.CollectorID)
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        err := cs.collectBatch()
+                        if err != nil </span><span class="cov0" title="0">{
+                                cs.mu.Lock()
+                                cs.lastError = err
+                                cs.mu.Unlock()
+
+                                cs.updateMetrics(0, 0, 0, 1)
+                        }</span>
+                }
+        }
+}
+
+// persistenceLoop handles persisting collected data to database
+func (cs *CollectorService) persistenceLoop() <span class="cov0" title="0">{
+        defer cs.wg.Done()
+        defer func() </span><span class="cov0" title="0">{
+                if r := recover(); r != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Collector service %s persistence loop panic: %v", cs.config.CollectorID, r)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">ticker := time.NewTicker(5 * time.Second) // Persist every 5 seconds
+        defer ticker.Stop()
+
+        logging.Infof("Started persistence loop for service %s", cs.config.CollectorID)
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-cs.ctx.Done():<span class="cov0" title="0">
+                        logging.Infof("Persistence loop stopped for service %s", cs.config.CollectorID)
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        cs.flushBuffer()</span>
+                }
+        }
+}
+
+// collectBatch collects a batch of telemetry data from the message queue
+func (cs *CollectorService) collectBatch() error <span class="cov0" title="0">{
+        // Consume messages from message queue
+        messages, err := cs.messageQueue.ConsumeTelemetry(
+                cs.config.ConsumerGroup,
+                cs.config.CollectorID,
+                cs.config.BatchSize,
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to consume telemetry messages: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if len(messages) == 0 </span><span class="cov0" title="0">{
+                return nil // No messages to process
+        }</span>
+
+        <span class="cov0" title="0">var telemetryData []*models.TelemetryData
+        var messageIDs []string
+
+        // Parse messages
+        for _, msg := range messages </span><span class="cov0" title="0">{
+                var data models.TelemetryData
+                err := json.Unmarshal(msg.Payload, &amp;data)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Warnf("Failed to unmarshal telemetry data: %v", err)
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">telemetryData = append(telemetryData, &amp;data)
+                messageIDs = append(messageIDs, msg.ID)</span>
+        }
+
+        <span class="cov0" title="0">if len(telemetryData) == 0 </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        // Add to buffer
+        <span class="cov0" title="0">cs.addToBuffer(telemetryData)
+
+        // Acknowledge processed messages
+        err = cs.messageQueue.AcknowledgeMessages(cs.config.CollectorID, messageIDs)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to acknowledge messages: %v", err)
+                // Don't return error here as data is already collected
+        }</span>
+
+        // Update metrics
+        <span class="cov0" title="0">cs.updateMetrics(int64(len(telemetryData)), 1, 0, 0)
+        cs.totalCollected += int64(len(telemetryData))
+
+        logging.Debugf("Collected batch of %d records from service %s", len(telemetryData), cs.config.CollectorID)
+        return nil</span>
+}
+
+// addToBuffer adds telemetry data to the internal buffer
+func (cs *CollectorService) addToBuffer(data []*models.TelemetryData) <span class="cov0" title="0">{
+        cs.bufferMu.Lock()
+        defer cs.bufferMu.Unlock()
+
+        cs.buffer = append(cs.buffer, data...)
+
+        // If buffer is full, trigger immediate flush
+        if len(cs.buffer) &gt;= cs.config.BufferSize </span><span class="cov0" title="0">{
+                go cs.flushBuffer()
+        }</span>
+}
+
+// flushBuffer persists buffered data to the database
+func (cs *CollectorService) flushBuffer() <span class="cov0" title="0">{
+        cs.bufferMu.Lock()
+        if len(cs.buffer) == 0 </span><span class="cov0" title="0">{
+                cs.bufferMu.Unlock()
+                return
+        }</span>
+
+        // Take a copy of the buffer and clear it
+        <span class="cov0" title="0">dataToFlush := make([]*models.TelemetryData, len(cs.buffer))
+        copy(dataToFlush, cs.buffer)
+        cs.buffer = cs.buffer[:0] // Clear buffer
+        cs.bufferMu.Unlock()
+
+        // Persist to database if database service is available
+        if cs.database != nil </span><span class="cov0" title="0">{
+                err := cs.database.SaveTelemetryDataBatch(dataToFlush)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to persist telemetry data batch: %v", err)
+                        cs.updateMetrics(0, 0, 0, 1)
+
+                        // Return data to buffer on failure
+                        cs.bufferMu.Lock()
+                        cs.buffer = append(dataToFlush, cs.buffer...)
+                        cs.bufferMu.Unlock()
+                        return
+                }</span>
+
+                // Update metrics
+                <span class="cov0" title="0">cs.updateMetrics(0, 0, int64(len(dataToFlush)), 0)
+                logging.Debugf("Persisted %d telemetry records to database", len(dataToFlush))</span>
+        } else<span class="cov0" title="0"> {
+                logging.Warnf("No database service configured, dropping %d telemetry records", len(dataToFlush))
+        }</span>
+}
+
+// updateMetrics updates collection metrics
+func (cs *CollectorService) updateMetrics(recordsCollected, batchesCollected, recordsPersisted, errors int64) <span class="cov0" title="0">{
+        cs.metrics.mu.Lock()
+        defer cs.metrics.mu.Unlock()
+
+        cs.metrics.TotalRecordsCollected += recordsCollected
+        cs.metrics.TotalBatchesCollected += batchesCollected
+        cs.metrics.TotalRecordsPersisted += recordsPersisted
+        cs.metrics.TotalErrors += errors
+
+        if recordsCollected &gt; 0 </span><span class="cov0" title="0">{
+                cs.metrics.LastCollectionTime = time.Now()
+        }</span>
+        <span class="cov0" title="0">if recordsPersisted &gt; 0 </span><span class="cov0" title="0">{
+                cs.metrics.LastPersistTime = time.Now()
+        }</span>
+}
+
+// Health returns the health status of the collector service
+func (cs *CollectorService) Health() bool <span class="cov0" title="0">{
+        cs.mu.RLock()
+        defer cs.mu.RUnlock()
+
+        // Service is healthy if it's running and database is healthy
+        if !cs.isRunning </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov0" title="0">if cs.database != nil &amp;&amp; !cs.database.Health() </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        // Check if we have recent activity (within last 5 minutes)
+        <span class="cov0" title="0">cs.metrics.mu.RLock()
+        lastActivity := cs.metrics.LastCollectionTime
+        cs.metrics.mu.RUnlock()
+
+        if !lastActivity.IsZero() &amp;&amp; time.Since(lastActivity) &gt; 5*time.Minute </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov0" title="0">return true</span>
+}
+
+// GetConfig returns the collector configuration
+func (cs *CollectorService) GetConfig() *CollectorConfig <span class="cov0" title="0">{
+        return cs.config
+}</span>
+
+// UpdateConfig updates the collector configuration (some fields only)
+func (cs *CollectorService) UpdateConfig(newConfig *CollectorConfig) error <span class="cov0" title="0">{
+        cs.mu.Lock()
+        defer cs.mu.Unlock()
+
+        // Only update safe fields while running
+        if newConfig.PollInterval &gt; 0 </span><span class="cov0" title="0">{
+                cs.config.PollInterval = newConfig.PollInterval
+        }</span>
+        <span class="cov0" title="0">if newConfig.BatchSize &gt; 0 </span><span class="cov0" title="0">{
+                cs.config.BatchSize = newConfig.BatchSize
+        }</span>
+        <span class="cov0" title="0">if newConfig.MaxRetries &gt; 0 </span><span class="cov0" title="0">{
+                cs.config.MaxRetries = newConfig.MaxRetries
+        }</span>
+        <span class="cov0" title="0">if newConfig.RetryDelay &gt; 0 </span><span class="cov0" title="0">{
+                cs.config.RetryDelay = newConfig.RetryDelay
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Updated configuration for collector service %s", cs.config.CollectorID)
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package streamer
+
+import (
+        "encoding/csv"
+        "io"
+        "os"
+        "strconv"
+        "strings"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/models"
+)
+
+// CSVReader handles reading telemetry data from CSV files
+type CSVReader struct {
+        filename string
+        file     *os.File
+        reader   *csv.Reader
+        headers  []string
+        position int64
+        loopMode bool
+}
+
+// NewCSVReader creates a new CSV reader
+func NewCSVReader(filename string, loopMode bool) (*CSVReader, error) <span class="cov5" title="11">{
+        file, err := os.Open(filename)
+        if err != nil </span><span class="cov1" title="1">{
+                logging.Errorf("Failed to open CSV file %s: %v", filename, err)
+                return nil, err
+        }</span>
+
+        <span class="cov5" title="10">reader := csv.NewReader(file)
+        reader.FieldsPerRecord = -1 // Allow variable number of fields
+
+        // Read headers
+        headers, err := reader.Read()
+        if err != nil </span><span class="cov0" title="0">{
+                file.Close()
+                logging.Errorf("Failed to read CSV headers: %v", err)
+                return nil, err
+        }</span>
+
+        <span class="cov5" title="10">csvReader := &amp;CSVReader{
+                filename: filename,
+                file:     file,
+                reader:   reader,
+                headers:  headers,
+                position: 0,
+                loopMode: loopMode,
+        }
+
+        logging.Infof("Created CSV reader for file %s with %d headers", filename, len(headers))
+        return csvReader, nil</span>
+}
+
+// ReadBatch reads a batch of records from the CSV file
+func (cr *CSVReader) ReadBatch(batchSize int) ([]*models.TelemetryData, error) <span class="cov5" title="11">{
+        var telemetryData []*models.TelemetryData
+
+        for i := 0; i &lt; batchSize; i++ </span><span class="cov5" title="13">{
+                record, err := cr.reader.Read()
+                if err == io.EOF </span><span class="cov2" title="3">{
+                        if cr.loopMode </span><span class="cov1" title="1">{
+                                // Reset to beginning of file for continuous streaming
+                                err = cr.resetToBeginning()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        logging.Errorf("Failed to reset CSV file: %v", err)
+                                        return telemetryData, err
+                                }</span>
+                                // Try reading again after reset
+                                <span class="cov1" title="1">record, err = cr.reader.Read()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        logging.Errorf("Failed to read after reset: %v", err)
+                                        return telemetryData, err
+                                }</span>
+                        } else<span class="cov2" title="2"> {
+                                // End of file reached, return what we have
+                                logging.Infof("Reached end of CSV file, returning %d records", len(telemetryData))
+                                return telemetryData, io.EOF
+                        }</span>
+                } else<span class="cov5" title="10"> if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to read CSV record: %v", err)
+                        return telemetryData, err
+                }</span>
+
+                // Parse the record
+                <span class="cov5" title="11">data, err := cr.parseRecord(record)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Warnf("Failed to parse CSV record at position %d: %v", cr.position, err)
+                        continue</span> // Skip invalid records
+                }
+
+                <span class="cov5" title="11">telemetryData = append(telemetryData, data)
+                cr.position++</span>
+        }
+
+        <span class="cov4" title="9">logging.Debugf("Read batch of %d telemetry records", len(telemetryData))
+        return telemetryData, nil</span>
+}
+
+// ReadAll reads all remaining records from the CSV file
+func (cr *CSVReader) ReadAll() ([]*models.TelemetryData, error) <span class="cov1" title="1">{
+        var telemetryData []*models.TelemetryData
+
+        for </span><span class="cov2" title="3">{
+                record, err := cr.reader.Read()
+                if err == io.EOF </span><span class="cov1" title="1">{
+                        break</span>
+                }
+                <span class="cov2" title="2">if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to read CSV record: %v", err)
+                        return telemetryData, err
+                }</span>
+
+                <span class="cov2" title="2">data, err := cr.parseRecord(record)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Warnf("Failed to parse CSV record at position %d: %v", cr.position, err)
+                        continue</span>
+                }
+
+                <span class="cov2" title="2">telemetryData = append(telemetryData, data)
+                cr.position++</span>
+        }
+
+        <span class="cov1" title="1">logging.Infof("Read all %d telemetry records from CSV", len(telemetryData))
+        return telemetryData, nil</span>
+}
+
+// Close closes the CSV reader and file
+func (cr *CSVReader) Close() error <span class="cov5" title="11">{
+        if cr.file != nil </span><span class="cov5" title="10">{
+                err := cr.file.Close()
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to close CSV file: %v", err)
+                        return err
+                }</span>
+                <span class="cov5" title="10">cr.file = nil
+                logging.Infof("Closed CSV reader for file %s", cr.filename)</span>
+        }
+        <span class="cov5" title="11">return nil</span>
+}
+
+// GetPosition returns the current position in the CSV file
+func (cr *CSVReader) GetPosition() int64 <span class="cov3" title="5">{
+        return cr.position
+}</span>
+
+// IsLoopMode returns whether the reader is in loop mode
+func (cr *CSVReader) IsLoopMode() bool <span class="cov2" title="2">{
+        return cr.loopMode
+}</span>
+
+// parseRecord parses a CSV record into TelemetryData
+func (cr *CSVReader) parseRecord(record []string) (*models.TelemetryData, error) <span class="cov5" title="13">{
+        if len(record) &lt; len(cr.headers) </span><span class="cov1" title="1">{
+                logging.Warnf("Record has fewer fields (%d) than headers (%d)", len(record), len(cr.headers))
+        }</span>
+
+        // Create a map for easier field access
+        <span class="cov5" title="13">fieldMap := make(map[string]string)
+        for i, header := range cr.headers </span><span class="cov10" title="156">{
+                if i &lt; len(record) </span><span class="cov9" title="147">{
+                        fieldMap[header] = strings.TrimSpace(record[i])
+                }</span> else<span class="cov4" title="9"> {
+                        fieldMap[header] = ""
+                }</span>
+        }
+
+        // Parse timestamp
+        <span class="cov5" title="13">timestampStr := fieldMap["timestamp"]
+        if timestampStr == "" </span><span class="cov0" title="0">{
+                // Use current time if timestamp is missing
+                timestampStr = time.Now().Format(time.RFC3339)
+        }</span>
+
+        // Remove quotes if present
+        <span class="cov5" title="13">timestampStr = strings.Trim(timestampStr, "\"")
+
+        timestamp, err := time.Parse(time.RFC3339, timestampStr)
+        if err != nil </span><span class="cov1" title="1">{
+                // Try alternative timestamp formats
+                timestamp, err = time.Parse("2006-01-02T15:04:05Z", timestampStr)
+                if err != nil </span><span class="cov1" title="1">{
+                        timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+                        if err != nil </span><span class="cov1" title="1">{
+                                logging.Warnf("Failed to parse timestamp '%s', using current time: %v", timestampStr, err)
+                                timestamp = time.Now()
+                        }</span>
+                }
+        }
+
+        // Parse value
+        <span class="cov5" title="13">valueStr := strings.Trim(fieldMap["value"], "\"")
+        value, err := strconv.ParseFloat(valueStr, 64)
+        if err != nil </span><span class="cov2" title="2">{
+                logging.Warnf("Failed to parse value '%s': %v", valueStr, err)
+                value = 0.0
+        }</span>
+
+        // Create TelemetryData
+        <span class="cov5" title="13">data := &amp;models.TelemetryData{
+                Timestamp:  timestamp,
+                MetricName: strings.Trim(fieldMap["metric_name"], "\""),
+                GPUID:      strings.Trim(fieldMap["gpu_id"], "\""),
+                Device:     strings.Trim(fieldMap["device"], "\""),
+                UUID:       strings.Trim(fieldMap["uuid"], "\""),
+                ModelName:  strings.Trim(fieldMap["modelName"], "\""),
+                Hostname:   strings.Trim(fieldMap["Hostname"], "\""),
+                Container:  strings.Trim(fieldMap["container"], "\""),
+                Pod:        strings.Trim(fieldMap["pod"], "\""),
+                Namespace:  strings.Trim(fieldMap["namespace"], "\""),
+                Value:      value,
+                LabelsRaw:  strings.Trim(fieldMap["labels_raw"], "\""),
+                CreatedAt:  time.Now(),
+                UpdatedAt:  time.Now(),
+        }
+
+        return data, nil</span>
+}
+
+// resetToBeginning resets the CSV reader to the beginning of the file
+func (cr *CSVReader) resetToBeginning() error <span class="cov1" title="1">{
+        // Close current file
+        if cr.file != nil </span><span class="cov1" title="1">{
+                cr.file.Close()
+        }</span>
+
+        // Reopen file
+        <span class="cov1" title="1">file, err := os.Open(cr.filename)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Create new reader
+        <span class="cov1" title="1">reader := csv.NewReader(file)
+        reader.FieldsPerRecord = -1
+
+        // Skip headers
+        _, err = reader.Read()
+        if err != nil </span><span class="cov0" title="0">{
+                file.Close()
+                return err
+        }</span>
+
+        <span class="cov1" title="1">cr.file = file
+        cr.reader = reader
+        cr.position = 0
+
+        logging.Debugf("Reset CSV reader to beginning of file %s", cr.filename)
+        return nil</span>
+}
+
+// GetHeaders returns the CSV headers
+func (cr *CSVReader) GetHeaders() []string <span class="cov1" title="1">{
+        return cr.headers
+}</span>
+
+// GetFilename returns the CSV filename
+func (cr *CSVReader) GetFilename() string <span class="cov1" title="1">{
+        return cr.filename
+}</span>
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">package streamer
+
+import (
+        "context"
+        "encoding/json"
+        "io"
+        "sync"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+        "github.com/cf/telemetry-pipeline/pkg/messagequeue"
+        "github.com/cf/telemetry-pipeline/pkg/models"
+)
+
+// StreamerConfig represents configuration for the streamer service
+type StreamerConfig struct {
+        CSVFilePath    string        `json:"csv_file_path"`
+        BatchSize      int           `json:"batch_size"`
+        StreamInterval time.Duration `json:"stream_interval"`
+        LoopMode       bool          `json:"loop_mode"`
+        MaxRetries     int           `json:"max_retries"`
+        RetryDelay     time.Duration `json:"retry_delay"`
+        EnableMetrics  bool          `json:"enable_metrics"`
+        StreamerID     string        `json:"streamer_id"`
+        BufferSize     int           `json:"buffer_size"`
+}
+
+// StreamerService handles streaming telemetry data from CSV to message queue
+type StreamerService struct {
+        config        *StreamerConfig
+        csvReader     *CSVReader
+        messageQueue  *messagequeue.MessageQueueService
+        ctx           context.Context
+        cancel        context.CancelFunc
+        wg            sync.WaitGroup
+        isRunning     bool
+        mu            sync.RWMutex
+        metrics       *StreamerMetrics
+        lastError     error
+        totalStreamed int64
+}
+
+// StreamerMetrics tracks streaming metrics
+type StreamerMetrics struct {
+        TotalRecordsStreamed int64     `json:"total_records_streamed"`
+        TotalBatchesStreamed int64     `json:"total_batches_streamed"`
+        TotalErrors          int64     `json:"total_errors"`
+        LastStreamTime       time.Time `json:"last_stream_time"`
+        StreamingRate        float64   `json:"streaming_rate"` // records per second
+        StartTime            time.Time `json:"start_time"`
+        mu                   sync.RWMutex
+}
+
+// NewStreamerService creates a new streamer service
+func NewStreamerService(config *StreamerConfig, mqService *messagequeue.MessageQueueService) (*StreamerService, error) <span class="cov0" title="0">{
+        // Set default values
+        if config.BatchSize &lt;= 0 </span><span class="cov0" title="0">{
+                config.BatchSize = 100
+        }</span>
+        <span class="cov0" title="0">if config.StreamInterval &lt;= 0 </span><span class="cov0" title="0">{
+                config.StreamInterval = 1 * time.Second
+        }</span>
+        <span class="cov0" title="0">if config.MaxRetries &lt;= 0 </span><span class="cov0" title="0">{
+                config.MaxRetries = 3
+        }</span>
+        <span class="cov0" title="0">if config.RetryDelay &lt;= 0 </span><span class="cov0" title="0">{
+                config.RetryDelay = 1 * time.Second
+        }</span>
+        <span class="cov0" title="0">if config.StreamerID == "" </span><span class="cov0" title="0">{
+                config.StreamerID = "streamer-" + time.Now().Format("20060102150405")
+        }</span>
+        <span class="cov0" title="0">if config.BufferSize &lt;= 0 </span><span class="cov0" title="0">{
+                config.BufferSize = 1000
+        }</span>
+
+        <span class="cov0" title="0">csvReader, err := NewCSVReader(config.CSVFilePath, config.LoopMode)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
+
+        service := &amp;StreamerService{
+                config:       config,
+                csvReader:    csvReader,
+                messageQueue: mqService,
+                ctx:          ctx,
+                cancel:       cancel,
+                metrics: &amp;StreamerMetrics{
+                        StartTime: time.Now(),
+                },
+        }
+
+        logging.Infof("Created streamer service %s for file %s", config.StreamerID, config.CSVFilePath)
+        return service, nil</span>
+}
+
+// Start starts the streaming service
+func (ss *StreamerService) Start() error <span class="cov0" title="0">{
+        ss.mu.Lock()
+        defer ss.mu.Unlock()
+
+        if ss.isRunning </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">ss.isRunning = true
+        ss.wg.Add(1)
+
+        go ss.streamLoop()
+
+        logging.Infof("Started streamer service %s", ss.config.StreamerID)
+        return nil</span>
+}
+
+// Stop stops the streaming service
+func (ss *StreamerService) Stop() error <span class="cov0" title="0">{
+        ss.mu.Lock()
+        defer ss.mu.Unlock()
+
+        if !ss.isRunning </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">ss.isRunning = false
+        ss.cancel()
+
+        // Wait for streaming loop to finish
+        ss.wg.Wait()
+
+        // Close CSV reader
+        if ss.csvReader != nil </span><span class="cov0" title="0">{
+                ss.csvReader.Close()
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Stopped streamer service %s", ss.config.StreamerID)
+        return nil</span>
+}
+
+// IsRunning returns whether the service is currently running
+func (ss *StreamerService) IsRunning() bool <span class="cov0" title="0">{
+        ss.mu.RLock()
+        defer ss.mu.RUnlock()
+        return ss.isRunning
+}</span>
+
+// GetMetrics returns current streaming metrics
+func (ss *StreamerService) GetMetrics() *StreamerMetrics <span class="cov0" title="0">{
+        ss.metrics.mu.RLock()
+        defer ss.metrics.mu.RUnlock()
+
+        // Calculate streaming rate
+        elapsed := time.Since(ss.metrics.StartTime).Seconds()
+        if elapsed &gt; 0 </span><span class="cov0" title="0">{
+                ss.metrics.StreamingRate = float64(ss.metrics.TotalRecordsStreamed) / elapsed
+        }</span>
+
+        // Create a copy of metrics
+        <span class="cov0" title="0">return &amp;StreamerMetrics{
+                TotalRecordsStreamed: ss.metrics.TotalRecordsStreamed,
+                TotalBatchesStreamed: ss.metrics.TotalBatchesStreamed,
+                TotalErrors:          ss.metrics.TotalErrors,
+                LastStreamTime:       ss.metrics.LastStreamTime,
+                StreamingRate:        ss.metrics.StreamingRate,
+                StartTime:            ss.metrics.StartTime,
+        }</span>
+}
+
+// GetLastError returns the last error encountered
+func (ss *StreamerService) GetLastError() error <span class="cov0" title="0">{
+        ss.mu.RLock()
+        defer ss.mu.RUnlock()
+        return ss.lastError
+}</span>
+
+// GetTotalStreamed returns total number of records streamed
+func (ss *StreamerService) GetTotalStreamed() int64 <span class="cov0" title="0">{
+        return ss.totalStreamed
+}</span>
+
+// streamLoop is the main streaming loop
+func (ss *StreamerService) streamLoop() <span class="cov0" title="0">{
+        defer ss.wg.Done()
+        defer func() </span><span class="cov0" title="0">{
+                if r := recover(); r != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Streamer service %s panic: %v", ss.config.StreamerID, r)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">ticker := time.NewTicker(ss.config.StreamInterval)
+        defer ticker.Stop()
+
+        logging.Infof("Started streaming loop for service %s", ss.config.StreamerID)
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ss.ctx.Done():<span class="cov0" title="0">
+                        logging.Infof("Streaming loop stopped for service %s", ss.config.StreamerID)
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        err := ss.streamBatch()
+                        if err != nil </span><span class="cov0" title="0">{
+                                ss.mu.Lock()
+                                ss.lastError = err
+                                ss.mu.Unlock()
+
+                                ss.updateMetrics(0, 0, 1)
+
+                                if err == io.EOF &amp;&amp; !ss.config.LoopMode </span><span class="cov0" title="0">{
+                                        logging.Infof("Reached end of CSV file, stopping streamer %s", ss.config.StreamerID)
+                                        ss.Stop()
+                                        return
+                                }</span>
+                        }
+                }
+        }
+}
+
+// streamBatch streams a batch of telemetry data
+func (ss *StreamerService) streamBatch() error <span class="cov0" title="0">{
+        // Read batch from CSV
+        telemetryData, err := ss.csvReader.ReadBatch(ss.config.BatchSize)
+        if err != nil &amp;&amp; err != io.EOF </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to read batch from CSV: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if len(telemetryData) == 0 </span><span class="cov0" title="0">{
+                return err // Return EOF or other error
+        }</span>
+
+        // Convert to JSON and publish to message queue
+        <span class="cov0" title="0">for _, data := range telemetryData </span><span class="cov0" title="0">{
+                err = ss.publishTelemetryData(data)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to publish telemetry data: %v", err)
+
+                        // Retry logic
+                        for retry := 0; retry &lt; ss.config.MaxRetries; retry++ </span><span class="cov0" title="0">{
+                                time.Sleep(ss.config.RetryDelay)
+                                err = ss.publishTelemetryData(data)
+                                if err == nil </span><span class="cov0" title="0">{
+                                        break</span>
+                                }
+                                <span class="cov0" title="0">logging.Warnf("Retry %d failed for telemetry data: %v", retry+1, err)</span>
+                        }
+
+                        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                                logging.Errorf("Failed to publish telemetry data after %d retries", ss.config.MaxRetries)
+                                return err
+                        }</span>
+                }
+        }
+
+        // Update metrics
+        <span class="cov0" title="0">ss.updateMetrics(int64(len(telemetryData)), 1, 0)
+        ss.totalStreamed += int64(len(telemetryData))
+
+        logging.Debugf("Streamed batch of %d records from service %s", len(telemetryData), ss.config.StreamerID)
+        return err</span>
+}
+
+// publishTelemetryData publishes a single telemetry data point to the message queue
+func (ss *StreamerService) publishTelemetryData(data *models.TelemetryData) error <span class="cov0" title="0">{
+        // Convert to JSON
+        jsonData, err := json.Marshal(data)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Create headers
+        <span class="cov0" title="0">headers := map[string]string{
+                "streamer_id": ss.config.StreamerID,
+                "gpu_id":      data.GPUID,
+                "hostname":    data.Hostname,
+                "timestamp":   data.Timestamp.Format(time.RFC3339),
+                "metric_name": data.MetricName,
+        }
+
+        // Publish to message queue
+        return ss.messageQueue.PublishTelemetry(jsonData, headers)</span>
+}
+
+// updateMetrics updates streaming metrics
+func (ss *StreamerService) updateMetrics(recordsStreamed, batchesStreamed, errors int64) <span class="cov0" title="0">{
+        ss.metrics.mu.Lock()
+        defer ss.metrics.mu.Unlock()
+
+        ss.metrics.TotalRecordsStreamed += recordsStreamed
+        ss.metrics.TotalBatchesStreamed += batchesStreamed
+        ss.metrics.TotalErrors += errors
+        ss.metrics.LastStreamTime = time.Now()
+}</span>
+
+// Health returns the health status of the streamer service
+func (ss *StreamerService) Health() bool <span class="cov0" title="0">{
+        ss.mu.RLock()
+        defer ss.mu.RUnlock()
+
+        // Service is healthy if it's running and no recent errors
+        if !ss.isRunning </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        // Check if we have recent activity (within last 5 minutes)
+        <span class="cov0" title="0">ss.metrics.mu.RLock()
+        lastActivity := ss.metrics.LastStreamTime
+        ss.metrics.mu.RUnlock()
+
+        if !lastActivity.IsZero() &amp;&amp; time.Since(lastActivity) &gt; 5*time.Minute </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov0" title="0">return true</span>
+}
+
+// GetConfig returns the streamer configuration
+func (ss *StreamerService) GetConfig() *StreamerConfig <span class="cov0" title="0">{
+        return ss.config
+}</span>
+
+// UpdateConfig updates the streamer configuration (some fields only)
+func (ss *StreamerService) UpdateConfig(newConfig *StreamerConfig) error <span class="cov0" title="0">{
+        ss.mu.Lock()
+        defer ss.mu.Unlock()
+
+        // Only update safe fields while running
+        if newConfig.StreamInterval &gt; 0 </span><span class="cov0" title="0">{
+                ss.config.StreamInterval = newConfig.StreamInterval
+        }</span>
+        <span class="cov0" title="0">if newConfig.BatchSize &gt; 0 </span><span class="cov0" title="0">{
+                ss.config.BatchSize = newConfig.BatchSize
+        }</span>
+        <span class="cov0" title="0">if newConfig.MaxRetries &gt; 0 </span><span class="cov0" title="0">{
+                ss.config.MaxRetries = newConfig.MaxRetries
+        }</span>
+        <span class="cov0" title="0">if newConfig.RetryDelay &gt; 0 </span><span class="cov0" title="0">{
+                ss.config.RetryDelay = newConfig.RetryDelay
+        }</span>
+
+        <span class="cov0" title="0">logging.Infof("Updated configuration for streamer service %s", ss.config.StreamerID)
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file9" style="display: none">package logging
+
+import (
+        "encoding/json"
+        "errors"
+        "fmt"
+        "io/fs"
+        "net/http"
+        "os"
+        "path/filepath"
+        "reflect"
+        "runtime"
+        "strings"
+        "sync"
+
+        "go.uber.org/zap"
+        "go.uber.org/zap/zapcore"
+)
+
+var (
+        // HTTPLogPort is the TCP port for the HTTP log server
+        HTTPLogPort = 3000
+
+        // HTTPLogPath is the HTTP path for the log server
+        HTTPLogPath = "/log"
+)
+
+const (
+        // Debug defines the debug logging level.
+        Debug = iota
+        // Info defines the info logging level.
+        Info
+        // Warn defines the warn logging level.
+        Warn
+        // Error defines the error logging level.
+        Error
+        // Fatal defines the Fatal logging level.
+        Fatal
+)
+
+type payload struct {
+        Level string `json:"level"`
+}
+
+type fileLogLevel struct {
+        fileName string
+        level    int
+}
+
+type logging struct {
+        logger      *zap.Logger
+        atom        zap.AtomicLevel
+        globalLevel int
+        fileLog     fileLogLevel
+}
+
+var logInstance *logging
+var lock sync.RWMutex
+
+// getFunctionName
+func getFunctionName() string <span class="cov10" title="79">{
+        pc, _, _, _ := runtime.Caller(3)
+        function := runtime.FuncForPC(pc)
+        FuncSplit := strings.Split(function.Name(), ".")
+        return FuncSplit[len(FuncSplit)-1]
+}</span>
+
+// getPackageName
+func getPackageName() string <span class="cov10" title="79">{
+        pc, _, _, _ := runtime.Caller(3)
+        functionFullName := runtime.FuncForPC(pc)
+        function := filepath.Base(functionFullName.Name())
+        FuncSplit := strings.Split(function, ".")
+        return FuncSplit[0]
+}</span>
+
+// getCaller
+func getFileName() string <span class="cov10" title="79">{
+        _, absFilename, _, _ := runtime.Caller(2)
+        fileFullName := filepath.Base(absFilename)
+        fileName := strings.TrimSuffix(fileFullName, filepath.Ext(fileFullName))
+        return fileName
+}</span>
+
+func logLevelToString(level int) string <span class="cov0" title="0">{
+        switch level </span>{
+        case Debug:<span class="cov0" title="0">
+                return "debug"</span>
+        case Info:<span class="cov0" title="0">
+                return "info"</span>
+        case Warn:<span class="cov0" title="0">
+                return "warn"</span>
+        case Error:<span class="cov0" title="0">
+                return "error"</span>
+        case Fatal:<span class="cov0" title="0">
+                return "fatal"</span>
+        }
+        <span class="cov0" title="0">return "unknown"</span>
+}
+
+func encodePayload(w http.ResponseWriter, data payload) <span class="cov0" title="0">{
+        enc := json.NewEncoder(w)
+        err := enc.Encode(data)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, fmt.Sprintf("Failed to encode payload: %v", err), http.StatusInternalServerError)
+        }</span>
+}
+
+// ServeHTTP handles the following HTTP requests:
+// GET http://localhost:HTTPLogPort/log
+// GET http://localhost:HTTPLogPort/log?file=&lt;filename&gt;
+// PUT http://localhost:HTTPLogPort/log?file=&lt;filename&gt;&amp;level=&lt;level&gt;
+// PUT http://localhost:HTTPLogPort/log?level=&lt;level&gt;
+//
+// Deprecated: use observability/loggger.go instead.
+func ServeHTTP(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        query := r.URL.Query()
+        file := query.Get("file")
+        level := query.Get("level")
+        switch r.Method </span>{
+        case http.MethodGet:<span class="cov0" title="0">
+                if file == "" </span><span class="cov0" title="0">{
+                        // GET http://localhost:HTTPLogPort/log
+                        // GET http://localhost:HTTPLogPort/log?file=
+                        encodePayload(w, payload{Level: logLevelToString(logInstance.globalLevel)})
+                }</span> else<span class="cov0" title="0"> {
+                        // GET http://localhost:HTTPLogPort/log?file=&lt;filename&gt;
+                        if logInstance.fileLog.fileName != file </span><span class="cov0" title="0">{
+                                http.Error(w, "no log set for filename", http.StatusBadRequest)
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">encodePayload(w, payload{Level: logLevelToString(logInstance.fileLog.level)})</span>
+                }
+        case http.MethodPost:<span class="cov0" title="0">
+                if level == "" </span><span class="cov0" title="0">{
+                        http.Error(w, "bad syntax", http.StatusBadRequest)
+                        return
+                }</span>
+                // PUT http://localhost:HTTPLogPort/log?file=&lt;filename&gt;&amp;level=&lt;level&gt;
+                // PUT http://localhost:HTTPLogPort/log?level=&lt;level&gt;
+                <span class="cov0" title="0">levelOk := SetLogLevel(level, file)
+                if !levelOk </span><span class="cov0" title="0">{
+                        http.Error(w, "Invalid log level", http.StatusBadRequest)
+                        return
+                }</span>
+
+                <span class="cov0" title="0">encodePayload(w, payload{Level: level})</span>
+        default:<span class="cov0" title="0">
+                http.Error(w, "Only GET and POST are supported.", http.StatusBadRequest)
+                return</span>
+        }
+
+        <span class="cov0" title="0">_, err := w.Write([]byte{})
+        if err != nil </span><span class="cov0" title="0">{
+                Errorf("Failed to write response: %v", err)
+        }</span>
+}
+
+// init implements zap log initialization. Enables Debug logs based on:
+//   - global log level
+//   - file specific log level: FILE_NAME_DEBUG, where 'FILE_NAME' is the name of
+//     the file the init is called from.
+//     Example: logs from file 'graph.go' require an env variable: GRAPH_DEBUG
+func init() <span class="cov2" title="2">{
+        if logInstance != nil </span><span class="cov0" title="0">{
+                return
+        }</span>
+
+        <span class="cov2" title="2">logger, err := zap.NewProduction(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
+        if err != nil </span><span class="cov0" title="0">{
+                panic(err)</span>
+        }
+
+        <span class="cov2" title="2">atom := zap.NewAtomicLevel()
+        atom.SetLevel(zap.DebugLevel)
+        logger = logger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core </span><span class="cov2" title="2">{
+                return zapcore.NewCore(
+                        zapcore.NewConsoleEncoder(
+                                zap.NewDevelopmentEncoderConfig()),
+                        zapcore.AddSync(os.Stdout),
+                        atom,
+                )
+        }</span>))
+
+        // https://github.com/uber-go/zap/issues/880
+        <span class="cov2" title="2">err = logger.Sync()
+        if err != nil &amp;&amp; reflect.TypeOf(err) != reflect.TypeOf(&amp;fs.PathError{}) </span><span class="cov0" title="0">{
+                panic(err)</span>
+        }
+
+        <span class="cov2" title="2">logInstance = &amp;logging{
+                logger:      logger,
+                atom:        atom,
+                globalLevel: Debug,
+        }
+
+        if os.Getenv("ENABLE_LOGGING_ENDPOINT") == "true" </span><span class="cov0" title="0">{
+                StartDefaultEndpoint()
+        }</span>
+}
+
+// StartDefaultEndpoint enables the logging controller endpoint on
+// on the default port on localhost, at the default path ("/log").
+//
+// Deprecated: use observability/loggger.go instead.
+func StartDefaultEndpoint() *http.Server <span class="cov0" title="0">{
+        return StartEndpoint(fmt.Sprintf(":%d", HTTPLogPort), "/log")
+}</span>
+
+// StartEndpoint enables the logging controller endpoint on HTTPLogPort.
+//
+// Deprecated: use observability/loggger.go instead.
+func StartEndpoint(addr, path string) *http.Server <span class="cov0" title="0">{
+        mux := http.NewServeMux()
+        mux.HandleFunc(path, ServeHTTP)
+
+        srv := &amp;http.Server{
+                Addr:    addr,
+                Handler: mux,
+        }
+
+        go func() </span><span class="cov0" title="0">{
+                if err := srv.ListenAndServe(); !errors.Is(http.ErrServerClosed, err) </span><span class="cov0" title="0">{
+                        Errorf("logging server failed: %v", err)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">return srv</span>
+}
+
+// SetLogLevel sets the logging level to be used.
+//
+// Deprecated: use observability/loggger.go instead.
+func SetLogLevel(level string, file string) bool <span class="cov0" title="0">{
+        level = strings.ToLower(level)
+        var lvl int
+        switch level </span>{
+        case "debug":<span class="cov0" title="0">
+                lvl = Debug</span>
+        case "info":<span class="cov0" title="0">
+                lvl = Info</span>
+        case "warn":<span class="cov0" title="0">
+                lvl = Warn</span>
+        case "error":<span class="cov0" title="0">
+                lvl = Error</span>
+        case "fatal":<span class="cov0" title="0">
+                lvl = Fatal</span>
+        default:<span class="cov0" title="0">
+                return false</span>
+        }
+        <span class="cov0" title="0">if file != "" </span><span class="cov0" title="0">{
+                lock.Lock()
+                logInstance.fileLog.fileName = file
+                logInstance.fileLog.level = lvl
+                lock.Unlock()
+                return true
+        }</span>
+
+        <span class="cov0" title="0">lock.Lock()
+        logInstance.globalLevel = lvl
+        lock.Unlock()
+        return true</span>
+}
+
+// func checkfileLogLevelMet check if file exists and level is met.
+// Input:
+// - file name
+// - log level to check against
+// Returns:
+// - log level is set for input file
+// - log level is met for input file
+func checkfileLogLevelMet(file string, level int) (bool, bool) <span class="cov10" title="79">{
+        lock.RLock()
+        defer lock.RUnlock()
+        if logInstance.fileLog.fileName == file </span><span class="cov0" title="0">{
+                if logInstance.fileLog.level &lt;= level </span><span class="cov0" title="0">{
+                        return true, true
+                }</span>
+                <span class="cov0" title="0">return true, false</span>
+        }
+        <span class="cov10" title="79">return false, false</span>
+}
+
+func checkGlobalLevelMet(level int) bool <span class="cov10" title="79">{
+        lock.RLock()
+        defer lock.RUnlock()
+        return logInstance.globalLevel &lt;= level
+}</span>
+
+func logFormat(msg string, args ...interface{}) string <span class="cov10" title="79">{
+        s := fmt.Sprintf(msg, args...)
+        m := fmt.Sprintf("%s  %s  %s", getPackageName(), getFunctionName(), s)
+        return m
+}</span>
+
+func checkLogLevel(file string, level int) bool <span class="cov10" title="79">{
+        globalLvlMet := false
+        fileFound, fileLvlMet := checkfileLogLevelMet(file, level)
+        if !fileFound </span><span class="cov10" title="79">{
+                globalLvlMet = checkGlobalLevelMet(level)
+        }</span>
+
+        <span class="cov10" title="79">return fileLvlMet || globalLvlMet</span>
+}
+
+// Debugf implements function to log at Debug level
+//
+// Deprecated: use observability/loggger.go instead.
+func Debugf(msg string, args ...interface{}) <span class="cov8" title="42">{
+        if checkLogLevel(getFileName(), Debug) </span><span class="cov8" title="42">{
+                s := logFormat(msg, args...)
+                logInstance.logger.Debug(s)
+        }</span>
+}
+
+// Infof implements function to log at Info level
+//
+// Deprecated: use observability/loggger.go instead.
+func Infof(msg string, args ...interface{}) <span class="cov8" title="32">{
+        if checkLogLevel(getFileName(), Info) </span><span class="cov8" title="32">{
+                s := logFormat(msg, args...)
+                logInstance.logger.Info(s)
+        }</span>
+}
+
+// Warnf implements function to log at Warn level
+//
+// Deprecated: use observability/loggger.go instead.
+func Warnf(msg string, args ...interface{}) <span class="cov3" title="4">{
+        if checkLogLevel(getFileName(), Warn) </span><span class="cov3" title="4">{
+                s := logFormat(msg, args...)
+                logInstance.logger.Warn(s)
+        }</span>
+}
+
+// Errorf implements function to log at Error level
+//
+// Deprecated: use observability/loggger.go instead.
+func Errorf(msg string, args ...interface{}) <span class="cov1" title="1">{
+        if checkLogLevel(getFileName(), Error) </span><span class="cov1" title="1">{
+                s := logFormat(msg, args...)
+                logInstance.logger.Error(s)
+        }</span>
+}
+
+// Fatalf implements function to log at fatal level
+//
+// Deprecated: use observability/loggger.go instead.
+func Fatalf(msg string, args ...interface{}) <span class="cov0" title="0">{
+        s := logFormat(msg, args...)
+        logInstance.logger.Fatal(s)
+}</span>
+</pre>
+		
+		<pre class="file" id="file10" style="display: none">package messagequeue
+
+import (
+        "context"
+        "errors"
+        "sync"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+)
+
+var (
+        ErrTopicNotFound    = errors.New("topic not found")
+        ErrQueueFull        = errors.New("queue is full")
+        ErrConsumerNotFound = errors.New("consumer not found")
+        ErrMessageNotFound  = errors.New("message not found")
+)
+
+// Message represents a message in the queue
+type Message struct {
+        ID        string            `json:"id"`
+        Topic     string            `json:"topic"`
+        Payload   []byte            `json:"payload"`
+        CreatedAt time.Time         `json:"created_at"`
+        ExpiresAt time.Time         `json:"expires_at"`
+        Headers   map[string]string `json:"headers"`
+        Processed bool              `json:"processed"`
+        Retries   int               `json:"retries"`
+}
+
+// Topic represents a message topic/queue
+type Topic struct {
+        Name      string               `json:"name"`
+        Messages  []*Message           `json:"messages"`
+        Consumers map[string]*Consumer `json:"consumers"`
+        Config    map[string]string    `json:"config"`
+        CreatedAt time.Time            `json:"created_at"`
+        mu        sync.RWMutex
+        maxSize   int
+}
+
+// Consumer represents a message consumer
+type Consumer struct {
+        ID           string    `json:"id"`
+        Group        string    `json:"group"`
+        LastSeen     time.Time `json:"last_seen"`
+        ProcessedIDs []string  `json:"processed_ids"`
+        mu           sync.RWMutex
+}
+
+// MessageQueue represents the in-memory message queue
+type MessageQueue struct {
+        topics map[string]*Topic
+        mu     sync.RWMutex
+        stats  *QueueStats
+}
+
+// QueueStats represents queue statistics
+type QueueStats struct {
+        TotalMessages     int64                  `json:"total_messages"`
+        PendingMessages   int64                  `json:"pending_messages"`
+        ProcessedMessages int64                  `json:"processed_messages"`
+        FailedMessages    int64                  `json:"failed_messages"`
+        TopicStats        map[string]*TopicStats `json:"topic_stats"`
+        LastUpdated       time.Time              `json:"last_updated"`
+        mu                sync.RWMutex
+}
+
+// TopicStats represents per-topic statistics
+type TopicStats struct {
+        MessageCount   int64     `json:"message_count"`
+        ConsumerCount  int       `json:"consumer_count"`
+        LastMessage    time.Time `json:"last_message"`
+        ProcessedCount int64     `json:"processed_count"`
+        PendingCount   int64     `json:"pending_count"`
+}
+
+// NewMessageQueue creates a new message queue instance
+func NewMessageQueue() *MessageQueue <span class="cov5" title="11">{
+        return &amp;MessageQueue{
+                topics: make(map[string]*Topic),
+                stats: &amp;QueueStats{
+                        TopicStats: make(map[string]*TopicStats),
+                },
+        }
+}</span>
+
+// CreateTopic creates a new topic
+func (mq *MessageQueue) CreateTopic(name string, config map[string]string) error <span class="cov4" title="9">{
+        mq.mu.Lock()
+        defer mq.mu.Unlock()
+
+        if _, exists := mq.topics[name]; exists </span><span class="cov1" title="1">{
+                return nil // Topic already exists
+        }</span>
+
+        <span class="cov4" title="8">maxSize := 10000 // Default max size
+        if sizeStr, ok := config["max_size"]; ok </span><span class="cov1" title="1">{
+                // Parse maxSize from config if provided
+                _ = sizeStr // For now, use default
+        }</span>
+
+        <span class="cov4" title="8">topic := &amp;Topic{
+                Name:      name,
+                Messages:  make([]*Message, 0),
+                Consumers: make(map[string]*Consumer),
+                Config:    config,
+                CreatedAt: time.Now(),
+                maxSize:   maxSize,
+        }
+
+        mq.topics[name] = topic
+        mq.stats.TopicStats[name] = &amp;TopicStats{
+                LastMessage: time.Now(),
+        }
+
+        logging.Infof("Created topic: %s", name)
+        return nil</span>
+}
+
+// Publish publishes a message to a topic
+func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byte, headers map[string]string, ttlSeconds int) (*Message, error) <span class="cov6" title="27">{
+        mq.mu.RLock()
+        t, exists := mq.topics[topic]
+        mq.mu.RUnlock()
+
+        if !exists </span><span class="cov1" title="1">{
+                return nil, ErrTopicNotFound
+        }</span>
+
+        <span class="cov6" title="26">t.mu.Lock()
+        defer t.mu.Unlock()
+
+        // Check if topic is full
+        if len(t.Messages) &gt;= t.maxSize </span><span class="cov0" title="0">{
+                return nil, ErrQueueFull
+        }</span>
+
+        // Create message
+        <span class="cov6" title="26">msg := &amp;Message{
+                ID:        generateMessageID(),
+                Topic:     topic,
+                Payload:   payload,
+                CreatedAt: time.Now(),
+                ExpiresAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second),
+                Headers:   headers,
+                Processed: false,
+                Retries:   0,
+        }
+
+        // Add to topic
+        t.Messages = append(t.Messages, msg)
+
+        // Update stats
+        mq.updateStats(topic, 1, 0, 0, 0)
+
+        logging.Debugf("Published message %s to topic %s", msg.ID, topic)
+        return msg, nil</span>
+}
+
+// Consume consumes messages from a topic
+func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) <span class="cov4" title="6">{
+        mq.mu.RLock()
+        t, exists := mq.topics[topic]
+        mq.mu.RUnlock()
+
+        if !exists </span><span class="cov1" title="1">{
+                return nil, ErrTopicNotFound
+        }</span>
+
+        // Register consumer
+        <span class="cov3" title="5">consumer := mq.registerConsumer(t, consumerGroup, consumerID)
+
+        t.mu.RLock()
+        defer t.mu.RUnlock()
+
+        var messages []*Message
+        count := 0
+
+        // Find unprocessed messages
+        for _, msg := range t.Messages </span><span class="cov4" title="10">{
+                if count &gt;= maxMessages </span><span class="cov1" title="1">{
+                        break</span>
+                }
+
+                // Skip expired messages
+                <span class="cov4" title="9">if time.Now().After(msg.ExpiresAt) </span><span class="cov1" title="1">{
+                        continue</span>
+                }
+
+                // Skip already processed messages by this consumer
+                <span class="cov4" title="8">if mq.isMessageProcessedByConsumer(consumer, msg.ID) </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Skip messages already being processed
+                <span class="cov4" title="8">if msg.Processed </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov4" title="8">messages = append(messages, msg)
+                count++</span>
+        }
+
+        <span class="cov3" title="5">logging.Debugf("Consumer %s consumed %d messages from topic %s", consumerID, len(messages), topic)
+        return messages, nil</span>
+}
+
+// Acknowledge acknowledges processed messages
+func (mq *MessageQueue) Acknowledge(consumerID string, messageIDs []string) ([]string, []string, error) <span class="cov1" title="1">{
+        var acked []string
+        var failed []string
+
+        mq.mu.RLock()
+        defer mq.mu.RUnlock()
+
+        for _, msgID := range messageIDs </span><span class="cov2" title="2">{
+                found := false
+                for _, topic := range mq.topics </span><span class="cov2" title="2">{
+                        topic.mu.Lock()
+                        for _, msg := range topic.Messages </span><span class="cov2" title="3">{
+                                if msg.ID == msgID </span><span class="cov2" title="2">{
+                                        msg.Processed = true
+                                        found = true
+
+                                        // Add to consumer's processed list
+                                        if consumer, exists := topic.Consumers[consumerID]; exists </span><span class="cov2" title="2">{
+                                                consumer.mu.Lock()
+                                                consumer.ProcessedIDs = append(consumer.ProcessedIDs, msgID)
+                                                consumer.LastSeen = time.Now()
+                                                consumer.mu.Unlock()
+                                        }</span>
+
+                                        <span class="cov2" title="2">acked = append(acked, msgID)
+                                        mq.updateStats(topic.Name, 0, 1, 0, 0)
+                                        break</span>
+                                }
+                        }
+                        <span class="cov2" title="2">topic.mu.Unlock()
+                        if found </span><span class="cov2" title="2">{
+                                break</span>
+                        }
+                }
+
+                <span class="cov2" title="2">if !found </span><span class="cov0" title="0">{
+                        failed = append(failed, msgID)
+                }</span>
+        }
+
+        <span class="cov1" title="1">logging.Debugf("Consumer %s acknowledged %d messages, failed %d", consumerID, len(acked), len(failed))
+        return acked, failed, nil</span>
+}
+
+// ListTopics returns all topics
+func (mq *MessageQueue) ListTopics() map[string]*Topic <span class="cov3" title="5">{
+        mq.mu.RLock()
+        defer mq.mu.RUnlock()
+
+        topics := make(map[string]*Topic)
+        for name, topic := range mq.topics </span><span class="cov3" title="5">{
+                topics[name] = topic
+        }</span>
+        <span class="cov3" title="5">return topics</span>
+}
+
+// GetStats returns queue statistics
+func (mq *MessageQueue) GetStats() *QueueStats <span class="cov1" title="1">{
+        mq.stats.mu.RLock()
+        defer mq.stats.mu.RUnlock()
+
+        // Create a copy of stats
+        stats := &amp;QueueStats{
+                TotalMessages:     mq.stats.TotalMessages,
+                PendingMessages:   mq.stats.PendingMessages,
+                ProcessedMessages: mq.stats.ProcessedMessages,
+                FailedMessages:    mq.stats.FailedMessages,
+                LastUpdated:       mq.stats.LastUpdated,
+                TopicStats:        make(map[string]*TopicStats),
+        }
+
+        for name, topicStats := range mq.stats.TopicStats </span><span class="cov1" title="1">{
+                stats.TopicStats[name] = &amp;TopicStats{
+                        MessageCount:   topicStats.MessageCount,
+                        ConsumerCount:  topicStats.ConsumerCount,
+                        LastMessage:    topicStats.LastMessage,
+                        ProcessedCount: topicStats.ProcessedCount,
+                        PendingCount:   topicStats.PendingCount,
+                }
+        }</span>
+
+        <span class="cov1" title="1">return stats</span>
+}
+
+// CleanupExpiredMessages removes expired messages from all topics
+func (mq *MessageQueue) CleanupExpiredMessages() <span class="cov1" title="1">{
+        mq.mu.RLock()
+        topics := make([]*Topic, 0, len(mq.topics))
+        for _, topic := range mq.topics </span><span class="cov1" title="1">{
+                topics = append(topics, topic)
+        }</span>
+        <span class="cov1" title="1">mq.mu.RUnlock()
+
+        for _, topic := range topics </span><span class="cov1" title="1">{
+                topic.mu.Lock()
+                var validMessages []*Message
+                expiredCount := 0
+
+                for _, msg := range topic.Messages </span><span class="cov1" title="1">{
+                        if time.Now().Before(msg.ExpiresAt) </span><span class="cov0" title="0">{
+                                validMessages = append(validMessages, msg)
+                        }</span> else<span class="cov1" title="1"> {
+                                expiredCount++
+                        }</span>
+                }
+
+                <span class="cov1" title="1">topic.Messages = validMessages
+                topic.mu.Unlock()
+
+                if expiredCount &gt; 0 </span><span class="cov1" title="1">{
+                        logging.Infof("Cleaned up %d expired messages from topic %s", expiredCount, topic.Name)
+                        mq.updateStats(topic.Name, 0, 0, 0, int64(expiredCount))
+                }</span>
+        }
+}
+
+// Helper functions
+
+func (mq *MessageQueue) registerConsumer(topic *Topic, group, id string) *Consumer <span class="cov3" title="5">{
+        topic.mu.Lock()
+        defer topic.mu.Unlock()
+
+        consumer, exists := topic.Consumers[id]
+        if !exists </span><span class="cov3" title="5">{
+                consumer = &amp;Consumer{
+                        ID:           id,
+                        Group:        group,
+                        LastSeen:     time.Now(),
+                        ProcessedIDs: make([]string, 0),
+                }
+                topic.Consumers[id] = consumer
+
+                // Update topic stats
+                if stats, exists := mq.stats.TopicStats[topic.Name]; exists </span><span class="cov3" title="5">{
+                        stats.ConsumerCount = len(topic.Consumers)
+                }</span>
+        } else<span class="cov0" title="0"> {
+                consumer.LastSeen = time.Now()
+        }</span>
+
+        <span class="cov3" title="5">return consumer</span>
+}
+
+func (mq *MessageQueue) isMessageProcessedByConsumer(consumer *Consumer, messageID string) bool <span class="cov4" title="8">{
+        consumer.mu.RLock()
+        defer consumer.mu.RUnlock()
+
+        for _, id := range consumer.ProcessedIDs </span><span class="cov0" title="0">{
+                if id == messageID </span><span class="cov0" title="0">{
+                        return true
+                }</span>
+        }
+        <span class="cov4" title="8">return false</span>
+}
+
+func (mq *MessageQueue) updateStats(topic string, total, processed, failed, expired int64) <span class="cov6" title="29">{
+        mq.stats.mu.Lock()
+        defer mq.stats.mu.Unlock()
+
+        mq.stats.TotalMessages += total
+        mq.stats.ProcessedMessages += processed
+        mq.stats.FailedMessages += failed
+        mq.stats.PendingMessages = mq.stats.TotalMessages - mq.stats.ProcessedMessages - mq.stats.FailedMessages
+        mq.stats.LastUpdated = time.Now()
+
+        if topicStats, exists := mq.stats.TopicStats[topic]; exists </span><span class="cov6" title="29">{
+                topicStats.MessageCount += total
+                topicStats.ProcessedCount += processed
+                topicStats.PendingCount = topicStats.MessageCount - topicStats.ProcessedCount
+                if total &gt; 0 </span><span class="cov6" title="26">{
+                        topicStats.LastMessage = time.Now()
+                }</span>
+        }
+}
+
+func generateMessageID() string <span class="cov6" title="26">{
+        // Simple message ID generation using timestamp and random component
+        return time.Now().Format("20060102150405") + "-" + randomString(8)
+}</span>
+
+func randomString(length int) string <span class="cov6" title="26">{
+        const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        b := make([]byte, length)
+        for i := range b </span><span class="cov10" title="208">{
+                b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+        }</span>
+        <span class="cov6" title="26">return string(b)</span>
+}
+</pre>
+		
+		<pre class="file" id="file11" style="display: none">package messagequeue
+
+import (
+        "context"
+        "time"
+
+        "github.com/cf/telemetry-pipeline/pkg/logging"
+)
+
+// MessageQueueService provides a high-level interface for the message queue
+type MessageQueueService struct {
+        queue         *MessageQueue
+        cleanupTicker *time.Ticker
+        ctx           context.Context
+        cancel        context.CancelFunc
+}
+
+// NewMessageQueueService creates a new message queue service
+func NewMessageQueueService() *MessageQueueService <span class="cov0" title="0">{
+        ctx, cancel := context.WithCancel(context.Background())
+
+        service := &amp;MessageQueueService{
+                queue:  NewMessageQueue(),
+                ctx:    ctx,
+                cancel: cancel,
+        }
+
+        // Start cleanup routine
+        service.startCleanupRoutine()
+
+        return service
+}</span>
+
+// PublishTelemetry publishes telemetry data to the queue
+func (mqs *MessageQueueService) PublishTelemetry(payload []byte, headers map[string]string) error <span class="cov0" title="0">{
+        // Ensure telemetry topic exists
+        err := mqs.queue.CreateTopic("telemetry", map[string]string{
+                "max_size": "50000",
+                "ttl":      "3600", // 1 hour
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to create telemetry topic: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">_, err = mqs.queue.Publish(mqs.ctx, "telemetry", payload, headers, 3600)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to publish telemetry message: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ConsumeTelemetry consumes telemetry data from the queue
+func (mqs *MessageQueueService) ConsumeTelemetry(consumerGroup, consumerID string, maxMessages int) ([]*Message, error) <span class="cov0" title="0">{
+        messages, err := mqs.queue.Consume(mqs.ctx, "telemetry", consumerGroup, consumerID, maxMessages, 30)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to consume telemetry messages: %v", err)
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return messages, nil</span>
+}
+
+// AcknowledgeMessages acknowledges processed messages
+func (mqs *MessageQueueService) AcknowledgeMessages(consumerID string, messageIDs []string) error <span class="cov0" title="0">{
+        acked, failed, err := mqs.queue.Acknowledge(consumerID, messageIDs)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Errorf("Failed to acknowledge messages: %v", err)
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if len(failed) &gt; 0 </span><span class="cov0" title="0">{
+                logging.Warnf("Failed to acknowledge %d messages: %v", len(failed), failed)
+        }</span>
+
+        <span class="cov0" title="0">logging.Debugf("Successfully acknowledged %d messages", len(acked))
+        return nil</span>
+}
+
+// GetQueueStats returns queue statistics
+func (mqs *MessageQueueService) GetQueueStats() *QueueStats <span class="cov0" title="0">{
+        return mqs.queue.GetStats()
+}</span>
+
+// CreateTopic creates a new topic with the given configuration
+func (mqs *MessageQueueService) CreateTopic(name string, config map[string]string) error <span class="cov0" title="0">{
+        return mqs.queue.CreateTopic(name, config)
+}</span>
+
+// ListTopics returns all available topics
+func (mqs *MessageQueueService) ListTopics() map[string]*Topic <span class="cov0" title="0">{
+        return mqs.queue.ListTopics()
+}</span>
+
+// Health checks the health of the message queue service
+func (mqs *MessageQueueService) Health() bool <span class="cov0" title="0">{
+        // Simple health check - service is healthy if context is not cancelled
+        select </span>{
+        case &lt;-mqs.ctx.Done():<span class="cov0" title="0">
+                return false</span>
+        default:<span class="cov0" title="0">
+                return true</span>
+        }
+}
+
+// Stop gracefully stops the message queue service
+func (mqs *MessageQueueService) Stop() <span class="cov0" title="0">{
+        logging.Infof("Stopping message queue service")
+
+        if mqs.cleanupTicker != nil </span><span class="cov0" title="0">{
+                mqs.cleanupTicker.Stop()
+        }</span>
+
+        <span class="cov0" title="0">mqs.cancel()
+        logging.Infof("Message queue service stopped")</span>
+}
+
+// startCleanupRoutine starts the background cleanup routine for expired messages
+func (mqs *MessageQueueService) startCleanupRoutine() <span class="cov0" title="0">{
+        mqs.cleanupTicker = time.NewTicker(5 * time.Minute) // Cleanup every 5 minutes
+
+        go func() </span><span class="cov0" title="0">{
+                defer func() </span><span class="cov0" title="0">{
+                        if r := recover(); r != nil </span><span class="cov0" title="0">{
+                                logging.Errorf("Cleanup routine panic: %v", r)
+                        }</span>
+                }()
+
+                <span class="cov0" title="0">for </span><span class="cov0" title="0">{
+                        select </span>{
+                        case &lt;-mqs.ctx.Done():<span class="cov0" title="0">
+                                logging.Infof("Stopping cleanup routine")
+                                return</span>
+                        case &lt;-mqs.cleanupTicker.C:<span class="cov0" title="0">
+                                logging.Debugf("Running message cleanup")
+                                mqs.queue.CleanupExpiredMessages()</span>
+                        }
+                }
+        }()
+
+        <span class="cov0" title="0">logging.Infof("Started message queue cleanup routine")</span>
+}
+
+// GetMessageQueueInstance returns the underlying message queue instance
+func (mqs *MessageQueueService) GetMessageQueueInstance() *MessageQueue <span class="cov0" title="0">{
+        return mqs.queue
+}</span>
+
+// PublishBatch publishes a batch of messages to the queue
+func (mqs *MessageQueueService) PublishBatch(topic string, payloads [][]byte, headers []map[string]string, ttlSeconds int) ([]*Message, error) <span class="cov0" title="0">{
+        var messages []*Message
+        var errors []error
+
+        for i, payload := range payloads </span><span class="cov0" title="0">{
+                var msgHeaders map[string]string
+                if i &lt; len(headers) </span><span class="cov0" title="0">{
+                        msgHeaders = headers[i]
+                }</span>
+
+                <span class="cov0" title="0">msg, err := mqs.queue.Publish(mqs.ctx, topic, payload, msgHeaders, ttlSeconds)
+                if err != nil </span><span class="cov0" title="0">{
+                        errors = append(errors, err)
+                        logging.Errorf("Failed to publish message %d in batch: %v", i, err)
+                }</span> else<span class="cov0" title="0"> {
+                        messages = append(messages, msg)
+                }</span>
+        }
+
+        <span class="cov0" title="0">if len(errors) &gt; 0 </span><span class="cov0" title="0">{
+                logging.Warnf("Published %d/%d messages successfully in batch", len(messages), len(payloads))
+        }</span> else<span class="cov0" title="0"> {
+                logging.Debugf("Successfully published batch of %d messages to topic %s", len(messages), topic)
+        }</span>
+
+        <span class="cov0" title="0">return messages, nil</span>
+}
+
+// ConsumeBatch consumes multiple batches of messages
+func (mqs *MessageQueueService) ConsumeBatch(topics []string, consumerGroup, consumerID string, maxMessagesPerTopic int) (map[string][]*Message, error) <span class="cov0" title="0">{
+        result := make(map[string][]*Message)
+
+        for _, topic := range topics </span><span class="cov0" title="0">{
+                messages, err := mqs.queue.Consume(mqs.ctx, topic, consumerGroup, consumerID, maxMessagesPerTopic, 30)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Errorf("Failed to consume from topic %s: %v", topic, err)
+                        continue</span>
+                }
+                <span class="cov0" title="0">result[topic] = messages</span>
+        }
+
+        <span class="cov0" title="0">return result, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file12" style="display: none">package models
+
+import (
+        "time"
+
+        "gorm.io/gorm"
+)
+
+// TelemetryData represents the telemetry data model for database storage
+type TelemetryData struct {
+        ID         uint      `gorm:"primarykey" json:"id"`
+        Timestamp  time.Time `gorm:"index;not null" json:"timestamp"`
+        MetricName string    `gorm:"index;size:255;not null" json:"metric_name"`
+        GPUID      string    `gorm:"index;size:255;not null" json:"gpu_id"`
+        Device     string    `gorm:"size:255" json:"device"`
+        UUID       string    `gorm:"index;size:255;not null" json:"uuid"`
+        ModelName  string    `gorm:"size:255" json:"model_name"`
+        Hostname   string    `gorm:"index;size:255" json:"hostname"`
+        Container  string    `gorm:"size:255" json:"container"`
+        Pod        string    `gorm:"size:255" json:"pod"`
+        Namespace  string    `gorm:"size:255" json:"namespace"`
+        Value      float64   `gorm:"not null" json:"value"`
+        LabelsRaw  string    `gorm:"type:text" json:"labels_raw"`
+        CreatedAt  time.Time `json:"created_at"`
+        UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// GPU represents GPU information for API responses
+type GPU struct {
+        GPUID     string `json:"gpu_id"`
+        UUID      string `json:"uuid"`
+        ModelName string `json:"model_name"`
+        Hostname  string `json:"hostname"`
+        Device    string `json:"device"`
+}
+
+// TelemetryQuery represents query parameters for telemetry data
+type TelemetryQuery struct {
+        GPUID     string    `json:"gpu_id" form:"gpu_id"`
+        StartTime time.Time `json:"start_time" form:"start_time"`
+        EndTime   time.Time `json:"end_time" form:"end_time"`
+        Limit     int       `json:"limit" form:"limit"`
+        Offset    int       `json:"offset" form:"offset"`
+}
+
+// TelemetryQueryResponse represents the response for telemetry queries
+type TelemetryQueryResponse struct {
+        DataPoints []TelemetryData `json:"data_points"`
+        TotalCount int64           `json:"total_count"`
+        HasMore    bool            `json:"has_more"`
+}
+
+// CSVRecord represents a single CSV record structure
+type CSVRecord struct {
+        Timestamp  string `csv:"timestamp"`
+        MetricName string `csv:"metric_name"`
+        GPUID      string `csv:"gpu_id"`
+        Device     string `csv:"device"`
+        UUID       string `csv:"uuid"`
+        ModelName  string `csv:"modelName"`
+        Hostname   string `csv:"Hostname"`
+        Container  string `csv:"container"`
+        Pod        string `csv:"pod"`
+        Namespace  string `csv:"namespace"`
+        Value      string `csv:"value"`
+        LabelsRaw  string `csv:"labels_raw"`
+}
+
+// TableName returns the table name for TelemetryData
+func (TelemetryData) TableName() string <span class="cov1" title="1">{
+        return "telemetry_data"
+}</span>
+
+// BeforeCreate will set a UUID rather than numeric ID.
+func (t *TelemetryData) BeforeCreate(tx *gorm.DB) error <span class="cov10" title="2">{
+        if t.CreatedAt.IsZero() </span><span class="cov1" title="1">{
+                t.CreatedAt = time.Now()
+        }</span>
+        <span class="cov10" title="2">if t.UpdatedAt.IsZero() </span><span class="cov1" title="1">{
+                t.UpdatedAt = time.Now()
+        }</span>
+        <span class="cov10" title="2">return nil</span>
+}
+
+// BeforeUpdate will update the UpdatedAt timestamp
+func (t *TelemetryData) BeforeUpdate(tx *gorm.DB) error <span class="cov1" title="1">{
+        t.UpdatedAt = time.Now()
+        return nil
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

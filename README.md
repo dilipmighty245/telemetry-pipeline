@@ -1,263 +1,200 @@
-# Elastic GPU Telemetry Pipeline - Design Documentation
+# Elastic GPU Telemetry Pipeline
 
-## Overview
+A scalable, elastic telemetry pipeline for AI clusters with custom message queue implementation. This system streams GPU telemetry data from CSV files through a custom message queue to collectors that persist data to PostgreSQL, with a REST API for querying telemetry data.
 
-This repository contains the comprehensive High-Level Design (HLD) and architecture documentation for the Elastic GPU Telemetry Pipeline with Custom Message Queue system. The system is designed to collect, process, and serve GPU telemetry data from AI clusters with high scalability, reliability, and performance.
+## 🏗️ System Architecture
 
-## Documentation Structure
+The system consists of four main components:
 
-### 📋 Core Design Documents
+1. **Telemetry Streamer**: Reads CSV telemetry data and streams it to the message queue
+2. **Message Queue**: Custom in-memory message queue library for reliable message delivery  
+3. **Telemetry Collector**: Consumes messages from the queue and persists to PostgreSQL
+4. **API Gateway**: REST API for querying telemetry data with auto-generated OpenAPI spec
 
-1. **[HIGH_LEVEL_DESIGN.md](./HIGH_LEVEL_DESIGN.md)**
-   - Complete system architecture overview
-   - Component interactions and data flow
-   - Scalability and performance considerations
-   - Technology stack and design principles
+## 🚀 Quick Start
 
-2. **[MESSAGE_QUEUE_DESIGN.md](./MESSAGE_QUEUE_DESIGN.md)**
-   - Custom message queue architecture
-   - Partitioning and replication strategies
-   - Producer/Consumer interfaces
-   - Performance optimizations and fault tolerance
+### Prerequisites
 
-3. **[API_SPECIFICATION.md](./API_SPECIFICATION.md)**
-   - REST API endpoint definitions
-   - Request/response schemas
-   - Error handling and status codes
-   - OpenAPI specification details
+- Go 1.21+
+- Docker & Docker Compose
+- Kubernetes cluster (for production deployment)
+- Helm 3.0+ (for Kubernetes deployment)
 
-4. **[DEPLOYMENT_STRATEGY.md](./DEPLOYMENT_STRATEGY.md)**
-   - Kubernetes deployment architecture
-   - Helm chart structure and configuration
-   - Auto-scaling and monitoring setup
-   - Security and operational procedures
+### Local Development
 
-### 🏗️ Architecture Diagrams
+```bash
+# Clone and setup
+make deps
 
-The documentation includes comprehensive Mermaid diagrams covering:
+# Build all services
+make build
 
-1. **System Architecture Overview**
-   - End-to-end data flow from CSV files to REST API
-   - Component interactions and dependencies
-   - Kubernetes deployment topology
+# Start with Docker Compose
+docker-compose up -d
 
-2. **Custom Message Queue Architecture**
-   - Broker cluster design with leader-follower pattern
-   - Topic partitioning and consumer group management
-   - Message storage and replication strategies
-
-3. **Kubernetes Deployment Architecture**
-   - Pod and service relationships
-   - Storage and networking configuration
-   - Monitoring and observability stack
-
-## System Components
-
-### 🔄 Core Components
-
-- **Telemetry Streamers**: Read CSV data and stream to message queue (1-10 instances)
-- **Custom Message Queue**: High-performance distributed pub-sub system
-- **Telemetry Collectors**: Consume messages and persist to database (1-10 instances)
-- **API Gateway**: REST API service with auto-generated OpenAPI spec
-- **Time-Series Database**: InfluxDB/TimescaleDB for telemetry storage
-
-### 📊 Sample Data Analysis
-
-Based on the provided CSV file (`dcgm_metrics_20250718_134233.csv`):
-- **Data Format**: DCGM GPU metrics with timestamps, GPU IDs, hostnames, and values
-- **GPU Types**: NVIDIA H100 80GB HBM3 cards across multiple hosts
-- **Metrics**: GPU utilization, memory utilization, temperature, and other DCGM metrics
-- **Scale**: Multiple hosts (mtv5-dgx1-hgpu-*) with 8 GPUs each
-
-## Key Design Features
-
-### 🚀 Scalability
-- **Horizontal Pod Autoscaling**: Dynamic scaling based on CPU, memory, and custom metrics
-- **Message Queue Partitioning**: Distribute load across multiple partitions
-- **Database Sharding**: Time-series partitioning for optimal query performance
-- **Load Balancing**: Distribute API requests across multiple gateway instances
-
-### 🛡️ Reliability
-- **Fault Tolerance**: Component failures don't affect overall system operation
-- **Data Durability**: Message persistence with write-ahead logging
-- **Replication**: Multi-replica deployments with leader election
-- **Health Checks**: Comprehensive liveness and readiness probes
-
-### ⚡ Performance
-- **High Throughput**: 10,000+ messages/second processing capability
-- **Low Latency**: Sub-100ms end-to-end processing latency
-- **Efficient Storage**: Optimized time-series data storage and indexing
-- **Caching**: Redis caching for frequently accessed data
-
-### 🔧 Operational Excellence
-- **Cloud-Native**: Kubernetes-first design with Helm charts
-- **Observability**: Prometheus metrics, Grafana dashboards, structured logging
-- **CI/CD Ready**: Docker containers with multi-stage builds
-- **Security**: RBAC, network policies, and secret management
-
-## API Endpoints
-
-### 📡 Core API Routes
-
-```
-GET /api/v1/gpus                           # List all GPUs
-GET /api/v1/gpus/{id}                      # Get GPU details
-GET /api/v1/gpus/{id}/telemetry           # Query GPU telemetry
-GET /api/v1/metrics                        # Available metrics
-GET /health                                # Health check
-GET /api/v1/swagger.json                  # OpenAPI spec
+# Test API
+curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/gpus
+curl http://localhost:8080/api/v1/stats
 ```
 
-### 🔍 Query Features
-- **Time Range Filtering**: Filter by start_time and end_time
-- **Metric Filtering**: Query specific telemetry metrics
-- **Pagination**: Efficient pagination for large datasets
-- **Sorting**: Time-ordered results with configurable direction
+### Manual Build and Run
 
-## Technology Stack
+```bash
+# Build all services
+make build
 
-### 💻 Core Technologies
-- **Language**: Go 1.21+ (clean, idiomatic code)
-- **Message Queue**: Custom implementation with high performance
-- **Database**: InfluxDB (time-series) or PostgreSQL with TimescaleDB
-- **API Framework**: Gin/Echo with Swagger generation
-- **Containerization**: Docker with multi-stage builds
-- **Orchestration**: Kubernetes 1.25+ with Helm 3.x
+# Start PostgreSQL
+make db-setup
 
-### 🔧 Supporting Tools
-- **Monitoring**: Prometheus + Grafana stack
-- **Logging**: Structured logging with correlation IDs
-- **Testing**: Comprehensive unit and integration tests
-- **Code Quality**: golangci-lint, gofmt, go vet
-- **Documentation**: Auto-generated API docs and code documentation
-
-## Message Queue Design Highlights
-
-### 🏛️ Architecture Pattern
-- **Distributed Pub-Sub**: Topic-based messaging with partitioning
-- **Leader-Follower Replication**: Strong consistency with fault tolerance
-- **Consumer Groups**: Load balancing across multiple consumers
-- **Backpressure Handling**: Flow control to prevent system overload
-
-### 🎯 Performance Optimizations
-- **Zero-Copy Transfers**: Minimize memory allocations
-- **Batching**: Group operations for efficiency
-- **Connection Pooling**: Reuse network connections
-- **Compression**: Optional message compression
-
-## Deployment Architecture
-
-### ☸️ Kubernetes Resources
-- **StatefulSets**: Message queue brokers with persistent storage
-- **Deployments**: Stateless components with rolling updates
-- **Services**: Internal and external service discovery
-- **Ingress**: External API access with TLS termination
-- **HPA**: Horizontal pod autoscaling with custom metrics
-
-### 📦 Helm Chart Structure
-```
-charts/
-├── gpu-telemetry-pipeline/     # Umbrella chart
-├── message-queue/              # Message queue sub-chart
-├── telemetry-streamer/         # Streamer sub-chart
-├── telemetry-collector/        # Collector sub-chart
-├── api-gateway/                # API gateway sub-chart
-└── monitoring/                 # Monitoring sub-chart
+# Run services (in separate terminals)
+make run-streamer    # Terminal 1
+make run-collector   # Terminal 2
+make run-api-gateway # Terminal 3
 ```
 
-## Development Workflow with AI
+## 📊 API Endpoints
 
-### 🤖 AI-Assisted Design Process
+- `GET /health` - Service health status
+- `GET /api/v1/gpus` - List all GPUs with telemetry data
+- `GET /api/v1/gpus/{id}/telemetry` - Get telemetry data for specific GPU
+- `GET /api/v1/stats` - Overall telemetry statistics
 
-This design was created with extensive AI assistance to demonstrate best practices for AI-powered development:
+### Query Parameters
 
-#### 1. **Requirements Analysis** (AI-Assisted)
-- **Prompt**: "Analyze the GPU telemetry pipeline requirements and identify key components"
-- **AI Contribution**: Structured requirement breakdown and component identification
-- **Manual Refinement**: Domain-specific optimizations and constraint analysis
+For `/api/v1/gpus/{id}/telemetry`:
+- `start_time` (optional): Start time in RFC3339 format
+- `end_time` (optional): End time in RFC3339 format  
+- `limit` (optional): Max records to return (default: 100, max: 1000)
+- `offset` (optional): Number of records to skip (default: 0)
 
-#### 2. **Architecture Design** (AI-Generated)
-- **Prompt**: "Design a scalable message queue architecture for GPU telemetry"
-- **AI Contribution**: Complete architectural patterns and component interactions
-- **Manual Review**: Performance tuning and operational considerations
+## 🧪 Testing
 
-#### 3. **API Specification** (AI-Generated)
-- **Prompt**: "Create REST API specification for GPU telemetry with OpenAPI support"
-- **AI Contribution**: Complete endpoint definitions, schemas, and error handling
-- **Manual Enhancement**: Domain-specific validation and optimization
+```bash
+make test                # Unit tests
+make test-coverage       # Coverage report
+make test-integration    # Integration tests
+make benchmark          # Performance tests
+```
 
-#### 4. **Deployment Strategy** (AI-Assisted)
-- **Prompt**: "Design Kubernetes deployment with Helm charts for high availability"
-- **AI Contribution**: Complete Helm chart structure and Kubernetes resources
-- **Manual Optimization**: Security policies and operational procedures
+## 🐳 Docker & Kubernetes Deployment
 
-#### 5. **Documentation Creation** (AI-Generated)
-- **Prompt**: "Create comprehensive technical documentation with diagrams"
-- **AI Contribution**: Structured documentation and Mermaid diagrams
-- **Manual Review**: Technical accuracy and completeness
+```bash
+# Docker
+make docker-build       # Build images
+make docker-push        # Push to registry
 
-### 📝 AI Prompts Used
+# Kubernetes with Helm
+make helm-install       # Deploy to cluster
+make helm-uninstall     # Remove deployment
 
-Key prompts that were particularly effective:
+# Scale services
+kubectl scale deployment telemetry-pipeline-streamer --replicas=3
+kubectl scale deployment telemetry-pipeline-collector --replicas=2
+```
 
-1. **System Architecture**: 
-   ```
-   "Design a high-performance, scalable GPU telemetry pipeline with custom message queue 
-   for Kubernetes deployment, including component interactions and data flow"
-   ```
+## 📚 Documentation
 
-2. **Message Queue Design**:
-   ```
-   "Create a custom message queue design with partitioning, replication, and 
-   high-throughput capabilities for telemetry data streaming"
-   ```
+Comprehensive documentation is available in the `docs/` directory:
 
-3. **API Design**:
-   ```
-   "Design REST API endpoints for GPU telemetry queries with OpenAPI specification,
-   including pagination, filtering, and error handling"
-   ```
+- **[High Level Design](docs/HIGH_LEVEL_DESIGN.md)** - System architecture and design decisions
+- **[API Specification](docs/API_SPECIFICATION.md)** - Detailed REST API documentation
+- **[Message Queue Design](docs/MESSAGE_QUEUE_DESIGN.md)** - Custom message queue implementation details
+- **[Deployment Strategy](docs/DEPLOYMENT_STRATEGY.md)** - Production deployment guidelines
 
-4. **Deployment Architecture**:
-   ```
-   "Create Kubernetes deployment strategy with Helm charts, auto-scaling, 
-   monitoring, and security considerations"
-   ```
+## 🔧 Configuration
 
-### 🎯 AI Effectiveness Assessment
+### Environment Variables
 
-- **High Effectiveness**: Architecture design, API specifications, documentation structure
-- **Medium Effectiveness**: Kubernetes configurations, monitoring setup
-- **Manual Required**: Domain-specific optimizations, security hardening, operational procedures
+#### Database
+- `DB_HOST`: PostgreSQL host (default: localhost)
+- `DB_PORT`: PostgreSQL port (default: 5432)
+- `DB_USER`: Database user (default: postgres)
+- `DB_PASSWORD`: Database password (default: postgres)
+- `DB_NAME`: Database name (default: telemetry)
 
-## Next Steps
+#### Services
+- `STREAMER_BATCH_SIZE`: Records per batch (default: 100)
+- `COLLECTOR_BATCH_SIZE`: Messages per batch (default: 100)
+- `PORT`: API Gateway HTTP port (default: 8080)
 
-### 🚧 Implementation Phase
+## 🔄 Scaling
 
-1. **Repository Bootstrapping**: Initialize Go modules and project structure
-2. **Core Component Development**: Implement message queue, streamers, collectors, API gateway
-3. **Testing Strategy**: Unit tests, integration tests, performance benchmarks
-4. **CI/CD Pipeline**: GitHub Actions for build, test, and deployment
-5. **Documentation**: Code documentation, API docs, operational runbooks
+The system supports horizontal scaling of all components:
 
-### 📊 Success Metrics
+```bash
+# Scale streamers
+kubectl scale deployment telemetry-pipeline-streamer --replicas=5
 
-- **Performance**: 10,000+ messages/second throughput, <100ms latency
-- **Scalability**: Dynamic scaling from 1-10 instances per component
-- **Reliability**: 99.9% uptime, zero message loss
-- **Code Quality**: >80% test coverage, clean Go code
-- **Operational**: Comprehensive monitoring, automated deployments
+# Scale collectors  
+kubectl scale deployment telemetry-pipeline-collector --replicas=3
 
-## Contributing
+# Enable auto-scaling
+helm upgrade telemetry-pipeline ./deployments/helm/telemetry-pipeline \
+  --set autoscaling.enabled=true \
+  --set autoscaling.minReplicas=2 \
+  --set autoscaling.maxReplicas=10
+```
 
-This design serves as the foundation for implementation. Key areas for contribution:
+## 🛠️ Development
 
-1. **Code Implementation**: Go services following the architectural patterns
-2. **Testing**: Comprehensive test suites with high coverage
-3. **Monitoring**: Custom metrics and alerting rules
-4. **Documentation**: Code comments and operational guides
-5. **Performance**: Benchmarking and optimization
+### Project Structure
+
+```
+telemetry-pipeline/
+├── cmd/                    # Main applications
+├── internal/              # Private application code
+├── pkg/                   # Public library code
+├── protos/               # Protocol buffer definitions
+├── deployments/          # Docker & Kubernetes configs
+├── test/                 # Test files
+└── docs/                 # Documentation
+```
+
+### Make Targets
+
+```bash
+make build              # Build all services
+make test               # Run tests
+make docker-build       # Build Docker images
+make helm-install       # Deploy to Kubernetes
+make generate-swagger   # Generate OpenAPI spec
+make clean             # Clean build artifacts
+```
+
+## 🤖 AI-Assisted Development
+
+This project was developed with extensive AI assistance:
+
+- **Project Structure** (90% AI): Complete Go module setup, directory structure
+- **Core Implementation** (85% AI): Message queue, CSV reader, API handlers
+- **Testing** (80% AI): Unit tests, integration tests, benchmarks
+- **Infrastructure** (95% AI): Docker, Kubernetes, Helm charts
+- **Documentation** (90% AI): README, API docs, deployment guides
+
+See [docs/](docs/) for detailed development workflow and AI assistance documentation.
+
+## 📈 Features
+
+✅ **Custom Message Queue** - In-memory implementation with topic management  
+✅ **Dynamic Scaling** - Horizontal scaling for streamers and collectors  
+✅ **REST API** - Auto-generated OpenAPI/Swagger documentation  
+✅ **Kubernetes Ready** - Complete Helm charts and deployment configs  
+✅ **Production Ready** - Health checks, metrics, graceful shutdowns  
+✅ **Comprehensive Testing** - Unit, integration, and performance tests  
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Write tests for new functionality
+4. Ensure all tests pass: `make test`
+5. Submit a pull request
 
 ---
 
-**Note**: This is a design document created with AI assistance. The actual implementation should follow these architectural patterns while adapting to specific operational requirements and constraints.
+**Built with extensive AI assistance for rapid development and production-ready deployment.**

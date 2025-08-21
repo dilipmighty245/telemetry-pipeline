@@ -1,0 +1,221 @@
+# Default values for telemetry-pipeline
+# This is a YAML-formatted file.
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: telemetry-pipeline
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Streamer Configuration
+streamer:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-streamer
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    csvFile: "dcgm_metrics_20250718_134233.csv"
+    batchSize: 100
+    streamInterval: "1s"
+    loopMode: true
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
+
+# Collector Configuration
+collector:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-collector
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    batchSize: 100
+    pollInterval: "1s"
+    bufferSize: 1000
+    logLevel: "info"
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
+
+# API Gateway Configuration
+apiGateway:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: telemetry-pipeline-api-gateway
+    tag: ""
+    pullPolicy: ""
+  
+  config:
+    port: 8080
+    logLevel: "info"
+  
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    annotations: {}
+  
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: telemetry-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 128Mi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
+
+# PostgreSQL Configuration (using Bitnami chart)
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres"
+    username: "telemetry"
+    password: "telemetry"
+    database: "telemetry"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+    
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# External Database Configuration (if postgresql.enabled = false)
+externalDatabase:
+  host: ""
+  port: 5432
+  username: "postgres"
+  password: "postgres"
+  database: "telemetry"
+  sslMode: "disable"
+  existingSecret: ""
+  existingSecretPasswordKey: "password"
+
+# Monitoring
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network Policies
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+# Common labels
+commonLabels: {}
+
+# Common annotations
+commonAnnotations: {}
+
+# Extra manifests to deploy
+extraManifests: []

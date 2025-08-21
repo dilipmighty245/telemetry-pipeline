@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package telemetry;
+
+option go_package = "github.com/cf/telemetry-pipeline/pkg/proto/telemetry";
+
+import "google/protobuf/timestamp.proto";
+
+// TelemetryData represents a single telemetry data point from GPU
+message TelemetryData {
+    google.protobuf.Timestamp timestamp = 1;
+    string metric_name = 2;
+    string gpu_id = 3;
+    string device = 4;
+    string uuid = 5;
+    string model_name = 6;
+    string hostname = 7;
+    string container = 8;
+    string pod = 9;
+    string namespace = 10;
+    double value = 11;
+    string labels_raw = 12;
+}
+
+// TelemetryBatch represents a batch of telemetry data points
+message TelemetryBatch {
+    repeated TelemetryData data_points = 1;
+    string batch_id = 2;
+    google.protobuf.Timestamp batch_timestamp = 3;
+}
+
+// StreamRequest for streaming telemetry data
+message StreamRequest {
+    string stream_id = 1;
+    TelemetryBatch batch = 2;
+}
+
+// StreamResponse for acknowledging streamed data
+message StreamResponse {
+    string stream_id = 1;
+    bool success = 2;
+    string message = 3;
+    int32 processed_count = 4;
+}
+
+// CollectRequest for collecting telemetry data
+message CollectRequest {
+    string collector_id = 1;
+    int32 max_batch_size = 2;
+    int32 timeout_seconds = 3;
+}
+
+// CollectResponse containing collected telemetry data
+message CollectResponse {
+    string collector_id = 1;
+    TelemetryBatch batch = 2;
+    bool has_more = 3;
+}
+
+// GPU information for API responses
+message GPU {
+    string gpu_id = 1;
+    string uuid = 2;
+    string model_name = 3;
+    string hostname = 4;
+    string device = 5;
+}
+
+// Query parameters for telemetry data
+message TelemetryQuery {
+    string gpu_id = 1;
+    google.protobuf.Timestamp start_time = 2;
+    google.protobuf.Timestamp end_time = 3;
+    int32 limit = 4;
+    int32 offset = 5;
+}
+
+// Response for telemetry queries
+message TelemetryQueryResponse {
+    repeated TelemetryData data_points = 1;
+    int32 total_count = 2;
+    bool has_more = 3;
+}
+
+// Health check request
+message HealthRequest {
+    string service_name = 1;
+}
+
+// Health check response
+message HealthResponse {
+    string service_name = 1;
+    bool healthy = 2;
+    string message = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+// Telemetry Streamer Service
+service TelemetryStreamer {
+    // Stream telemetry data to the message queue
+    rpc StreamTelemetry(stream StreamRequest) returns (stream StreamResponse);
+    
+    // Health check
+    rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Telemetry Collector Service  
+service TelemetryCollector {
+    // Collect telemetry data from the message queue
+    rpc CollectTelemetry(CollectRequest) returns (stream CollectResponse);
+    
+    // Health check
+    rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Telemetry Query Service (for API Gateway)
+service TelemetryQuery {
+    // Get all available GPUs
+    rpc GetGPUs(google.protobuf.Empty) returns (stream GPU);
+    
+    // Query telemetry data for a specific GPU
+    rpc QueryTelemetry(TelemetryQuery) returns (TelemetryQueryResponse);
+    
+    // Health check
+    rpc Health(HealthRequest) returns (HealthResponse);
+}

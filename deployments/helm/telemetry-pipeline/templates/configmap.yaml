@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+data:
+  # Streamer configuration
+  streamer-batch-size: {{ .Values.streamer.config.batchSize | quote }}
+  streamer-stream-interval: {{ .Values.streamer.config.streamInterval | quote }}
+  streamer-loop-mode: {{ .Values.streamer.config.loopMode | quote }}
+  streamer-log-level: {{ .Values.streamer.config.logLevel | quote }}
+  
+  # Collector configuration
+  collector-batch-size: {{ .Values.collector.config.batchSize | quote }}
+  collector-poll-interval: {{ .Values.collector.config.pollInterval | quote }}
+  collector-buffer-size: {{ .Values.collector.config.bufferSize | quote }}
+  collector-log-level: {{ .Values.collector.config.logLevel | quote }}
+  
+  # API Gateway configuration
+  api-gateway-port: {{ .Values.apiGateway.config.port | quote }}
+  api-gateway-log-level: {{ .Values.apiGateway.config.logLevel | quote }}
+  
+  # Database configuration
+  database-host: {{ include "telemetry-pipeline.databaseHost" . | quote }}
+  database-port: {{ include "telemetry-pipeline.databasePort" . | quote }}
+  database-name: {{ include "telemetry-pipeline.databaseName" . | quote }}
+  database-username: {{ include "telemetry-pipeline.databaseUsername" . | quote }}
+  database-sslmode: {{ .Values.externalDatabase.sslMode | default "disable" | quote }}

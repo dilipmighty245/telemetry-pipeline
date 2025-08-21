@@ -1,0 +1,24 @@
+{{- if .Values.apiGateway.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-api-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  {{- with .Values.apiGateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.apiGateway.service.type }}
+  ports:
+    - port: {{ .Values.apiGateway.service.port }}
+      targetPort: {{ .Values.apiGateway.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "telemetry-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+{{- end }}

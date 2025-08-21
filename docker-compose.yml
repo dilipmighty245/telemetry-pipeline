@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: telemetry-postgres
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Telemetry Streamer
+  streamer:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.streamer
+    container_name: telemetry-streamer
+    environment:
+      - LOG_LEVEL=info
+    volumes:
+      - ./dcgm_metrics_20250718_134233.csv:/app/dcgm_metrics_20250718_134233.csv:ro
+    command: [
+      "-csv=dcgm_metrics_20250718_134233.csv",
+      "-loop=true",
+      "-batch-size=50",
+      "-stream-interval=2s",
+      "-log-level=info"
+    ]
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+  # Telemetry Collector
+  collector:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.collector
+    container_name: telemetry-collector
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=telemetry
+      - DB_SSLMODE=disable
+      - LOG_LEVEL=info
+    command: [
+      "-batch-size=100",
+      "-poll-interval=1s",
+      "-log-level=info"
+    ]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.api-gateway
+    container_name: telemetry-api-gateway
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=telemetry
+      - DB_SSLMODE=disable
+      - LOG_LEVEL=info
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    command: [
+      "-port=8080",
+      "-log-level=info"
+    ]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Adminer for database management (optional)
+  adminer:
+    image: adminer
+    container_name: telemetry-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: telemetry-network
