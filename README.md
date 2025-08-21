@@ -2,6 +2,16 @@
 
 A scalable, elastic telemetry pipeline for AI clusters with custom message queue implementation. This system streams GPU telemetry data from CSV files through a custom message queue to collectors that persist data to PostgreSQL, with a REST API for querying telemetry data.
 
+> ## 🆕 **NEW: One-Command Environment Setup!**
+> 
+> **🚀 Get started in seconds with consolidated setup commands:**
+> - `make setup-local-env` - Complete Docker environment with configurable scaling
+> - `make setup-kind-env` - Cross-cluster Kubernetes with edge + central deployment
+> 
+> **✨ Features:** Configurable instances, automated health checks, easy management commands
+> 
+> [📖 **View Setup Guide →**](docs/CONSOLIDATED_SETUP_COMMANDS.md)
+
 ## 🏗️ System Architecture
 
 The system consists of five main components:
@@ -24,7 +34,54 @@ The system consists of five main components:
 - Kubernetes cluster (for production deployment)
 - Helm 3.0+ (for Kubernetes deployment)
 
-### Local Development
+## ⚡ **NEW: Consolidated Setup Commands**
+
+**🎯 Single-command environment setup with configurable scaling!**
+
+### 🐳 **Local Development (Docker)**
+```bash
+# Default setup (2 instances each)
+make setup-local-env
+
+# Custom scaling
+make setup-local-env STREAMER_INSTANCES=3 COLLECTOR_INSTANCES=4 API_GW_INSTANCES=2
+
+# Access services
+curl http://localhost:8080/health          # API Gateway
+open http://localhost:8081                 # Database UI (Adminer)
+# PostgreSQL: localhost:5433, Redis: localhost:6379
+```
+
+### ☸️ **Cross-Cluster Kubernetes (Kind)**
+```bash
+# Default cross-cluster setup
+make setup-kind-env
+
+# Custom configuration with edge + central clusters
+make setup-kind-env STREAMER_INSTANCES=5 COLLECTOR_INSTANCES=8 API_GW_INSTANCES=3 KIND_EDGE_NODES=3
+
+# Architecture: 1 streamer in edge cluster, rest in central cluster
+# Access via port-forward: http://localhost:8080 (API), localhost:5432 (DB)
+```
+
+### 🛠️ **Management Commands**
+```bash
+# Local environment
+make local-status                          # Check service status
+make local-logs [SERVICE=streamer]         # View logs
+make local-cleanup                         # Clean up
+
+# Kind environment  
+make kind-status                           # Check clusters
+make kind-logs [CLUSTER=central]           # View logs
+make kind-cleanup                          # Clean up clusters
+```
+
+**📚 Full documentation:** [Consolidated Setup Commands Guide](docs/CONSOLIDATED_SETUP_COMMANDS.md)
+
+---
+
+### Traditional Local Development
 
 ```bash
 # Clone and setup
@@ -731,6 +788,16 @@ telemetry-pipeline/
 ### Make Targets
 
 ```bash
+# 🆕 Consolidated Setup Commands (RECOMMENDED)
+make setup-local-env    # Complete local environment with Docker (configurable instances)
+make setup-kind-env     # Cross-cluster Kind environment (configurable instances)
+make local-status       # Check local environment status
+make local-logs         # View local service logs
+make local-cleanup      # Clean up local environment
+make kind-status        # Check Kind clusters status
+make kind-logs          # View Kind deployment logs
+make kind-cleanup       # Clean up Kind clusters
+
 # Build and test
 make build              # Build all services
 make test               # Run tests
@@ -1062,6 +1129,9 @@ This design represents a **production-grade, enterprise-ready telemetry pipeline
 
 ## 📈 Features
 
+🆕 **One-Command Setup** - `make setup-local-env` and `make setup-kind-env` with configurable scaling  
+🆕 **Cross-Cluster Deployment** - Edge + Central cluster architecture with automated networking  
+🆕 **Smart Management** - Status checking, logging, and cleanup commands  
 ✅ **High-Throughput Streaming** - 50,000+ records/sec with adaptive batching  
 ✅ **Fault-Tolerant Design** - Circuit breaker, retry logic, graceful degradation  
 ✅ **Production-Grade Patterns** - Battle-tested enterprise streaming architecture  

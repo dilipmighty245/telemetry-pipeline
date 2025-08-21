@@ -3,7 +3,8 @@
 	helm-uninstall-cross-cluster helm-template-edge helm-template-central docker-build-local docker-build-all \
 	kind-setup kind-cleanup kind-status kind-load-images \
 	deploy-status deployment-info validate-cross-cluster-env \
-	validate-same-cluster validate-cross-cluster validate-connectivity validate-health validate-scaling
+	validate-same-cluster validate-cross-cluster validate-connectivity validate-health validate-scaling \
+	setup-local-env setup-kind-env local-status local-logs local-cleanup kind-logs kind-cleanup
 
 # Default target
 help: ## Show this help message
@@ -26,6 +27,14 @@ REDIS_HOST ?=
 REDIS_PASSWORD ?= 
 DB_PASSWORD ?= 
 NAMESPACE ?= telemetry-system
+
+# Instance configuration for setup commands
+STREAMER_INSTANCES ?= 2
+COLLECTOR_INSTANCES ?= 2
+API_GW_INSTANCES ?= 2
+KIND_EDGE_NODES ?= 2
+KIND_CENTRAL_NODES ?= 3
+DOCKER_COMPOSE_FILE ?= docker-compose.yml
 
 # Go build flags
 GO_BUILD_FLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(shell date -u '+%Y-%m-%d_%H:%M:%S')"
@@ -358,13 +367,7 @@ kind-setup: ## Setup Kind clusters for cross-cluster testing
 	@echo "Setting up Kind clusters for testing..."
 	./scripts/setup-kind-clusters.sh create-all
 
-kind-cleanup: ## Clean up Kind clusters
-	@echo "Cleaning up Kind clusters..."
-	./scripts/setup-kind-clusters.sh delete-all
-
-kind-status: ## Show Kind clusters status
-	@echo "Checking Kind clusters status..."
-	./scripts/setup-kind-clusters.sh status
+# Removed duplicate targets - see consolidated commands section
 
 kind-load-images: docker-build ## Load Docker images into Kind clusters
 	@echo "Loading images into Kind clusters..."
@@ -470,6 +473,193 @@ csv-deploy-pvc: ## Complete workflow: create PVC, upload CSV, and deploy (usage:
 csv-deploy-url: ## Deploy with URL-based CSV (usage: make csv-deploy-url CSV_URL=https://example.com/data.csv)
 	@if [ -z "$(CSV_URL)" ]; then echo "Error: CSV_URL not set. Usage: make csv-deploy-url CSV_URL=https://example.com/data.csv"; exit 1; fi
 	@./scripts/manage-csv-data.sh deploy-with-url "$(CSV_URL)"
+
+# Consolidated Setup Commands
+setup-local-env: ## Setup complete local environment with Docker (usage: make setup-local-env [STREAMER_INSTANCES=2] [COLLECTOR_INSTANCES=2] [API_GW_INSTANCES=2])
+	@echo "Setting up local development environment..."
+	@echo "Configuration:"
+	@echo "  - Streamers: $(STREAMER_INSTANCES)"
+	@echo "  - Collectors: $(COLLECTOR_INSTANCES)"
+	@echo "  - API Gateways: $(API_GW_INSTANCES)"
+	@echo ""
+	@echo "Step 1: Building Docker images..."
+	@make docker-build-local
+	@echo ""
+	@echo "Step 2: Creating Docker Compose configuration..."
+	@$(MAKE) _create-local-compose-config
+	@echo ""
+	@echo "Step 3: Starting services with Docker Compose..."
+	docker-compose -f $(DOCKER_COMPOSE_FILE) down --remove-orphans || true
+	docker-compose -f $(DOCKER_COMPOSE_FILE) up -d --scale streamer=$(STREAMER_INSTANCES) --scale collector=$(COLLECTOR_INSTANCES) --scale api-gateway=$(API_GW_INSTANCES)
+	@echo ""
+	@echo "Step 4: Waiting for services to be ready..."
+	@$(MAKE) _wait-for-local-services
+	@echo ""
+	@echo "✅ Local environment is ready!"
+	@echo "Services:"
+	@echo "  - PostgreSQL: localhost:5433 (user: postgres, password: postgres, db: telemetry)"
+	@echo "  - Redis: localhost:6379"
+	@echo "  - API Gateway: http://localhost:8080"
+	@echo "  - Adminer (DB UI): http://localhost:8081"
+	@echo "  - Streamers: $(STREAMER_INSTANCES) instances"
+	@echo "  - Collectors: $(COLLECTOR_INSTANCES) instances"
+	@echo "  - API Gateways: $(API_GW_INSTANCES) instances"
+	@echo ""
+	@echo "Use 'make local-logs' to see logs, 'make local-status' to check status"
+
+setup-kind-env: ## Setup complete Kind environment with cross-cluster deployment (usage: make setup-kind-env [STREAMER_INSTANCES=2] [COLLECTOR_INSTANCES=2] [API_GW_INSTANCES=2] [KIND_EDGE_NODES=2] [KIND_CENTRAL_NODES=3])
+	@echo "Setting up Kind clusters for cross-cluster deployment..."
+	@echo "Configuration:"
+	@echo "  - Edge cluster nodes: $(KIND_EDGE_NODES)"
+	@echo "  - Central cluster nodes: $(KIND_CENTRAL_NODES)"
+	@echo "  - Streamers: $(STREAMER_INSTANCES) (1 in edge cluster, rest in central cluster)"
+	@echo "  - Collectors: $(COLLECTOR_INSTANCES) (all in central cluster)"
+	@echo "  - API Gateways: $(API_GW_INSTANCES) (all in central cluster)"
+	@echo ""
+	@echo "Step 1: Setting up Kind clusters..."
+	@./scripts/setup-kind-clusters.sh --edge-nodes $(KIND_EDGE_NODES) --central-nodes $(KIND_CENTRAL_NODES) create-all
+	@echo ""
+	@echo "Step 2: Building and loading Docker images..."
+	@make docker-build-local
+	@./scripts/setup-kind-clusters.sh load-images
+	@echo ""
+	@echo "Step 3: Creating Helm values for cross-cluster deployment..."
+	@$(MAKE) _create-kind-values-files
+	@echo ""
+	@echo "Step 4: Deploying to central cluster (collectors + API gateway + database)..."
+	@helm upgrade --install telemetry-central ./deployments/helm/telemetry-pipeline \
+		--namespace telemetry-system --create-namespace \
+		--kube-context kind-telemetry-central \
+		--values /tmp/kind-central-values.yaml \
+		--set image.tag=latest \
+		--set image.repository=telemetry-pipeline \
+		--set collector.replicaCount=$(COLLECTOR_INSTANCES) \
+		--set apiGateway.replicaCount=$(API_GW_INSTANCES) \
+		--set externalRedis.host=telemetry-central-redis.telemetry-system.svc.cluster.local \
+		--wait --timeout=10m
+	@echo ""
+	@echo "Step 5: Deploying to edge cluster (1 streamer)..."
+	@helm upgrade --install telemetry-edge ./deployments/helm/telemetry-pipeline \
+		--namespace telemetry-system --create-namespace \
+		--kube-context kind-telemetry-edge \
+		--values /tmp/kind-edge-values.yaml \
+		--set image.tag=latest \
+		--set image.repository=telemetry-pipeline \
+		--set streamer.replicaCount=1 \
+		--set externalRedis.host=host.docker.internal \
+		--set externalRedis.port=6379 \
+		--wait --timeout=10m
+	@echo ""
+	@echo "Step 6: Deploying remaining streamers to central cluster..."
+	@if [ $(STREAMER_INSTANCES) -gt 1 ]; then \
+		helm upgrade telemetry-central ./deployments/helm/telemetry-pipeline \
+			--namespace telemetry-system \
+			--kube-context kind-telemetry-central \
+			--reuse-values \
+			--set streamer.enabled=true \
+			--set streamer.replicaCount=$$(($(STREAMER_INSTANCES) - 1)) \
+			--wait --timeout=5m; \
+	fi
+	@echo ""
+	@echo "Step 7: Setting up port forwarding..."
+	@$(MAKE) _setup-kind-port-forwarding &
+	@echo ""
+	@echo "✅ Kind cross-cluster environment is ready!"
+	@echo "Clusters:"
+	@echo "  - Edge cluster: kind-telemetry-edge ($(KIND_EDGE_NODES) nodes, 1 streamer)"
+	@echo "  - Central cluster: kind-telemetry-central ($(KIND_CENTRAL_NODES) nodes, $$(($(STREAMER_INSTANCES) - 1)) streamers, $(COLLECTOR_INSTANCES) collectors, $(API_GW_INSTANCES) API gateways)"
+	@echo "Services (via port-forward):"
+	@echo "  - API Gateway: http://localhost:8080"
+	@echo "  - Database: localhost:5432"
+	@echo ""
+	@echo "Use 'make kind-status' to check status, 'make kind-logs' to see logs"
+
+# Internal helper targets
+_create-local-compose-config:
+	@echo "Creating Docker Compose configuration..."
+	@cp docker-compose.yml docker-compose.yml.bak 2>/dev/null || true
+	@cat docker-compose.yml | sed 's/container_name: telemetry-streamer/# container_name: telemetry-streamer/' | sed 's/container_name: telemetry-collector/# container_name: telemetry-collector/' | sed 's/container_name: telemetry-api-gateway/# container_name: telemetry-api-gateway/' > $(DOCKER_COMPOSE_FILE).tmp
+	@mv $(DOCKER_COMPOSE_FILE).tmp $(DOCKER_COMPOSE_FILE)
+
+_wait-for-local-services:
+	@echo "Waiting for services to be ready..."
+	@for i in {1..60}; do \
+		if docker-compose -f $(DOCKER_COMPOSE_FILE) ps | grep -q "Up"; then \
+			if curl -s http://localhost:8080/health >/dev/null 2>&1; then \
+				echo "Services are ready!"; \
+				break; \
+			fi; \
+		fi; \
+		if [ $$i -eq 60 ]; then \
+			echo "Services failed to start after 5 minutes"; \
+			exit 1; \
+		fi; \
+		echo "Waiting for services... ($$i/60)"; \
+		sleep 5; \
+	done
+
+_create-kind-values-files:
+	@./scripts/create-kind-values.sh $(STREAMER_INSTANCES) $(COLLECTOR_INSTANCES) $(API_GW_INSTANCES)
+
+_setup-kind-port-forwarding:
+	@echo "Setting up port forwarding..."
+	@kubectl --context=kind-telemetry-central port-forward -n telemetry-system service/telemetry-central-api-gateway 8080:80 >/dev/null 2>&1 &
+	@kubectl --context=kind-telemetry-central port-forward -n telemetry-system service/telemetry-central-postgresql 5432:5432 >/dev/null 2>&1 &
+	@sleep 2
+
+# Status and monitoring commands
+local-status: ## Show status of local Docker environment
+	@echo "=== Local Environment Status ==="
+	docker-compose -f $(DOCKER_COMPOSE_FILE) ps
+	@echo ""
+	@echo "=== Service Health ==="
+	@curl -s http://localhost:8080/health 2>/dev/null && echo "✅ API Gateway: Healthy" || echo "❌ API Gateway: Unhealthy"
+	@docker exec telemetry-postgres pg_isready -U postgres -d telemetry >/dev/null 2>&1 && echo "✅ PostgreSQL: Ready" || echo "❌ PostgreSQL: Not ready"
+	@docker exec telemetry-redis redis-cli ping >/dev/null 2>&1 && echo "✅ Redis: Ready" || echo "❌ Redis: Not ready"
+
+local-logs: ## Show logs from local services (usage: make local-logs [SERVICE=all|streamer|collector|api-gateway|postgres|redis])
+	@SERVICE=${SERVICE:-all}; \
+	if [ "$$SERVICE" = "all" ]; then \
+		docker-compose -f $(DOCKER_COMPOSE_FILE) logs -f; \
+	else \
+		docker-compose -f $(DOCKER_COMPOSE_FILE) logs -f $$SERVICE; \
+	fi
+
+local-cleanup: ## Stop and remove local environment
+	@echo "Cleaning up local environment..."
+	docker-compose -f $(DOCKER_COMPOSE_FILE) down --remove-orphans --volumes
+	@if [ -f "docker-compose.yml.bak" ]; then mv docker-compose.yml.bak docker-compose.yml; fi
+	@rm -f /tmp/kind-*-values.yaml
+	@echo "Local environment cleaned up!"
+
+kind-status: ## Show status of Kind clusters and deployments
+	@echo "=== Kind Clusters Status ==="
+	@./scripts/setup-kind-clusters.sh status
+	@echo ""
+	@echo "=== Deployments Status ==="
+	@echo "Edge Cluster:"
+	@kubectl --context=kind-telemetry-edge get pods,svc -n telemetry-system 2>/dev/null || echo "  No deployments found"
+	@echo ""
+	@echo "Central Cluster:"
+	@kubectl --context=kind-telemetry-central get pods,svc -n telemetry-system 2>/dev/null || echo "  No deployments found"
+
+kind-logs: ## Show logs from Kind deployments (usage: make kind-logs [CLUSTER=edge|central] [COMPONENT=streamer|collector|api-gateway])
+	@CLUSTER=${CLUSTER:-central}; \
+	COMPONENT=${COMPONENT:-all}; \
+	CONTEXT="kind-telemetry-$$CLUSTER"; \
+	echo "Showing logs for $$COMPONENT in $$CLUSTER cluster..."; \
+	if [ "$$COMPONENT" = "all" ]; then \
+		kubectl --context=$$CONTEXT logs -n telemetry-system -l app.kubernetes.io/name=telemetry-pipeline --tail=100 -f; \
+	else \
+		kubectl --context=$$CONTEXT logs -n telemetry-system -l app.kubernetes.io/component=$$COMPONENT --tail=100 -f; \
+	fi
+
+kind-cleanup: ## Clean up Kind clusters and resources
+	@echo "Cleaning up Kind environment..."
+	@./scripts/setup-kind-clusters.sh delete-all
+	@rm -f /tmp/kind-*-values.yaml
+	@pkill -f "kubectl.*port-forward" || true
+	@echo "Kind environment cleaned up!"
 
 # All-in-one targets
 all: clean deps lint test generate-swagger build ## Build everything
