@@ -1,4 +1,4 @@
-.PHONY: help build test clean run-streamer run-collector run-api-gateway docker-build docker-push helm-install helm-uninstall generate-swagger deps lint \
+.PHONY: help build test clean run-streamer run-collector run-api-gateway run-all-optimized run-streamer-prod run-collector-prod run-api-gateway-prod docker-build docker-push helm-install helm-uninstall generate-swagger deps lint \
 	helm-install-same-cluster helm-install-cross-cluster-edge helm-install-cross-cluster-central helm-install-cross-cluster-all \
 	helm-uninstall-cross-cluster helm-template-edge helm-template-central docker-build-local docker-build-all \
 	kind-setup kind-cleanup kind-status kind-load-images \
@@ -86,17 +86,37 @@ lint: ## Run linter
 	golangci-lint run
 
 # Run services locally
-run-streamer: build-streamer ## Run streamer service locally
+run-streamer: build-streamer ## Run streamer service locally with optimized settings
 	@echo "Starting streamer service..."
-	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -loop=true -log-level=debug
+	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=3s -loop=false -log-level=info
 
-run-collector: build-collector ## Run collector service locally
+run-collector: build-collector ## Run collector service locally with optimized settings
 	@echo "Starting collector service..."
-	./$(BINARY_DIR)/collector -log-level=debug
+	./$(BINARY_DIR)/collector -batch-size=100 -poll-interval=500ms -log-level=info
 
 run-api-gateway: build-api-gateway generate-swagger ## Run API gateway service locally
 	@echo "Starting API gateway service..."
-	./$(BINARY_DIR)/api-gateway -port=8080 -log-level=debug
+	./$(BINARY_DIR)/api-gateway -port=8080 -log-level=info
+
+# Production-ready run targets (requires Redis)
+run-all-optimized: ## Run all services with optimized settings for production (requires REDIS_URL)
+	@echo "Starting all services with optimized settings..."
+	@echo "Note: Ensure REDIS_URL=redis://localhost:6379 is set"
+	@echo "Starting in recommended order: collector -> streamer -> api-gateway"
+	@make -j1 run-collector-prod run-streamer-prod run-api-gateway-prod
+
+run-streamer-prod: build-streamer ## Run streamer with production settings (requires REDIS_URL)
+	@echo "Starting streamer service with production settings..."
+	@echo "Processing 2470 records in 100-record batches..."
+	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=3s -loop=false -log-level=info
+
+run-collector-prod: build-collector ## Run collector with production settings (requires REDIS_URL)
+	@echo "Starting collector service with production settings..."
+	./$(BINARY_DIR)/collector -batch-size=100 -poll-interval=500ms -log-level=info
+
+run-api-gateway-prod: build-api-gateway generate-swagger ## Run API gateway with production settings
+	@echo "Starting API gateway service with production settings..."
+	./$(BINARY_DIR)/api-gateway -port=8080 -log-level=info
 
 # Docker targets
 docker-build: ## Build Docker images for all services

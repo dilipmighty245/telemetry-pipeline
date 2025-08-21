@@ -53,9 +53,9 @@ make db-setup
 docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine
 
 # Start services with Redis
-REDIS_URL=redis://localhost:6379 make run-streamer &
-REDIS_URL=redis://localhost:6379 make run-collector &  
-REDIS_URL=redis://localhost:6379 make run-api-gateway &
+REDIS_URL=redis://localhost:6379 make run-streamer
+REDIS_URL=redis://localhost:6379 make run-collector
+REDIS_URL=redis://localhost:6379 make run-api-gateway
 
 # Run services (in separate terminals)
 make run-streamer    # Terminal 1
@@ -279,9 +279,9 @@ docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine
 make db-status
 docker ps | grep redis
 
-# 4. Start all services with Redis connectivity
-REDIS_URL=redis://localhost:6379 make run-streamer &
-REDIS_URL=redis://localhost:6379 make run-collector &  
+# 4. Start all services with Redis connectivity (optimized order)
+REDIS_URL=redis://localhost:6379 make run-collector &
+REDIS_URL=redis://localhost:6379 make run-streamer &  
 REDIS_URL=redis://localhost:6379 make run-api-gateway &
 
 # 5. Test the complete pipeline
@@ -301,9 +301,10 @@ When working correctly, you should see:
 For high-throughput scenarios, adjust these parameters:
 
 ```bash
-# Increase batch sizes and intervals for better performance
-REDIS_URL=redis://localhost:6379 ./bin/streamer -batch-size=50 -stream-interval=2s &
-REDIS_URL=redis://localhost:6379 ./bin/collector -batch-size=200 -poll-interval=500ms &
+# Optimized settings for 100-record batches (recommended)
+REDIS_URL=redis://localhost:6379 ./bin/collector -batch-size=100 -poll-interval=500ms &
+REDIS_URL=redis://localhost:6379 ./bin/streamer -batch-size=100 -stream-interval=3s -loop=false &
+REDIS_URL=redis://localhost:6379 ./bin/api-gateway -port=8080 &
 ```
 
 #### Troubleshooting Pipeline Issues
@@ -320,6 +321,31 @@ docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine redis-server --
 # Reduce streaming frequency
 REDIS_URL=redis://localhost:6379 ./bin/streamer -stream-interval=5s -batch-size=25 &
 ```
+
+### 🎯 **New Optimized Make Targets**
+
+For production-ready 100-batch processing:
+
+```bash
+# Setup infrastructure first
+make db-setup
+docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine
+
+# Run optimized services (requires REDIS_URL environment variable)
+REDIS_URL=redis://localhost:6379 make run-collector-prod &
+REDIS_URL=redis://localhost:6379 make run-streamer-prod &
+REDIS_URL=redis://localhost:6379 make run-api-gateway-prod &
+
+# Or run all optimized services at once
+REDIS_URL=redis://localhost:6379 make run-all-optimized
+```
+
+**Benefits of Optimized Targets:**
+- ✅ **100-record batches** for maximum throughput
+- ✅ **3-second intervals** to prevent queue overflow  
+- ✅ **No-loop mode** processes 2,470 records once and stops
+- ✅ **Info-level logging** for production readiness
+- ✅ **Proper service startup order** (collector → streamer → api-gateway)
 
 **Message Acknowledgment Issues:**
 - This is normal under high load - the system is designed to handle temporary acknowledgment failures
@@ -711,6 +737,17 @@ make test               # Run tests
 make docker-build       # Build Docker images
 make generate-swagger   # Generate OpenAPI spec
 make clean             # Clean build artifacts
+
+# Run services (basic)
+make run-streamer       # Run streamer with 100-batch optimization
+make run-collector      # Run collector with 100-batch optimization  
+make run-api-gateway    # Run API gateway
+
+# Run services (production-ready, requires REDIS_URL)
+make run-streamer-prod  # Run streamer optimized for 2470 records
+make run-collector-prod # Run collector with 100-batch/500ms polling
+make run-api-gateway-prod # Run API gateway with info logging
+make run-all-optimized  # Run all services in optimal order
 
 # Database Management
 make db-setup           # Setup local PostgreSQL database
