@@ -202,15 +202,11 @@ func init() {
 
 // StartDefaultEndpoint enables the logging controller endpoint on
 // on the default port on localhost, at the default path ("/log").
-//
-// Deprecated: use observability/loggger.go instead.
 func StartDefaultEndpoint() *http.Server {
 	return StartEndpoint(fmt.Sprintf(":%d", HTTPLogPort), "/log")
 }
 
 // StartEndpoint enables the logging controller endpoint on HTTPLogPort.
-//
-// Deprecated: use observability/loggger.go instead.
 func StartEndpoint(addr, path string) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, ServeHTTP)
