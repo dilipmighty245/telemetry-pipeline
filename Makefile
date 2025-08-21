@@ -88,7 +88,7 @@ lint: ## Run linter
 # Run services locally
 run-streamer: build-streamer ## Run streamer service locally with optimized settings
 	@echo "Starting streamer service..."
-	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=3s -loop=false -log-level=info
+	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=1s -loop=false -log-level=info
 
 run-collector: build-collector ## Run collector service locally with optimized settings
 	@echo "Starting collector service..."

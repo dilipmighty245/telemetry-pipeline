@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	_ "net/http/pprof" // register pprof handlers
@@ -139,21 +140,31 @@ func run(args []string, _ io.Writer) error {
 		logging.Infof("shutting down streamer service...")
 
 		// Create timeout context for graceful shutdown
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer shutdownCancel()
 
-		// Stop streamer service first
+		// Stop streamer service
 		stopDone := make(chan error, 1)
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Errorf("Panic during streamer shutdown: %v", r)
+					stopDone <- fmt.Errorf("panic during shutdown: %v", r)
+				}
+			}()
 			stopDone <- streamerService.Stop()
 		}()
 
 		select {
 		case err := <-stopDone:
-			logging.Infof("streamer service stopped gracefully")
+			if err != nil {
+				logging.Warnf("streamer service stopped with error: %v", err)
+			} else {
+				logging.Infof("streamer service stopped gracefully")
+			}
 			return err
 		case <-shutdownCtx.Done():
-			logging.Warnf("streamer service shutdown timed out after 10 seconds")
+			logging.Warnf("streamer service shutdown timed out after 8 seconds")
 			return context.DeadlineExceeded
 		}
 	})

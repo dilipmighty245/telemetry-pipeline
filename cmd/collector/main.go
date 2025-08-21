@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	_ "net/http/pprof" // register pprof handlers
@@ -155,21 +156,31 @@ func run(args []string, _ io.Writer) error {
 		logging.Infof("shutting down collector service...")
 
 		// Create timeout context for graceful shutdown
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer shutdownCancel()
 
-		// Stop collector service first
+		// Stop collector service
 		stopDone := make(chan error, 1)
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Errorf("Panic during collector shutdown: %v", r)
+					stopDone <- fmt.Errorf("panic during shutdown: %v", r)
+				}
+			}()
 			stopDone <- collectorService.Stop()
 		}()
 
 		select {
 		case err := <-stopDone:
-			logging.Infof("collector service stopped gracefully")
+			if err != nil {
+				logging.Warnf("collector service stopped with error: %v", err)
+			} else {
+				logging.Infof("collector service stopped gracefully")
+			}
 			return err
 		case <-shutdownCtx.Done():
-			logging.Warnf("collector service shutdown timed out after 10 seconds")
+			logging.Warnf("collector service shutdown timed out after 8 seconds")
 			return context.DeadlineExceeded
 		}
 	})

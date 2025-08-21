@@ -198,6 +198,12 @@ func (ss *StreamerService) streamLoop() {
 			logging.Infof("Streaming loop stopped for service %s", ss.config.StreamerID)
 			return
 		case <-ticker.C:
+			// Check context again before processing to ensure quick shutdown
+			if ss.ctx.Err() != nil {
+				logging.Infof("Context cancelled, stopping streaming loop for service %s", ss.config.StreamerID)
+				return
+			}
+
 			err := ss.streamBatch()
 			if err != nil {
 				ss.mu.Lock()
@@ -208,7 +214,8 @@ func (ss *StreamerService) streamLoop() {
 
 				if err == io.EOF && !ss.config.LoopMode {
 					logging.Infof("Reached end of CSV file, stopping streamer %s", ss.config.StreamerID)
-					ss.Stop()
+					// Don't call Stop() from within the loop to avoid deadlock
+					// Just return and let the main Stop() method handle cleanup
 					return
 				}
 			}
@@ -231,13 +238,33 @@ func (ss *StreamerService) streamBatch() error {
 
 	// Convert to JSON and publish to message queue
 	for _, data := range telemetryData {
+		// Check context before processing each record for quick shutdown
+		if ss.ctx.Err() != nil {
+			logging.Infof("Context cancelled during batch processing, stopping")
+			return ss.ctx.Err()
+		}
+
 		err = ss.publishTelemetryData(data)
 		if err != nil {
 			logging.Errorf("Failed to publish telemetry data: %v", err)
 
-			// Retry logic
+			// Retry logic with context checking
 			for retry := 0; retry < ss.config.MaxRetries; retry++ {
-				time.Sleep(ss.config.RetryDelay)
+				// Check context before retry delay
+				if ss.ctx.Err() != nil {
+					logging.Infof("Context cancelled during retry, stopping")
+					return ss.ctx.Err()
+				}
+
+				// Use context-aware sleep
+				select {
+				case <-ss.ctx.Done():
+					logging.Infof("Context cancelled during retry delay, stopping")
+					return ss.ctx.Err()
+				case <-time.After(ss.config.RetryDelay):
+					// Continue with retry
+				}
+
 				err = ss.publishTelemetryData(data)
 				if err == nil {
 					break

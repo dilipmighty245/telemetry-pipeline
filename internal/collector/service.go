@@ -221,8 +221,20 @@ func (cs *CollectorService) collectionLoop() {
 			logging.Infof("Collection loop stopped for service %s", cs.config.CollectorID)
 			return
 		case <-ticker.C:
+			// Check context again before processing to ensure quick shutdown
+			if cs.ctx.Err() != nil {
+				logging.Infof("Context cancelled, stopping collection loop for service %s", cs.config.CollectorID)
+				return
+			}
+
 			err := cs.collectBatch()
 			if err != nil {
+				// Don't log context cancellation as an error
+				if cs.ctx.Err() != nil {
+					logging.Infof("Collection stopped due to context cancellation")
+					return
+				}
+
 				cs.mu.Lock()
 				cs.lastError = err
 				cs.mu.Unlock()
@@ -251,8 +263,17 @@ func (cs *CollectorService) persistenceLoop() {
 		select {
 		case <-cs.ctx.Done():
 			logging.Infof("Persistence loop stopped for service %s", cs.config.CollectorID)
+			// Flush any remaining data before stopping
+			cs.flushBuffer()
 			return
 		case <-ticker.C:
+			// Check context before flushing to ensure quick shutdown
+			if cs.ctx.Err() != nil {
+				logging.Infof("Context cancelled, stopping persistence loop for service %s", cs.config.CollectorID)
+				// Flush any remaining data before stopping
+				cs.flushBuffer()
+				return
+			}
 			cs.flushBuffer()
 		}
 	}
@@ -280,6 +301,12 @@ func (cs *CollectorService) collectBatch() error {
 
 	// Parse messages
 	for _, msg := range messages {
+		// Check context before processing each message for quick shutdown
+		if cs.ctx.Err() != nil {
+			logging.Infof("Context cancelled during message processing, stopping")
+			return cs.ctx.Err()
+		}
+
 		var data models.TelemetryData
 		err := json.Unmarshal(msg.Payload, &data)
 		if err != nil {
