@@ -111,8 +111,7 @@ func encodePayload(w http.ResponseWriter, data payload) {
 // GET http://localhost:HTTPLogPort/log?file=<filename>
 // PUT http://localhost:HTTPLogPort/log?file=<filename>&level=<level>
 // PUT http://localhost:HTTPLogPort/log?level=<level>
-//
-// Deprecated: use observability/loggger.go instead.
+
 func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	file := query.Get("file")
@@ -226,8 +225,7 @@ func StartEndpoint(addr, path string) *http.Server {
 }
 
 // SetLogLevel sets the logging level to be used.
-//
-// Deprecated: use observability/loggger.go instead.
+
 func SetLogLevel(level string, file string) bool {
 	level = strings.ToLower(level)
 	var lvl int
@@ -301,8 +299,6 @@ func checkLogLevel(file string, level int) bool {
 }
 
 // Debugf implements function to log at Debug level
-//
-// Deprecated: use observability/loggger.go instead.
 func Debugf(msg string, args ...interface{}) {
 	if checkLogLevel(getFileName(), Debug) {
 		s := logFormat(msg, args...)
@@ -311,8 +307,6 @@ func Debugf(msg string, args ...interface{}) {
 }
 
 // Infof implements function to log at Info level
-//
-// Deprecated: use observability/loggger.go instead.
 func Infof(msg string, args ...interface{}) {
 	if checkLogLevel(getFileName(), Info) {
 		s := logFormat(msg, args...)
@@ -321,8 +315,6 @@ func Infof(msg string, args ...interface{}) {
 }
 
 // Warnf implements function to log at Warn level
-//
-// Deprecated: use observability/loggger.go instead.
 func Warnf(msg string, args ...interface{}) {
 	if checkLogLevel(getFileName(), Warn) {
 		s := logFormat(msg, args...)
@@ -331,8 +323,6 @@ func Warnf(msg string, args ...interface{}) {
 }
 
 // Errorf implements function to log at Error level
-//
-// Deprecated: use observability/loggger.go instead.
 func Errorf(msg string, args ...interface{}) {
 	if checkLogLevel(getFileName(), Error) {
 		s := logFormat(msg, args...)
@@ -341,8 +331,6 @@ func Errorf(msg string, args ...interface{}) {
 }
 
 // Fatalf implements function to log at fatal level
-//
-// Deprecated: use observability/loggger.go instead.
 func Fatalf(msg string, args ...interface{}) {
 	s := logFormat(msg, args...)
 	logInstance.logger.Fatal(s)

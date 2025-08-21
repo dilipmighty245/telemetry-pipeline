@@ -164,13 +164,13 @@ make clean             # Clean build artifacts
 
 ## 🤖 AI-Assisted Development
 
-This project was developed with extensive AI assistance:
+This project was developed with AI assistance:
 
 - **Project Structure** (90% AI): Complete Go module setup, directory structure
-- **Core Implementation** (85% AI): Message queue, CSV reader, API handlers
-- **Testing** (80% AI): Unit tests, integration tests, benchmarks
-- **Infrastructure** (95% AI): Docker, Kubernetes, Helm charts
-- **Documentation** (90% AI): README, API docs, deployment guides
+- **Core Implementation** (75% AI): Message queue, CSV reader, API handlers
+- **Testing** (70% AI): Unit tests, integration tests, benchmarks
+- **Infrastructure** (85% AI): Docker, Kubernetes, Helm charts
+- **Documentation** (80% AI): README, API docs, deployment guides
 
 See [docs/](docs/) for detailed development workflow and AI assistance documentation.
 
@@ -197,4 +197,3 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Built with extensive AI assistance for rapid development and production-ready deployment.**

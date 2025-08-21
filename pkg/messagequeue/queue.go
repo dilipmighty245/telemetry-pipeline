@@ -48,11 +48,12 @@ type Consumer struct {
 	mu           sync.RWMutex
 }
 
-// MessageQueue represents the in-memory message queue
+// MessageQueue represents the message queue (in-memory or Redis-backed)
 type MessageQueue struct {
-	topics map[string]*Topic
-	mu     sync.RWMutex
-	stats  *QueueStats
+	topics       map[string]*Topic
+	mu           sync.RWMutex
+	stats        *QueueStats
+	redisBackend *RedisBackend // Optional Redis backend
 }
 
 // QueueStats represents queue statistics
@@ -77,16 +78,35 @@ type TopicStats struct {
 
 // NewMessageQueue creates a new message queue instance
 func NewMessageQueue() *MessageQueue {
-	return &MessageQueue{
+	mq := &MessageQueue{
 		topics: make(map[string]*Topic),
 		stats: &QueueStats{
 			TopicStats: make(map[string]*TopicStats),
 		},
 	}
+
+	// Try to initialize Redis backend if available
+	logging.Infof("Attempting to initialize Redis backend...")
+	redisBackend, err := NewRedisBackend()
+	if err != nil {
+		logging.Infof("Redis backend not available, using in-memory queue: %v", err)
+	} else {
+		mq.redisBackend = redisBackend
+		logging.Infof("Successfully initialized Redis-backed message queue")
+	}
+
+	return mq
 }
 
 // CreateTopic creates a new topic
 func (mq *MessageQueue) CreateTopic(name string, config map[string]string) error {
+	// For Redis backend, topics are created implicitly when first message is published
+	if mq.redisBackend != nil {
+		logging.Debugf("Topic %s will be created implicitly in Redis on first publish", name)
+		return nil
+	}
+
+	// In-memory implementation
 	mq.mu.Lock()
 	defer mq.mu.Unlock()
 
@@ -120,6 +140,29 @@ func (mq *MessageQueue) CreateTopic(name string, config map[string]string) error
 
 // Publish publishes a message to a topic
 func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byte, headers map[string]string, ttlSeconds int) (*Message, error) {
+	// Create message
+	msg := &Message{
+		ID:        generateMessageID(),
+		Topic:     topic,
+		Payload:   payload,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second),
+		Headers:   headers,
+		Processed: false,
+		Retries:   0,
+	}
+
+	// Use Redis backend if available
+	if mq.redisBackend != nil {
+		err := mq.redisBackend.PublishMessage(topic, msg)
+		if err != nil {
+			logging.Errorf("Failed to publish to Redis backend: %v", err)
+			return nil, err
+		}
+		return msg, nil
+	}
+
+	// Fall back to in-memory implementation
 	mq.mu.RLock()
 	t, exists := mq.topics[topic]
 	mq.mu.RUnlock()
@@ -136,18 +179,6 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 		return nil, ErrQueueFull
 	}
 
-	// Create message
-	msg := &Message{
-		ID:        generateMessageID(),
-		Topic:     topic,
-		Payload:   payload,
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second),
-		Headers:   headers,
-		Processed: false,
-		Retries:   0,
-	}
-
 	// Add to topic
 	t.Messages = append(t.Messages, msg)
 
@@ -160,6 +191,18 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 
 // Consume consumes messages from a topic
 func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
+	// Use Redis backend if available
+	if mq.redisBackend != nil {
+		// For Redis, we don't need to check if topic exists - it will return empty if no messages
+		messages, err := mq.redisBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
+		if err != nil {
+			logging.Errorf("Failed to consume from Redis backend: %v", err)
+			return nil, err
+		}
+		return messages, nil
+	}
+
+	// Fall back to in-memory implementation
 	mq.mu.RLock()
 	t, exists := mq.topics[topic]
 	mq.mu.RUnlock()
@@ -387,8 +430,14 @@ func generateMessageID() string {
 	return time.Now().Format("20060102150405") + "-" + randomString(8)
 }
 
+// Close closes the in-memory message queue (no-op for in-memory implementation)
+func (mq *MessageQueue) Close() error {
+	// No resources to clean up for in-memory implementation
+	return nil
+}
+
 func randomString(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123456789"
 	b := make([]byte, length)
 	for i := range b {
 		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]

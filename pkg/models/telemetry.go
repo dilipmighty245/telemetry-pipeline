@@ -11,7 +11,7 @@ type TelemetryData struct {
 	ID         uint      `gorm:"primarykey" json:"id"`
 	Timestamp  time.Time `gorm:"index;not null" json:"timestamp"`
 	MetricName string    `gorm:"index;size:255;not null" json:"metric_name"`
-	GPUID      string    `gorm:"index;size:255;not null" json:"gpu_id"`
+	GPUID      string    `gorm:"column:gpu_id;index;size:255;not null" json:"gpu_id"`
 	Device     string    `gorm:"size:255" json:"device"`
 	UUID       string    `gorm:"index;size:255;not null" json:"uuid"`
 	ModelName  string    `gorm:"size:255" json:"model_name"`
@@ -27,9 +27,9 @@ type TelemetryData struct {
 
 // GPU represents GPU information for API responses
 type GPU struct {
-	GPUID     string `json:"gpu_id"`
+	GPUID     string `gorm:"column:gpu_id" json:"gpu_id"`
 	UUID      string `json:"uuid"`
-	ModelName string `json:"model_name"`
+	ModelName string `gorm:"column:model_name" json:"model_name"`
 	Hostname  string `json:"hostname"`
 	Device    string `json:"device"`
 }
