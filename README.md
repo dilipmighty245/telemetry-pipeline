@@ -50,6 +50,12 @@ make build
 
 # Start PostgreSQL
 make db-setup
+docker run --name telemetry-redis -p 6379:6379 -d redis:7-alpine
+
+# Start services with Redis
+REDIS_URL=redis://localhost:6379 make run-streamer &
+REDIS_URL=redis://localhost:6379 make run-collector &  
+REDIS_URL=redis://localhost:6379 make run-api-gateway &
 
 # Run services (in separate terminals)
 make run-streamer    # Terminal 1
