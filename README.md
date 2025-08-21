@@ -24,6 +24,126 @@ The system consists of five main components:
 
 **Data Flow**: `CSV File → Streamer → Redis → Collector → PostgreSQL → API Gateway → REST API`
 
+### 📊 Architecture Diagrams
+
+The telemetry pipeline supports both local Docker and cross-cluster Kubernetes deployments:
+
+```mermaid
+graph TB
+    subgraph "🐳 Local Environment (Docker)"
+        subgraph "Docker Compose Network"
+            PG[🗄️ PostgreSQL<br/>localhost:5433<br/>user: postgres]
+            RD[🔴 Redis<br/>localhost:6379<br/>Message Queue]
+            S1[🟢 Streamer 1<br/>CSV Processing]
+            S2[🟢 Streamer 2<br/>CSV Processing]
+            SN[🟢 Streamer N<br/>CSV Processing]
+            C1[🟠 Collector 1<br/>Data Persistence]
+            C2[🟠 Collector 2<br/>Data Persistence]
+            CN[🟠 Collector N<br/>Data Persistence]
+            A1[🟣 API Gateway 1<br/>REST API]
+            A2[🟣 API Gateway 2<br/>REST API]
+            AN[🟣 API Gateway N<br/>REST API]
+            ADM[🔧 Adminer<br/>localhost:8081<br/>DB Admin UI]
+        end
+        
+        S1 -->|Stream Data| RD
+        S2 -->|Stream Data| RD
+        SN -->|Stream Data| RD
+        RD -->|Consume Messages| C1
+        RD -->|Consume Messages| C2
+        RD -->|Consume Messages| CN
+        C1 -->|Persist Data| PG
+        C2 -->|Persist Data| PG
+        CN -->|Persist Data| PG
+        A1 -->|Query Data| PG
+        A2 -->|Query Data| PG
+        AN -->|Query Data| PG
+        ADM -->|Admin Access| PG
+        
+        EXT1[🌐 External Access<br/>localhost:8080<br/>Load Balanced] --> A1
+        EXT1 --> A2
+        EXT1 --> AN
+    end
+
+    subgraph "☸️ Kind Cross-Cluster Environment"
+        subgraph "🏢 Edge Cluster"
+            ES1[🟢 Streamer 1<br/>Edge Location<br/>Close to Data Source]
+        end
+        
+        subgraph "🏭 Central Cluster"
+            CRD[🔴 Redis Master<br/>Message Broker<br/>Cross-Cluster Hub]
+            CPG[🗄️ PostgreSQL<br/>Central Database<br/>TimescaleDB]
+            CS2[🟢 Streamer 2<br/>Additional Processing]
+            CSN[🟢 Streamer N<br/>Additional Processing]
+            CC1[🟠 Collector 1<br/>High-Volume Processing]
+            CC2[🟠 Collector 2<br/>High-Volume Processing]
+            CCN[🟠 Collector N<br/>High-Volume Processing]
+            CA1[🟣 API Gateway 1<br/>Load Balanced API]
+            CA2[🟣 API Gateway 2<br/>Load Balanced API]
+            CAN[🟣 API Gateway N<br/>Load Balanced API]
+        end
+        
+        ES1 -.->|Cross-cluster<br/>Redis connection<br/>via host.docker.internal| CRD
+        CS2 -->|Local Stream| CRD
+        CSN -->|Local Stream| CRD
+        CRD -->|Consume Messages| CC1
+        CRD -->|Consume Messages| CC2
+        CRD -->|Consume Messages| CCN
+        CC1 -->|Persist Data| CPG
+        CC2 -->|Persist Data| CPG
+        CCN -->|Persist Data| CPG
+        CA1 -->|Query Data| CPG
+        CA2 -->|Query Data| CPG
+        CAN -->|Query Data| CPG
+        
+        EXT2[🌐 Port Forward<br/>localhost:8080<br/>kubectl port-forward] -.-> CA1
+        EXT2 -.-> CA2
+        EXT2 -.-> CAN
+        EXT3[🗄️ Port Forward<br/>localhost:5432<br/>kubectl port-forward] -.-> CPG
+    end
+
+    subgraph "⚙️ Configuration Parameters"
+        PARAMS[📋 Configurable Instances:<br/>• STREAMER_INSTANCES=N<br/>• COLLECTOR_INSTANCES=N<br/>• API_GW_INSTANCES=N<br/>• KIND_EDGE_NODES=N<br/>• KIND_CENTRAL_NODES=N]
+    end
+
+    style PG fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style CPG fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style RD fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style CRD fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style S1 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style S2 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style SN fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style ES1 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style CS2 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style CSN fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style C1 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style C2 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style CN fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style CC1 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style CC2 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style CCN fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style A1 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style A2 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style AN fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style CA1 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style CA2 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style CAN fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style ADM fill:#f1f8e9,stroke:#558b2f,stroke-width:2px
+    style EXT1 fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style EXT2 fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style EXT3 fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style PARAMS fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
+```
+
+#### 🎨 Color Legend:
+- 🟢 **Green**: Streamers (Data Input)
+- 🟠 **Orange**: Collectors (Data Processing)  
+- 🟣 **Purple**: API Gateways (Data Access)
+- 🔴 **Red**: Redis (Message Queue)
+- 🔵 **Blue**: PostgreSQL (Database)
+- 🟡 **Yellow**: External Access Points
+- 🔧 **Gray**: Admin/Management Tools
+
 ## 🚀 Quick Start
 
 ### Prerequisites
