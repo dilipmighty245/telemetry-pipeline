@@ -51,22 +51,32 @@ deps: ## Install dependencies
 	@echo "Make sure $(shell go env GOPATH)/bin is in your PATH"
 
 # Build targets
-build: build-streamer build-collector build-api-gateway ## Build all services
+build: build-nexus ## Build all Nexus services
 
-build-streamer: ## Build streamer service
-	@echo "Building streamer..."
-	@mkdir -p $(BINARY_DIR)
-	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/streamer ./cmd/streamer
+# Nexus build targets
+build: build-streamer build-collector ## Build all core components (api-gateway removed, use nexus-gateway)
 
-build-collector: ## Build collector service
-	@echo "Building collector..."
-	@mkdir -p $(BINARY_DIR)
-	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/collector ./cmd/collector
+build-nexus: build-nexus-collector build-nexus-streamer build-nexus-gateway ## Build all three telemetry pipeline components with Nexus integration
 
-build-api-gateway: ## Build API gateway service
-	@echo "Building API gateway..."
+build-nexus-collector: ## Build Nexus collector (component 2 of 3)
+	@echo "Building Nexus collector (component 2 of 3)..."
 	@mkdir -p $(BINARY_DIR)
-	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/api-gateway ./cmd/api-gateway
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/nexus-collector ./cmd/nexus-collector
+	@echo "✅ Nexus collector built successfully"
+
+# build-nexus-api removed - functionality consolidated into nexus-gateway
+
+build-nexus-streamer: ## Build Nexus streamer (component 1 of 3)
+	@echo "Building Nexus streamer (component 1 of 3)..."
+	@mkdir -p $(BINARY_DIR)
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/nexus-streamer ./cmd/nexus-streamer
+	@echo "✅ Nexus streamer built successfully"
+
+build-nexus-gateway: ## Build Nexus gateway (multi-protocol API)
+	@echo "Building Nexus API Gateway (component 3 of 3)..."
+	@mkdir -p $(BINARY_DIR)
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/nexus-gateway ./cmd/nexus-gateway
+	@echo "✅ Nexus API Gateway built successfully"
 
 # Generate OpenAPI specification
 generate-swagger: ## Generate OpenAPI/Swagger specification
@@ -94,38 +104,85 @@ lint: ## Run linter
 	@echo "Running linter..."
 	golangci-lint run
 
-# Run services locally
-run-streamer: build-streamer ## Run streamer service locally with optimized settings
-	@echo "Starting streamer service..."
-	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=1s -loop=false -log-level=info
+# Run services locally (Nexus components only)
 
-run-collector: build-collector ## Run collector service locally with optimized settings
-	@echo "Starting collector service..."
-	./$(BINARY_DIR)/collector -batch-size=100 -poll-interval=500ms -log-level=info
+# Nexus run targets
+run-nexus-collector: build-nexus-collector ## Run Nexus collector locally
+	@echo "Starting Nexus collector (etcd-based message queue)..."
+	@echo "Ensure etcd is running: make setup-etcd"
+	@echo "This consumes messages directly from etcd queue (no Redis needed)"
+	CLUSTER_ID=local-cluster \
+	ETCD_ENDPOINTS=localhost:2379 \
+	MESSAGE_QUEUE_PREFIX=/telemetry/queue \
+	DB_HOST=localhost \
+	DB_PORT=5433 \
+	ENABLE_NEXUS=true \
+	ENABLE_WATCH_API=true \
+	LOG_LEVEL=info \
+	./$(BINARY_DIR)/nexus-collector
 
-run-api-gateway: build-api-gateway generate-swagger ## Run API gateway service locally
-	@echo "Starting API gateway service..."
-	./$(BINARY_DIR)/api-gateway -port=8080 -log-level=info
+# run-nexus-api removed - use run-nexus-gateway instead
+	@echo "  • WebSocket: ws://localhost:8080/ws"
+	CLUSTER_ID=local-cluster \
+	ETCD_ENDPOINTS=localhost:2379 \
+	PORT=8080 \
+	ENABLE_GRAPHQL=true \
+	ENABLE_WEBSOCKET=true \
+	ENABLE_CORS=true \
+	LOG_LEVEL=info \
+	./$(BINARY_DIR)/nexus-api
 
-# Production-ready run targets (requires Redis)
-run-all-optimized: ## Run all services with optimized settings for production (requires REDIS_URL)
-	@echo "Starting all services with optimized settings..."
-	@echo "Note: Ensure REDIS_URL=redis://localhost:6379 is set"
-	@echo "Starting in recommended order: collector -> streamer -> api-gateway"
-	@make -j1 run-collector-prod run-streamer-prod run-api-gateway-prod
+run-nexus-streamer: build-nexus-streamer ## Run Nexus streamer locally (etcd-based)
+	@echo "Starting Nexus streamer (etcd-based)..."
+	@echo "Ensure etcd is running: make setup-etcd"
+	@echo "This streams CSV data directly to etcd message queue"
+	CLUSTER_ID=local-cluster \
+	ETCD_ENDPOINTS=localhost:2379 \
+	CSV_FILE=dcgm_metrics_20250718_134233.csv \
+	BATCH_SIZE=100 \
+	STREAM_INTERVAL=3s \
+	LOOP_MODE=true \
+	LOG_LEVEL=info \
+	./$(BINARY_DIR)/nexus-streamer
 
-run-streamer-prod: build-streamer ## Run streamer with production settings (requires REDIS_URL)
-	@echo "Starting streamer service with production settings..."
-	@echo "Processing 2470 records in 100-record batches..."
-	./$(BINARY_DIR)/streamer -csv=dcgm_metrics_20250718_134233.csv -batch-size=100 -stream-interval=3s -loop=false -log-level=info
+run-nexus-gateway: build-nexus-gateway ## Run Nexus gateway locally (multi-protocol API)
+	@echo "Starting Nexus gateway (multi-protocol API)..."
+	@echo "Ensure etcd is running: make setup-etcd"
+	@echo "Gateway will be available at:"
+	@echo "  • REST API: http://localhost:8080"
+	@echo "  • GraphQL: http://localhost:8080/graphql"
+	@echo "  • WebSocket: ws://localhost:8080/ws"
+	@echo "  • Health: http://localhost:8080/health"
+	CLUSTER_ID=local-cluster \
+	ETCD_ENDPOINTS=localhost:2379 \
+	PORT=8080 \
+	ENABLE_GRAPHQL=true \
+	ENABLE_WEBSOCKET=true \
+	ENABLE_CORS=true \
+	LOG_LEVEL=info \
+	./$(BINARY_DIR)/nexus-gateway
 
-run-collector-prod: build-collector ## Run collector with production settings (requires REDIS_URL)
-	@echo "Starting collector service with production settings..."
-	./$(BINARY_DIR)/collector -batch-size=100 -poll-interval=500ms -log-level=info
-
-run-api-gateway-prod: build-api-gateway generate-swagger ## Run API gateway with production settings
-	@echo "Starting API gateway service with production settings..."
-	./$(BINARY_DIR)/api-gateway -port=8080 -log-level=info
+run-nexus-pipeline: ## Run complete Nexus pipeline (etcd-only, no Redis)
+	@echo "🚀 Starting complete Nexus pipeline (etcd-only)"
+	@echo "This will start all components in the background"
+	@echo "Ensure etcd is running: make setup-etcd"
+	@echo ""
+	@echo "Starting Nexus collector..."
+	CLUSTER_ID=local-cluster ETCD_ENDPOINTS=localhost:2379 DB_HOST=localhost DB_PORT=5433 ENABLE_NEXUS=true LOG_LEVEL=info ./$(BINARY_DIR)/nexus-collector &
+	@sleep 2
+	@echo "Starting Nexus gateway..."
+	CLUSTER_ID=local-cluster ETCD_ENDPOINTS=localhost:2379 PORT=8080 ENABLE_GRAPHQL=true ENABLE_WEBSOCKET=true LOG_LEVEL=info ./$(BINARY_DIR)/nexus-gateway &
+	@sleep 2
+	@echo "Starting Nexus streamer..."
+	CLUSTER_ID=local-cluster ETCD_ENDPOINTS=localhost:2379 CSV_FILE=dcgm_metrics_20250718_134233.csv BATCH_SIZE=100 LOG_LEVEL=info ./$(BINARY_DIR)/nexus-streamer &
+	@echo ""
+	@echo "✅ Nexus pipeline started!"
+	@echo "📊 REST API: http://localhost:8080/api/v1"
+	@echo "📈 GraphQL: http://localhost:8080/graphql"
+	@echo "🔌 WebSocket: ws://localhost:8080/ws"
+	@echo "🏥 Health: http://localhost:8080/health"
+	@echo ""
+	@echo "To stop: pkill -f 'nexus-'"
 
 # Docker targets
 docker-build: ## Build Docker images for all services
@@ -473,6 +530,50 @@ csv-deploy-pvc: ## Complete workflow: create PVC, upload CSV, and deploy (usage:
 csv-deploy-url: ## Deploy with URL-based CSV (usage: make csv-deploy-url CSV_URL=https://example.com/data.csv)
 	@if [ -z "$(CSV_URL)" ]; then echo "Error: CSV_URL not set. Usage: make csv-deploy-url CSV_URL=https://example.com/data.csv"; exit 1; fi
 	@./scripts/manage-csv-data.sh deploy-with-url "$(CSV_URL)"
+
+# Nexus Setup Commands
+setup-etcd: ## Setup and start etcd for Nexus development
+	@echo "🚀 Setting up etcd for Nexus pipeline..."
+	@echo "Checking if etcd is installed..."
+	@if ! command -v etcd >/dev/null 2>&1; then \
+		echo "❌ etcd not found. Installing etcd..."; \
+		if [[ "$$(uname)" == "Darwin" ]]; then \
+			if command -v brew >/dev/null 2>&1; then \
+				brew install etcd; \
+			else \
+				echo "❌ Please install Homebrew first: https://brew.sh/"; \
+				exit 1; \
+			fi; \
+		elif [[ "$$(uname)" == "Linux" ]]; then \
+			echo "Please install etcd manually: https://etcd.io/docs/v3.5/install/"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ etcd found"
+	@echo "Starting etcd server..."
+	@pkill -f etcd || true
+	@sleep 1
+	@mkdir -p /tmp/etcd-data
+	@etcd --name nexus-etcd \
+		--data-dir /tmp/etcd-data \
+		--listen-client-urls http://localhost:2379 \
+		--advertise-client-urls http://localhost:2379 \
+		--listen-peer-urls http://localhost:2380 \
+		--initial-advertise-peer-urls http://localhost:2380 \
+		--initial-cluster nexus-etcd=http://localhost:2380 \
+		--initial-cluster-token nexus-cluster \
+		--initial-cluster-state new \
+		--log-level info &
+	@sleep 3
+	@echo "🎉 etcd started successfully!"
+	@echo "📊 etcd client URL: http://localhost:2379"
+	@echo "🔍 Test connection: etcdctl --endpoints=localhost:2379 endpoint health"
+
+stop-etcd: ## Stop etcd server
+	@echo "🛑 Stopping etcd server..."
+	@pkill -f etcd || echo "No etcd process found"
+	@rm -rf /tmp/etcd-data || true
+	@echo "✅ etcd stopped and data cleaned up"
 
 # Consolidated Setup Commands
 setup-local-env: ## Setup complete local environment with Docker (usage: make setup-local-env [STREAMER_INSTANCES=2] [COLLECTOR_INSTANCES=2] [API_GW_INSTANCES=2])

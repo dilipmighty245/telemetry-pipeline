@@ -29,9 +29,9 @@ type Message struct {
 	Processed bool              `json:"processed"`
 	Retries   int               `json:"retries"`
 
-	// Redis Streams specific fields
-	StreamID  string `json:"stream_id,omitempty"`  // Redis Stream message ID
-	StreamKey string `json:"stream_key,omitempty"` // Redis Stream key
+	// Backend specific fields
+	StreamID  string `json:"stream_id,omitempty"`  // Redis Stream message ID (legacy)
+	StreamKey string `json:"stream_key,omitempty"` // etcd key or Redis Stream key
 }
 
 // HeadersJSON returns headers as JSON string for Redis storage
@@ -74,13 +74,14 @@ type Consumer struct {
 	mu           sync.RWMutex
 }
 
-// MessageQueue represents the message queue (in-memory or Redis Streams-backed)
+// MessageQueue represents the message queue (in-memory, etcd-backed, or Redis-backed)
 type MessageQueue struct {
 	topics              map[string]*Topic
 	mu                  sync.RWMutex
 	stats               *QueueStats
+	etcdBackend         *EtcdBackend         // Primary etcd backend for distributed messaging
 	redisBackend        *RedisBackend        // Legacy Redis lists backend (deprecated)
-	redisStreamsBackend *RedisStreamsBackend // New Redis Streams backend for production
+	redisStreamsBackend *RedisStreamsBackend // Legacy Redis Streams backend (deprecated)
 }
 
 // QueueStats represents queue statistics
@@ -112,23 +113,32 @@ func NewMessageQueue() *MessageQueue {
 		},
 	}
 
-	// Try to initialize Redis Streams backend first (production-grade)
-	logging.Infof("Attempting to initialize Redis Streams backend...")
-	redisStreamsBackend, err := NewRedisStreamsBackend()
+	// Try to initialize etcd backend first (preferred for distributed systems)
+	logging.Infof("Attempting to initialize etcd backend...")
+	etcdBackend, err := NewEtcdBackend()
 	if err != nil {
-		logging.Infof("Redis Streams backend not available, trying legacy Redis backend: %v", err)
+		logging.Infof("etcd backend not available, trying Redis Streams backend: %v", err)
 
-		// Fall back to legacy Redis backend
-		redisBackend, err := NewRedisBackend()
+		// Fall back to Redis Streams backend
+		redisStreamsBackend, err := NewRedisStreamsBackend()
 		if err != nil {
-			logging.Infof("Redis backend not available, using in-memory queue: %v", err)
+			logging.Infof("Redis Streams backend not available, trying legacy Redis backend: %v", err)
+
+			// Fall back to legacy Redis backend
+			redisBackend, err := NewRedisBackend()
+			if err != nil {
+				logging.Infof("Redis backend not available, using in-memory queue: %v", err)
+			} else {
+				mq.redisBackend = redisBackend
+				logging.Infof("Successfully initialized legacy Redis-backed message queue")
+			}
 		} else {
-			mq.redisBackend = redisBackend
-			logging.Infof("Successfully initialized legacy Redis-backed message queue")
+			mq.redisStreamsBackend = redisStreamsBackend
+			logging.Infof("Successfully initialized Redis Streams-backed message queue")
 		}
 	} else {
-		mq.redisStreamsBackend = redisStreamsBackend
-		logging.Infof("Successfully initialized Redis Streams-backed message queue (production-grade)")
+		mq.etcdBackend = etcdBackend
+		logging.Infof("Successfully initialized etcd-backed message queue (distributed)")
 	}
 
 	return mq
@@ -136,7 +146,12 @@ func NewMessageQueue() *MessageQueue {
 
 // CreateTopic creates a new topic
 func (mq *MessageQueue) CreateTopic(name string, config map[string]string) error {
-	// For Redis backend, topics are created implicitly when first message is published
+	// For etcd and Redis backends, topics are created implicitly when first message is published
+	if mq.etcdBackend != nil {
+		logging.Debugf("Topic %s will be created implicitly in etcd on first publish", name)
+		return nil
+	}
+	
 	if mq.redisBackend != nil {
 		logging.Debugf("Topic %s will be created implicitly in Redis on first publish", name)
 		return nil
@@ -189,7 +204,17 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 		Retries:   0,
 	}
 
-	// Use Redis Streams backend if available (preferred for production)
+	// Use etcd backend if available (preferred for distributed systems)
+	if mq.etcdBackend != nil {
+		err := mq.etcdBackend.PublishMessage(topic, msg)
+		if err != nil {
+			logging.Errorf("Failed to publish to etcd backend: %v", err)
+			return nil, err
+		}
+		return msg, nil
+	}
+
+	// Fall back to Redis Streams backend
 	if mq.redisStreamsBackend != nil {
 		err := mq.redisStreamsBackend.PublishMessage(topic, msg)
 		if err != nil {
@@ -238,7 +263,17 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 
 // Consume consumes messages from a topic
 func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
-	// Use Redis Streams backend if available (preferred for production)
+	// Use etcd backend if available (preferred for distributed systems)
+	if mq.etcdBackend != nil {
+		messages, err := mq.etcdBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
+		if err != nil {
+			logging.Errorf("Failed to consume from etcd backend: %v", err)
+			return nil, err
+		}
+		return messages, nil
+	}
+
+	// Fall back to Redis Streams backend
 	if mq.redisStreamsBackend != nil {
 		messages, err := mq.redisStreamsBackend.ConsumeMessages(topic, consumerGroup, consumerID, maxMessages, timeoutSeconds)
 		if err != nil {
@@ -308,7 +343,12 @@ func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consu
 
 // Acknowledge acknowledges processed messages
 func (mq *MessageQueue) Acknowledge(consumerGroup string, messages []*Message) ([]string, []string, error) {
-	// Use Redis Streams backend if available (preferred for production)
+	// Use etcd backend if available (preferred for distributed systems)
+	if mq.etcdBackend != nil {
+		return mq.etcdBackend.AcknowledgeMessagesByKeys(consumerGroup, messages)
+	}
+
+	// Fall back to Redis Streams backend
 	if mq.redisStreamsBackend != nil {
 		return mq.redisStreamsBackend.AcknowledgeMessages(consumerGroup, messages)
 	}
@@ -494,10 +534,32 @@ func generateMessageID() string {
 	return time.Now().Format("20060102150405") + "-" + randomString(8)
 }
 
-// Close closes the in-memory message queue (no-op for in-memory implementation)
+// Close closes the message queue and cleans up resources
 func (mq *MessageQueue) Close() error {
-	// No resources to clean up for in-memory implementation
-	return nil
+	var err error
+	
+	if mq.etcdBackend != nil {
+		if closeErr := mq.etcdBackend.Close(); closeErr != nil {
+			logging.Errorf("Failed to close etcd backend: %v", closeErr)
+			err = closeErr
+		}
+	}
+	
+	if mq.redisStreamsBackend != nil {
+		if closeErr := mq.redisStreamsBackend.Close(); closeErr != nil {
+			logging.Errorf("Failed to close Redis Streams backend: %v", closeErr)
+			err = closeErr
+		}
+	}
+	
+	if mq.redisBackend != nil {
+		if closeErr := mq.redisBackend.Close(); closeErr != nil {
+			logging.Errorf("Failed to close Redis backend: %v", closeErr)
+			err = closeErr
+		}
+	}
+	
+	return err
 }
 
 func randomString(length int) string {

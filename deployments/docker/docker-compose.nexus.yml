@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  # etcd for distributed coordination (replaces single-point Redis)
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: telemetry-etcd
+    environment:
+      - ETCD_NAME=telemetry-etcd
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=telemetry-etcd=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=telemetry-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ALLOW_NONE_AUTHENTICATION=yes
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - telemetry-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis (kept for backward compatibility with existing streamers)
+  redis:
+    image: redis:7-alpine
+    container_name: telemetry-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - telemetry-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: telemetry-postgres
+    environment:
+      - POSTGRES_DB=telemetry
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - telemetry-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nexus-enhanced Collector
+  nexus-collector:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-collector
+    container_name: telemetry-nexus-collector
+    environment:
+      - CLUSTER_ID=docker-cluster
+      - COLLECTOR_ID=nexus-collector-1
+      - ETCD_ENDPOINTS=etcd:2379
+      - REDIS_URL=redis://redis:6379
+      - REDIS_TOPICS=telemetry
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=telemetry
+      - ENABLE_NEXUS=true
+      - ENABLE_WATCH_API=true
+      - ENABLE_GRAPHQL=true
+      - BATCH_SIZE=100
+      - WORKERS=4
+      - LOG_LEVEL=info
+    depends_on:
+      etcd:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Nexus API Server
+  nexus-api:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-api
+    container_name: telemetry-nexus-api
+    environment:
+      - CLUSTER_ID=docker-cluster
+      - SERVICE_ID=nexus-api-1
+      - ETCD_ENDPOINTS=etcd:2379
+      - PORT=8080
+      - HOST=0.0.0.0
+      - ENABLE_GRAPHQL=true
+      - ENABLE_WEBSOCKET=true
+      - ENABLE_CORS=true
+      - LOG_LEVEL=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Traditional Streamer (for backward compatibility)
+  streamer:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.streamer
+    container_name: telemetry-streamer
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CSV_FILE=dcgm_metrics_20250718_134233.csv
+      - BATCH_SIZE=100
+      - STREAM_INTERVAL=3s
+      - LOOP_MODE=true
+      - LOG_LEVEL=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../dcgm_metrics_20250718_134233.csv:/app/dcgm_metrics_20250718_134233.csv:ro
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Traditional API Gateway (for comparison)
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.api-gateway
+    container_name: telemetry-api-gateway
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=telemetry
+      - PORT=8081
+      - LOG_LEVEL=info
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Adminer for database management
+  adminer:
+    image: adminer:4.8.1
+    container_name: telemetry-adminer
+    ports:
+      - "8082:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    depends_on:
+      - postgres
+    networks:
+      - telemetry-network
+
+volumes:
+  etcd_data:
+    driver: local
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  telemetry-network:
+    driver: bridge

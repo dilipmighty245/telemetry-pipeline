@@ -1,0 +1,45 @@
+# Multi-stage build for Nexus Collector
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the nexus collector
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o nexus-collector ./cmd/nexus-collector
+
+# Final stage
+FROM alpine:3.18
+
+# Install ca-certificates for HTTPS requests
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /root/
+
+# Copy the binary from builder stage
+COPY --from=builder /app/nexus-collector .
+
+# Create non-root user
+RUN adduser -D -s /bin/sh nexus
+USER nexus
+
+# Expose port (not directly used but for documentation)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD ps aux | grep nexus-collector || exit 1
+
+# Run the nexus collector
+CMD ["./nexus-collector"]
