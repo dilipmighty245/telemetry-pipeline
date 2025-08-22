@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // TelemetryData represents the telemetry data model
@@ -62,4 +64,26 @@ type CSVRecord struct {
 	Namespace  string `csv:"namespace"`
 	Value      string `csv:"value"`
 	LabelsRaw  string `csv:"labels_raw"`
+}
+
+// TableName returns the table name for TelemetryData
+func (TelemetryData) TableName() string {
+	return "telemetry_data"
+}
+
+// BeforeCreate is a GORM hook that runs before creating a record
+func (t *TelemetryData) BeforeCreate(tx *gorm.DB) error {
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = time.Now()
+	}
+	if t.UpdatedAt.IsZero() {
+		t.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+// BeforeUpdate is a GORM hook that runs before updating a record
+func (t *TelemetryData) BeforeUpdate(tx *gorm.DB) error {
+	t.UpdatedAt = time.Now()
+	return nil
 }

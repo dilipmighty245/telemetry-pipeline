@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/internal/calibration"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/graphql"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
@@ -65,17 +66,18 @@ var (
 
 // NexusGateway represents the API Gateway component of the telemetry pipeline
 type NexusGateway struct {
-	port           int
-	etcdClient     *clientv3.Client
-	nexusService   *nexus.TelemetryService
-	graphqlService *graphql.GraphQLService
-	nexusGraphQL   nexusgraphql.ServerClient
-	messageQueue   *messagequeue.MessageQueueService
-	echo           *echo.Echo
-	upgrader       websocket.Upgrader
-	ctx            context.Context
-	cancel         context.CancelFunc
-	config         *GatewayConfig
+	port               int
+	etcdClient         *clientv3.Client
+	nexusService       *nexus.TelemetryService
+	graphqlService     *graphql.GraphQLService
+	calibrationService *calibration.CalibrationService
+	nexusGraphQL       nexusgraphql.ServerClient
+	messageQueue       *messagequeue.MessageQueueService
+	echo               *echo.Echo
+	upgrader           websocket.Upgrader
+	ctx                context.Context
+	cancel             context.CancelFunc
+	config             *GatewayConfig
 }
 
 // GatewayConfig holds configuration for the Nexus gateway
@@ -258,6 +260,9 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 		return nil, fmt.Errorf("failed to create GraphQL service: %w", err)
 	}
 
+	// Create calibration service
+	calibrationService := calibration.NewCalibrationService(nexusService)
+
 	// Create Nexus GraphQL client (would connect to Nexus GraphQL server)
 	// For now, we'll use a mock/placeholder as we're integrating with existing Nexus
 	var nexusGraphQLClient nexusgraphql.ServerClient
@@ -277,17 +282,18 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 	}
 
 	gateway := &NexusGateway{
-		port:           config.Port,
-		etcdClient:     etcdClient,
-		nexusService:   nexusService,
-		graphqlService: graphqlService,
-		nexusGraphQL:   nexusGraphQLClient,
-		messageQueue:   messageQueue,
-		echo:           e,
-		upgrader:       upgrader,
-		ctx:            ctx,
-		cancel:         cancel,
-		config:         config,
+		port:               config.Port,
+		etcdClient:         etcdClient,
+		nexusService:       nexusService,
+		graphqlService:     graphqlService,
+		calibrationService: calibrationService,
+		nexusGraphQL:       nexusGraphQLClient,
+		messageQueue:       messageQueue,
+		echo:               e,
+		upgrader:           upgrader,
+		ctx:                ctx,
+		cancel:             cancel,
+		config:             config,
 	}
 
 	// Setup routes
@@ -386,6 +392,9 @@ func (ng *NexusGateway) setupRoutes() {
 	if ng.config.EnableWebSocket {
 		ng.echo.GET("/ws", ng.websocketHandler)
 	}
+
+	// Calibration endpoints
+	ng.calibrationService.SetupCalibrationRoutes(ng.echo)
 
 	// Swagger UI endpoint
 	ng.echo.GET("/swagger/*", ng.swaggerHandler)

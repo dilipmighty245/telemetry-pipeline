@@ -107,6 +107,48 @@ services:
       - telemetry-network
     restart: unless-stopped
 
+  # Nexus GraphQL Service
+  nexus-graphql:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-graphql
+    container_name: telemetry-nexus-graphql
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - PORT=9090
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+    ports:
+      - "9090:9090"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Telemetry Calibration Tool
+  telemetry-calibration:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.calibration
+    container_name: telemetry-calibration
+    environment:
+      - TELEMETRY_URL=http://nexus-api:8080
+      - GRAPHQL_URL=http://nexus-graphql:9090
+      - ETCD_URL=http://etcd:2379
+      - PORT=8083
+    ports:
+      - "8083:8083"
+    depends_on:
+      nexus-api:
+        condition: service_started
+      nexus-graphql:
+        condition: service_started
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
 
 
   # Traditional API Gateway (for comparison)

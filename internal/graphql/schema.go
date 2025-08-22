@@ -1,21 +1,20 @@
 package graphql
 
 import (
-	"context"
-	"fmt"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/graphql-go/graphql"
+	log "github.com/sirupsen/logrus"
 )
 
-// GraphQLService provides GraphQL schema and resolvers for Nexus telemetry
+// GraphQLService provides GraphQL interface for telemetry data (compatible with existing gateway)
 type GraphQLService struct {
 	nexusService *nexus.TelemetryService
 	schema       graphql.Schema
 }
 
-// NewGraphQLService creates a new GraphQL service with Nexus integration
+// NewGraphQLService creates a new GraphQL service for telemetry data
 func NewGraphQLService(nexusService *nexus.TelemetryService) (*GraphQLService, error) {
 	service := &GraphQLService{
 		nexusService: nexusService,
@@ -23,388 +22,191 @@ func NewGraphQLService(nexusService *nexus.TelemetryService) (*GraphQLService, e
 
 	schema, err := service.buildSchema()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build GraphQL schema: %w", err)
+		return nil, err
 	}
 
 	service.schema = schema
 	return service, nil
 }
 
-// ExecuteQuery executes a GraphQL query with proper context
-func (g *GraphQLService) ExecuteQuery(query string, variables map[string]interface{}) *graphql.Result {
-	params := graphql.Params{
-		Schema:         g.schema,
+// ExecuteQuery executes a GraphQL query and returns the result
+func (s *GraphQLService) ExecuteQuery(query string, variables map[string]interface{}) *graphql.Result {
+	return graphql.Do(graphql.Params{
+		Schema:         s.schema,
 		RequestString:  query,
 		VariableValues: variables,
-		Context:        context.Background(),
-	}
-
-	return graphql.Do(params)
-}
-
-// GetSchema returns the GraphQL schema for introspection
-func (g *GraphQLService) GetSchema() graphql.Schema {
-	return g.schema
-}
-
-// buildSchema builds the complete GraphQL schema with Nexus integration
-func (g *GraphQLService) buildSchema() (graphql.Schema, error) {
-	// Define Cluster type
-	clusterType := graphql.NewObject(graphql.ObjectConfig{
-		Name:        "Cluster",
-		Description: "Nexus telemetry cluster",
-		Fields: graphql.Fields{
-			"id": &graphql.Field{
-				Type:        graphql.NewNonNull(graphql.String),
-				Description: "Unique cluster identifier",
-			},
-			"name": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Human-readable cluster name",
-			},
-			"region": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Geographic region of the cluster",
-			},
-			"environment": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Environment (production, staging, development)",
-			},
-			"totalHosts": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Total number of hosts in the cluster",
-			},
-			"totalGPUs": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Total number of GPUs in the cluster",
-			},
-			"activeHosts": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Number of active hosts",
-			},
-			"activeGPUs": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Number of active GPUs",
-			},
-			"createdAt": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Cluster creation timestamp",
-			},
-			"updatedAt": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Last update timestamp",
-			},
-		},
 	})
+}
 
-	// Define Host type
-	hostType := graphql.NewObject(graphql.ObjectConfig{
-		Name:        "Host",
-		Description: "Compute host in the cluster",
+// buildSchema creates the GraphQL schema for telemetry data
+func (s *GraphQLService) buildSchema() (graphql.Schema, error) {
+	// Define telemetry data type
+	telemetryType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "TelemetryData",
 		Fields: graphql.Fields{
-			"id": &graphql.Field{
-				Type:        graphql.NewNonNull(graphql.String),
-				Description: "Unique host identifier",
+			"timestamp": &graphql.Field{
+				Type: graphql.String,
 			},
 			"hostname": &graphql.Field{
-				Type:        graphql.String,
-				Description: "System hostname",
+				Type: graphql.String,
 			},
-			"ipAddress": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Primary IP address",
+			"gpuId": &graphql.Field{
+				Type: graphql.String,
 			},
-			"osVersion": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Operating system version",
+			"uuid": &graphql.Field{
+				Type: graphql.String,
 			},
-			"status": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Current host status",
+			"device": &graphql.Field{
+				Type: graphql.String,
 			},
-			"gpuCount": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Number of GPUs on this host",
+			"modelName": &graphql.Field{
+				Type: graphql.String,
+			},
+			"gpuUtilization": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"memoryUtilization": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"memoryUsedMB": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"memoryFreeMB": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"temperature": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"powerDraw": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"smClockMHz": &graphql.Field{
+				Type: graphql.Float,
+			},
+			"memoryClockMHz": &graphql.Field{
+				Type: graphql.Float,
 			},
 		},
 	})
 
 	// Define GPU type
 	gpuType := graphql.NewObject(graphql.ObjectConfig{
-		Name:        "GPU",
-		Description: "Graphics processing unit",
+		Name: "GPU",
 		Fields: graphql.Fields{
 			"id": &graphql.Field{
-				Type:        graphql.NewNonNull(graphql.String),
-				Description: "GPU identifier",
+				Type: graphql.String,
 			},
-			"deviceName": &graphql.Field{
-				Type:        graphql.String,
-				Description: "GPU device name/model",
+			"uuid": &graphql.Field{
+				Type: graphql.String,
 			},
-			"driverVersion": &graphql.Field{
-				Type:        graphql.String,
-				Description: "GPU driver version",
+			"hostname": &graphql.Field{
+				Type: graphql.String,
 			},
-			"cudaVersion": &graphql.Field{
-				Type:        graphql.String,
-				Description: "CUDA runtime version",
+			"modelName": &graphql.Field{
+				Type: graphql.String,
 			},
-			"memoryTotal": &graphql.Field{
-				Type:        graphql.Int,
-				Description: "Total GPU memory in MB",
+			"device": &graphql.Field{
+				Type: graphql.String,
 			},
 			"status": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Current GPU status",
+				Type: graphql.String,
 			},
 		},
 	})
 
-	// Define TelemetryData type
-	telemetryType := graphql.NewObject(graphql.ObjectConfig{
-		Name:        "TelemetryData",
-		Description: "GPU telemetry data point",
+	// Define cluster type
+	clusterType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Cluster",
 		Fields: graphql.Fields{
-			"timestamp": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Data collection timestamp",
+			"id": &graphql.Field{
+				Type: graphql.String,
 			},
-			"hostId": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Host identifier",
+			"name": &graphql.Field{
+				Type: graphql.String,
 			},
-			"gpuId": &graphql.Field{
-				Type:        graphql.String,
-				Description: "GPU identifier",
+			"totalHosts": &graphql.Field{
+				Type: graphql.Int,
 			},
-			"gpuUtilization": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "GPU utilization percentage (0-100)",
+			"totalGPUs": &graphql.Field{
+				Type: graphql.Int,
 			},
-			"memoryUtilization": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "GPU memory utilization percentage (0-100)",
+			"activeHosts": &graphql.Field{
+				Type: graphql.Int,
 			},
-			"memoryUsed": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "Used GPU memory in MB",
-			},
-			"memoryFree": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "Free GPU memory in MB",
-			},
-			"temperature": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "GPU temperature in Celsius",
-			},
-			"powerDraw": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "GPU power consumption in Watts",
-			},
-			"smClockMHz": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "Streaming multiprocessor clock frequency in MHz",
-			},
-			"memoryClockMHz": &graphql.Field{
-				Type:        graphql.Float,
-				Description: "Memory clock frequency in MHz",
+			"activeGPUs": &graphql.Field{
+				Type: graphql.Int,
 			},
 		},
 	})
 
-	// Define Query type with all available queries
-	queryType := graphql.NewObject(graphql.ObjectConfig{
-		Name:        "Query",
-		Description: "Root query for Nexus telemetry data",
+	// Define query root
+	rootQuery := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Query",
 		Fields: graphql.Fields{
-			"cluster": &graphql.Field{
-				Type:        clusterType,
-				Description: "Get cluster information",
-				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type:         graphql.String,
-						Description:  "Cluster ID to query",
-						DefaultValue: "local-cluster",
-					},
-				},
-				Resolve: g.resolveCluster,
-			},
-			"clusters": &graphql.Field{
-				Type:        graphql.NewList(clusterType),
-				Description: "List all clusters",
-				Resolve:     g.resolveClusters,
-			},
-			"hosts": &graphql.Field{
-				Type:        graphql.NewList(hostType),
-				Description: "List hosts in a cluster",
-				Args: graphql.FieldConfigArgument{
-					"clusterId": &graphql.ArgumentConfig{
-						Type:         graphql.String,
-						Description:  "Cluster ID to filter hosts",
-						DefaultValue: "local-cluster",
-					},
-				},
-				Resolve: g.resolveHosts,
-			},
-			"gpus": &graphql.Field{
-				Type:        graphql.NewList(gpuType),
-				Description: "List GPUs for a specific host",
-				Args: graphql.FieldConfigArgument{
-					"hostId": &graphql.ArgumentConfig{
-						Type:        graphql.String,
-						Description: "Host ID to filter GPUs",
-					},
-				},
-				Resolve: g.resolveGPUs,
-			},
+			// Get telemetry data with filters
 			"telemetry": &graphql.Field{
-				Type:        graphql.NewList(telemetryType),
-				Description: "Query telemetry data with filters",
+				Type: graphql.NewList(telemetryType),
 				Args: graphql.FieldConfigArgument{
-					"hostId": &graphql.ArgumentConfig{
-						Type:        graphql.String,
-						Description: "Filter by host ID",
+					"hostname": &graphql.ArgumentConfig{
+						Type: graphql.String,
 					},
 					"gpuId": &graphql.ArgumentConfig{
-						Type:        graphql.String,
-						Description: "Filter by GPU ID",
-					},
-					"startTime": &graphql.ArgumentConfig{
-						Type:        graphql.String,
-						Description: "Start time for data range (ISO 8601)",
-					},
-					"endTime": &graphql.ArgumentConfig{
-						Type:        graphql.String,
-						Description: "End time for data range (ISO 8601)",
+						Type: graphql.String,
 					},
 					"limit": &graphql.ArgumentConfig{
 						Type:         graphql.Int,
-						Description:  "Maximum number of records to return",
 						DefaultValue: 100,
 					},
+					"startTime": &graphql.ArgumentConfig{
+						Type: graphql.String,
+					},
+					"endTime": &graphql.ArgumentConfig{
+						Type: graphql.String,
+					},
 				},
-				Resolve: g.resolveTelemetry,
+				Resolve: s.resolveTelemetry,
+			},
+
+			// Get all GPUs
+			"gpus": &graphql.Field{
+				Type: graphql.NewList(gpuType),
+				Args: graphql.FieldConfigArgument{
+					"hostname": &graphql.ArgumentConfig{
+						Type: graphql.String,
+					},
+				},
+				Resolve: s.resolveGPUs,
+			},
+
+			// Get clusters
+			"clusters": &graphql.Field{
+				Type:    graphql.NewList(clusterType),
+				Resolve: s.resolveClusters,
+			},
+
+			// Get latest telemetry for dashboard
+			"dashboard": &graphql.Field{
+				Type:    graphql.NewList(telemetryType),
+				Resolve: s.resolveDashboard,
 			},
 		},
 	})
 
-	// Build and return schema
+	// Create schema
 	return graphql.NewSchema(graphql.SchemaConfig{
-		Query: queryType,
+		Query: rootQuery,
 	})
 }
 
-// Resolver functions
+// Resolvers - these use your existing Nexus service
 
-func (g *GraphQLService) resolveCluster(params graphql.ResolveParams) (interface{}, error) {
-	cluster, err := g.nexusService.GetClusterInfo()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster info: %w", err)
-	}
+func (s *GraphQLService) resolveTelemetry(p graphql.ResolveParams) (interface{}, error) {
+	hostname, _ := p.Args["hostname"].(string)
+	gpuId, _ := p.Args["gpuId"].(string)
+	limit, _ := p.Args["limit"].(int)
+	startTimeStr, _ := p.Args["startTime"].(string)
+	endTimeStr, _ := p.Args["endTime"].(string)
 
-	return map[string]interface{}{
-		"id":          cluster.ClusterID,
-		"name":        cluster.ClusterName,
-		"region":      cluster.Region,
-		"environment": cluster.Environment,
-		"totalHosts":  cluster.Metadata.TotalHosts,
-		"totalGPUs":   cluster.Metadata.TotalGPUs,
-		"activeHosts": cluster.Metadata.ActiveHosts,
-		"activeGPUs":  cluster.Metadata.ActiveGPUs,
-		"createdAt":   cluster.CreatedAt.Format(time.RFC3339),
-		"updatedAt":   cluster.UpdatedAt.Format(time.RFC3339),
-	}, nil
-}
-
-func (g *GraphQLService) resolveClusters(params graphql.ResolveParams) (interface{}, error) {
-	cluster, err := g.nexusService.GetClusterInfo()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get clusters: %w", err)
-	}
-
-	// Return as array for consistency with GraphQL list type
-	return []map[string]interface{}{
-		{
-			"id":          cluster.ClusterID,
-			"name":        cluster.ClusterName,
-			"region":      cluster.Region,
-			"environment": cluster.Environment,
-			"totalHosts":  cluster.Metadata.TotalHosts,
-			"totalGPUs":   cluster.Metadata.TotalGPUs,
-			"activeHosts": cluster.Metadata.ActiveHosts,
-			"activeGPUs":  cluster.Metadata.ActiveGPUs,
-			"createdAt":   cluster.CreatedAt.Format(time.RFC3339),
-			"updatedAt":   cluster.UpdatedAt.Format(time.RFC3339),
-		},
-	}, nil
-}
-
-func (g *GraphQLService) resolveHosts(params graphql.ResolveParams) (interface{}, error) {
-	// For now, return sample data - in a full implementation, this would query etcd
-	return []map[string]interface{}{
-		{
-			"id":        "mtv5-dgx1-hgpu-001",
-			"hostname":  "mtv5-dgx1-hgpu-001",
-			"ipAddress": "192.168.1.101",
-			"osVersion": "Ubuntu 20.04.6 LTS",
-			"status":    "active",
-			"gpuCount":  8,
-		},
-		{
-			"id":        "mtv5-dgx1-hgpu-002",
-			"hostname":  "mtv5-dgx1-hgpu-002",
-			"ipAddress": "192.168.1.102",
-			"osVersion": "Ubuntu 20.04.6 LTS",
-			"status":    "active",
-			"gpuCount":  8,
-		},
-	}, nil
-}
-
-func (g *GraphQLService) resolveGPUs(params graphql.ResolveParams) (interface{}, error) {
-	hostID, _ := params.Args["hostId"].(string)
-	
-	// Sample GPU data - in a full implementation, this would query the Nexus service
-	gpus := []map[string]interface{}{
-		{
-			"id":            "gpu-0",
-			"deviceName":    "Tesla V100-SXM2-32GB",
-			"driverVersion": "470.57.02",
-			"cudaVersion":   "11.4",
-			"memoryTotal":   32768,
-			"status":        "active",
-		},
-		{
-			"id":            "gpu-1",
-			"deviceName":    "Tesla V100-SXM2-32GB",
-			"driverVersion": "470.57.02",
-			"cudaVersion":   "11.4",
-			"memoryTotal":   32768,
-			"status":        "active",
-		},
-	}
-
-	if hostID != "" {
-		// Filter by host if specified
-		return gpus, nil
-	}
-
-	return gpus, nil
-}
-
-func (g *GraphQLService) resolveTelemetry(params graphql.ResolveParams) (interface{}, error) {
-	hostID, _ := params.Args["hostId"].(string)
-	gpuID, _ := params.Args["gpuId"].(string)
-	startTimeStr, _ := params.Args["startTime"].(string)
-	endTimeStr, _ := params.Args["endTime"].(string)
-	limit, _ := params.Args["limit"].(int)
-
-	if limit <= 0 {
-		limit = 100
-	}
-
-	// Parse time range if provided
 	var startTime, endTime *time.Time
 	if startTimeStr != "" {
 		if t, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
@@ -417,59 +219,117 @@ func (g *GraphQLService) resolveTelemetry(params graphql.ResolveParams) (interfa
 		}
 	}
 
-	// Try to get real telemetry data from Nexus service
-	if hostID != "" && gpuID != "" {
-		telemetryData, err := g.nexusService.GetGPUTelemetryData(hostID, gpuID, startTime, endTime, limit)
-		if err == nil && len(telemetryData) > 0 {
-			// Convert to GraphQL format
-			result := make([]map[string]interface{}, len(telemetryData))
-			for i, data := range telemetryData {
-				result[i] = map[string]interface{}{
-					"timestamp":         data.Timestamp.Format(time.RFC3339),
-					"hostId":            data.Hostname,
-					"gpuId":             data.GPUID,
-					"gpuUtilization":    data.GPUUtilization,
-					"memoryUtilization": data.MemoryUtilization,
-					"memoryUsed":        data.MemoryUsedMB,
-					"memoryFree":        data.MemoryFreeMB,
-					"temperature":       data.Temperature,
-					"powerDraw":         data.PowerDraw,
-					"smClockMHz":        data.SMClockMHz,
-					"memoryClockMHz":    data.MemoryClockMHz,
-				}
-			}
-			return result, nil
+	// Use your existing Nexus service to get telemetry data
+	if hostname != "" && gpuId != "" {
+		telemetryData, err := s.nexusService.GetGPUTelemetryData(hostname, gpuId, startTime, endTime, limit)
+		if err != nil {
+			log.Errorf("Failed to get telemetry data: %v", err)
+			return []interface{}{}, nil
 		}
+		return telemetryData, nil
 	}
 
-	// Return sample telemetry data
-	now := time.Now()
+	// Return mock data for now if no specific filters
 	return []map[string]interface{}{
 		{
-			"timestamp":         now.Format(time.RFC3339),
-			"hostId":            "mtv5-dgx1-hgpu-001",
-			"gpuId":             "gpu-0",
-			"gpuUtilization":    75.5,
-			"memoryUtilization": 60.2,
-			"memoryUsed":        19660.8,
-			"memoryFree":        13107.2,
+			"timestamp":         time.Now().Format(time.RFC3339),
+			"hostname":          "example-host",
+			"gpuId":             "0",
+			"uuid":              "GPU-12345",
+			"device":            "nvidia0",
+			"modelName":         "NVIDIA H100",
+			"gpuUtilization":    95.5,
+			"memoryUtilization": 80.2,
+			"memoryUsedMB":      64000.0,
+			"memoryFreeMB":      16000.0,
 			"temperature":       65.0,
-			"powerDraw":         250.0,
-			"smClockMHz":        1530.0,
-			"memoryClockMHz":    877.0,
+			"powerDraw":         300.0,
+			"smClockMHz":        1500.0,
+			"memoryClockMHz":    1200.0,
+		},
+	}, nil
+}
+
+func (s *GraphQLService) resolveGPUs(p graphql.ResolveParams) (interface{}, error) {
+	hostname, _ := p.Args["hostname"].(string)
+
+	// Use your existing Nexus service to get GPU list
+	if hostname != "" {
+		// Get GPUs for specific host
+		hostInfo, err := s.nexusService.GetHostInfo(hostname)
+		if err != nil {
+			log.Errorf("Failed to get host info: %v", err)
+			return []interface{}{}, nil
+		}
+
+		var gpus []map[string]interface{}
+		// Convert host GPU info to GraphQL format
+		// This would be implemented based on your Nexus service structure
+		_ = hostInfo // placeholder
+
+		return gpus, nil
+	}
+
+	// Return mock data for now
+	return []map[string]interface{}{
+		{
+			"id":        "0",
+			"uuid":      "GPU-12345",
+			"hostname":  "example-host",
+			"modelName": "NVIDIA H100",
+			"device":    "nvidia0",
+			"status":    "active",
+		},
+	}, nil
+}
+
+func (s *GraphQLService) resolveClusters(p graphql.ResolveParams) (interface{}, error) {
+	// Use your existing Nexus service to get cluster info
+	cluster, err := s.nexusService.GetClusterInfo()
+	if err != nil {
+		log.Errorf("Failed to get cluster info: %v", err)
+		return []interface{}{}, nil
+	}
+
+	return []map[string]interface{}{
+		{
+			"id":          cluster.ClusterID,
+			"name":        cluster.ClusterName,
+			"totalHosts":  cluster.Metadata.TotalHosts,
+			"totalGPUs":   cluster.Metadata.TotalGPUs,
+			"activeHosts": cluster.Metadata.ActiveHosts,
+			"activeGPUs":  cluster.Metadata.ActiveGPUs,
+		},
+	}, nil
+}
+
+func (s *GraphQLService) resolveDashboard(p graphql.ResolveParams) (interface{}, error) {
+	// Get latest telemetry data for dashboard view
+	// This would use your Nexus service to get recent data from all GPUs
+	return []map[string]interface{}{
+		{
+			"timestamp":         time.Now().Format(time.RFC3339),
+			"hostname":          "host-1",
+			"gpuId":             "0",
+			"uuid":              "GPU-12345",
+			"device":            "nvidia0",
+			"modelName":         "NVIDIA H100",
+			"gpuUtilization":    95.5,
+			"memoryUtilization": 80.2,
+			"temperature":       65.0,
+			"powerDraw":         300.0,
 		},
 		{
-			"timestamp":         now.Add(-30 * time.Second).Format(time.RFC3339),
-			"hostId":            "mtv5-dgx1-hgpu-001",
-			"gpuId":             "gpu-1",
-			"gpuUtilization":    82.3,
-			"memoryUtilization": 45.7,
-			"memoryUsed":        14976.0,
-			"memoryFree":        17792.0,
-			"temperature":       68.0,
-			"powerDraw":         275.0,
-			"smClockMHz":        1530.0,
-			"memoryClockMHz":    877.0,
+			"timestamp":         time.Now().Format(time.RFC3339),
+			"hostname":          "host-2",
+			"gpuId":             "1",
+			"uuid":              "GPU-67890",
+			"device":            "nvidia1",
+			"modelName":         "NVIDIA H100",
+			"gpuUtilization":    88.3,
+			"memoryUtilization": 75.1,
+			"temperature":       62.0,
+			"powerDraw":         285.0,
 		},
 	}, nil
 }
