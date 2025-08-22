@@ -1,23 +1,35 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15
-    container_name: telemetry-postgres
-    environment:
-      POSTGRES_DB: telemetry
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+  # etcd for enhanced message queue and coordination
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: telemetry-etcd
     ports:
-      - "5433:5432"
+      - "2379:2379"
+      - "2380:2380"
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://localhost:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=etcd1=http://0.0.0.0:2380
+      - --initial-cluster-token=etcd-cluster-1
+      - --initial-cluster-state=new
+      - --auto-compaction-retention=1h
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - etcd_data:/etcd-data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+
 
   # Redis for shared message queue
   redis:
@@ -111,19 +123,10 @@ services:
       postgres:
         condition: service_healthy
 
-  # Adminer for database management (optional)
-  adminer:
-    image: adminer
-    container_name: telemetry-adminer
-    ports:
-      - "8081:8080"
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres
-    depends_on:
-      - postgres
+
 
 volumes:
-  postgres_data:
+  etcd_data:
   redis_data:
 
 networks:

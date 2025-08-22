@@ -14,6 +14,10 @@ import (
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/config"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/discovery"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	log "github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -71,17 +75,26 @@ type TelemetryRecord struct {
 	MemoryClockMHz    float32 `json:"memory_clock_mhz"`
 }
 
-// NexusCollector integrates the existing collector with Nexus-style patterns
+// NexusCollector integrates the existing collector with enhanced etcd features
 type NexusCollector struct {
-	config         *CollectorConfig
-	nexusService   *nexus.TelemetryService
-	etcdClient     *clientv3.Client
-	ctx            context.Context
-	cancel         context.CancelFunc
+	config       *CollectorConfig
+	nexusService *nexus.TelemetryService
+	etcdClient   *clientv3.Client
+	ctx          context.Context
+	cancel       context.CancelFunc
+
+	// Enhanced etcd features
+	serviceRegistry *discovery.ServiceRegistry
+	configManager   *config.ConfigManager
+	scalingCoord    *scaling.ScalingCoordinator
+	etcdBackend     *messagequeue.EtcdBackend
+
 	hostRegistry   map[string]bool
 	gpuRegistry    map[string]bool
 	registryMutex  sync.RWMutex
 	processingChan chan *TelemetryRecord
+	messageCount   int64
+	startTime      time.Time
 }
 
 func main() {

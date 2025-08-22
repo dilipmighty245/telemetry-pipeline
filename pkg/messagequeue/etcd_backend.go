@@ -6,17 +6,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// EtcdBackend provides etcd-based message queue functionality
+// EtcdBackend provides etcd-based message queue functionality with List & Watch patterns
 type EtcdBackend struct {
-	client     *clientv3.Client
-	ctx        context.Context
+	client      *clientv3.Client
+	ctx         context.Context
 	queuePrefix string
+	watchers    map[string]clientv3.WatchChan
+	watchersMu  sync.RWMutex
+	leaseID     clientv3.LeaseID
 }
 
 // NewEtcdBackend creates a new etcd backend if ETCD_ENDPOINTS is set
@@ -62,16 +67,17 @@ func NewEtcdBackend() (*EtcdBackend, error) {
 		client:      client,
 		ctx:         context.Background(),
 		queuePrefix: queuePrefix,
+		watchers:    make(map[string]clientv3.WatchChan),
 	}, nil
 }
 
 // PublishMessage publishes a message to etcd
 func (eb *EtcdBackend) PublishMessage(topic string, message *Message) error {
 	// Create unique key for the message
-	messageKey := fmt.Sprintf("%s/%s/%d_%s_%d", 
-		eb.queuePrefix, 
-		topic, 
-		time.Now().UnixNano(), 
+	messageKey := fmt.Sprintf("%s/%s/%d_%s_%d",
+		eb.queuePrefix,
+		topic,
+		time.Now().UnixNano(),
 		message.ID,
 		time.Now().Unix())
 
@@ -116,8 +122,8 @@ func (eb *EtcdBackend) ConsumeMessages(topic string, maxMessages int, timeoutSec
 	defer cancel()
 
 	// Get all messages for the topic, sorted by key (which includes timestamp)
-	resp, err := eb.client.Get(ctx, topicPrefix, 
-		clientv3.WithPrefix(), 
+	resp, err := eb.client.Get(ctx, topicPrefix,
+		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(maxMessages)))
 	if err != nil {
@@ -156,31 +162,31 @@ func (eb *EtcdBackend) ConsumeMessages(topic string, maxMessages int, timeoutSec
 // TopicExists checks if a topic exists (has messages)
 func (eb *EtcdBackend) TopicExists(topic string) bool {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
-	
+
 	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
 	defer cancel()
-	
-	resp, err := eb.client.Get(ctx, topicPrefix, 
-		clientv3.WithPrefix(), 
+
+	resp, err := eb.client.Get(ctx, topicPrefix,
+		clientv3.WithPrefix(),
 		clientv3.WithCountOnly())
-	
+
 	return err == nil && resp.Count > 0
 }
 
 // GetTopicStats returns statistics for a topic
 func (eb *EtcdBackend) GetTopicStats(topic string) (int64, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
-	
+
 	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
 	defer cancel()
-	
-	resp, err := eb.client.Get(ctx, topicPrefix, 
-		clientv3.WithPrefix(), 
+
+	resp, err := eb.client.Get(ctx, topicPrefix,
+		clientv3.WithPrefix(),
 		clientv3.WithCountOnly())
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return resp.Count, nil
 }
 
@@ -284,8 +290,8 @@ func (eb *EtcdBackend) ListTopics() ([]string, error) {
 	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
 	defer cancel()
 
-	resp, err := eb.client.Get(ctx, eb.queuePrefix, 
-		clientv3.WithPrefix(), 
+	resp, err := eb.client.Get(ctx, eb.queuePrefix,
+		clientv3.WithPrefix(),
 		clientv3.WithKeysOnly())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list topics: %w", err)
@@ -320,8 +326,248 @@ func (eb *EtcdBackend) Watch(topic string) clientv3.WatchChan {
 	return eb.client.Watch(eb.ctx, topicPrefix, clientv3.WithPrefix())
 }
 
+// ConsumeWithListWatch implements the List & Watch pattern for real-time message processing
+func (eb *EtcdBackend) ConsumeWithListWatch(topic string, consumerID string) (<-chan *Message, error) {
+	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
+	messageChan := make(chan *Message, 1000)
+
+	go func() {
+		defer close(messageChan)
+
+		for {
+			select {
+			case <-eb.ctx.Done():
+				return
+			default:
+			}
+
+			// Step 1: List - Get current state with revision
+			resp, err := eb.client.Get(eb.ctx, topicPrefix,
+				clientv3.WithPrefix(),
+				clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
+			if err != nil {
+				logging.Errorf("Failed to list messages: %v", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			currentRev := resp.Header.Revision
+			logging.Debugf("List phase: found %d messages at revision %d", len(resp.Kvs), currentRev)
+
+			// Process existing messages
+			for _, kv := range resp.Kvs {
+				if msg := eb.parseMessage(kv); msg != nil {
+					select {
+					case messageChan <- msg:
+					case <-eb.ctx.Done():
+						return
+					}
+				}
+			}
+
+			// Step 2: Watch - Monitor for new changes from next revision
+			watchCtx, watchCancel := context.WithCancel(eb.ctx)
+			watchChan := eb.client.Watch(watchCtx, topicPrefix,
+				clientv3.WithPrefix(),
+				clientv3.WithRev(currentRev+1))
+
+			watchActive := true
+			for watchActive {
+				select {
+				case watchResp, ok := <-watchChan:
+					if !ok {
+						watchActive = false
+						break
+					}
+
+					if watchResp.Err() != nil {
+						logging.Errorf("Watch error: %v", watchResp.Err())
+						watchActive = false
+						break
+					}
+
+					for _, event := range watchResp.Events {
+						if event.Type == clientv3.EventTypePut {
+							if msg := eb.parseMessage(event.Kv); msg != nil {
+								select {
+								case messageChan <- msg:
+								case <-eb.ctx.Done():
+									watchCancel()
+									return
+								}
+							}
+						}
+					}
+				case <-eb.ctx.Done():
+					watchCancel()
+					return
+				}
+			}
+
+			watchCancel()
+			logging.Debugf("Watch ended for topic %s, restarting List & Watch cycle", topic)
+		}
+	}()
+
+	return messageChan, nil
+}
+
+// AtomicWorkClaim claims work atomically to prevent duplicate processing
+func (eb *EtcdBackend) AtomicWorkClaim(topic, consumerID string, maxMessages int) ([]*Message, error) {
+	workPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
+	processingPrefix := fmt.Sprintf("/processing/%s/", consumerID)
+
+	ctx, cancel := context.WithTimeout(eb.ctx, 10*time.Second)
+	defer cancel()
+
+	// Get available work
+	resp, err := eb.client.Get(ctx, workPrefix,
+		clientv3.WithPrefix(),
+		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
+		clientv3.WithLimit(int64(maxMessages)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get work: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		return nil, nil // No work available
+	}
+
+	// Build atomic transaction
+	var ops []clientv3.Op
+	var messages []*Message
+
+	for _, kv := range resp.Kvs {
+		// Create unique processing key
+		processingKey := fmt.Sprintf("%s%d_%s", processingPrefix, time.Now().UnixNano(),
+			strings.TrimPrefix(string(kv.Key), workPrefix))
+
+		ops = append(ops,
+			clientv3.OpDelete(string(kv.Key)),               // Remove from work queue
+			clientv3.OpPut(processingKey, string(kv.Value))) // Add to processing
+
+		if msg := eb.parseMessage(kv); msg != nil {
+			msg.StreamKey = processingKey // Track processing key for acknowledgment
+			messages = append(messages, msg)
+		}
+	}
+
+	if len(ops) == 0 {
+		return nil, nil
+	}
+
+	// Execute atomic transaction
+	txnResp, err := eb.client.Txn(ctx).Then(ops...).Commit()
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute transaction: %w", err)
+	}
+
+	if !txnResp.Succeeded {
+		return nil, fmt.Errorf("transaction failed - work may have been claimed by another consumer")
+	}
+
+	logging.Infof("Consumer %s atomically claimed %d messages", consumerID, len(messages))
+	return messages, nil
+}
+
+// parseMessage safely parses a message from etcd key-value pair
+func (eb *EtcdBackend) parseMessage(kv *mvccpb.KeyValue) *Message {
+	var message Message
+	err := json.Unmarshal(kv.Value, &message)
+	if err != nil {
+		logging.Errorf("Failed to deserialize message from key %s: %v", kv.Key, err)
+		// Clean up invalid message
+		eb.client.Delete(eb.ctx, string(kv.Key))
+		return nil
+	}
+
+	// Check if message has expired
+	if time.Now().After(message.ExpiresAt) {
+		// Delete expired message
+		eb.client.Delete(eb.ctx, string(kv.Key))
+		logging.Debugf("Deleted expired message %s", message.ID)
+		return nil
+	}
+
+	// Store the etcd key for later acknowledgment
+	message.StreamKey = string(kv.Key)
+	return &message
+}
+
+// RecoverOrphanedWork recovers work from dead consumers
+func (eb *EtcdBackend) RecoverOrphanedWork(maxAge time.Duration) error {
+	ctx, cancel := context.WithTimeout(eb.ctx, 30*time.Second)
+	defer cancel()
+
+	// Find all processing entries older than maxAge
+	resp, err := eb.client.Get(ctx, "/processing/", clientv3.WithPrefix())
+	if err != nil {
+		return fmt.Errorf("failed to get processing entries: %w", err)
+	}
+
+	var recoveryOps []clientv3.Op
+	recoveredCount := 0
+
+	for _, kv := range resp.Kvs {
+		var msg Message
+		if err := json.Unmarshal(kv.Value, &msg); err != nil {
+			continue
+		}
+
+		// Check if message is old enough to recover
+		if time.Since(msg.CreatedAt) > maxAge {
+			// Move back to work queue
+			workKey := fmt.Sprintf("%s/%s/%d_%s_%d",
+				eb.queuePrefix, msg.Topic,
+				time.Now().UnixNano(), msg.ID, time.Now().Unix())
+
+			recoveryOps = append(recoveryOps,
+				clientv3.OpDelete(string(kv.Key)),         // Remove from processing
+				clientv3.OpPut(workKey, string(kv.Value))) // Add back to work queue
+			recoveredCount++
+		}
+	}
+
+	if len(recoveryOps) > 0 {
+		_, err := eb.client.Txn(ctx).Then(recoveryOps...).Commit()
+		if err != nil {
+			return fmt.Errorf("failed to recover orphaned work: %w", err)
+		}
+		logging.Infof("Recovered %d orphaned messages", recoveredCount)
+	}
+
+	return nil
+}
+
+// GetQueueDepth returns the number of pending messages in a topic
+func (eb *EtcdBackend) GetQueueDepth(topic string) (int64, error) {
+	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
+
+	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := eb.client.Get(ctx, topicPrefix,
+		clientv3.WithPrefix(),
+		clientv3.WithCountOnly())
+	if err != nil {
+		return 0, fmt.Errorf("failed to get queue depth: %w", err)
+	}
+
+	return resp.Count, nil
+}
+
 // Close closes the etcd connection
 func (eb *EtcdBackend) Close() error {
+	// Close all watchers
+	eb.watchersMu.Lock()
+	for topic, watchChan := range eb.watchers {
+		if watchChan != nil {
+			// Watchers are closed by canceling context
+			delete(eb.watchers, topic)
+		}
+	}
+	eb.watchersMu.Unlock()
+
 	if eb.client != nil {
 		return eb.client.Close()
 	}

@@ -80,40 +80,172 @@ STREAMER_INSTANCES=3 COLLECTOR_INSTANCES=3 make k8s-deploy-nexus
 make k8s-undeploy-nexus
 ```
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
-The system consists of three main Nexus components connected via etcd:
+### Overall System Architecture
+
+The telemetry pipeline is built with a distributed, scalable architecture using etcd as the backbone for both messaging and storage:
 
 ```mermaid
-graph LR
+graph TB
+    %% Data Sources
     subgraph "Data Sources"
-        CSV[📄 CSV Files]
+        CSV["📄 CSV Files<br/>GPU Telemetry Data"]
+        DCGM["📊 DCGM Metrics<br/>Real-time GPU Data"]
     end
-    
-    subgraph "Nexus Pipeline"
-        S[🔄 Nexus Streamer<br/>Data Ingestion]
-        E[🗄️ etcd<br/>Message Queue + Storage]
-        C[⚙️ Nexus Collector<br/>Data Processing]
-        G[🌐 Nexus Gateway<br/>Multi-Protocol API]
+
+    %% Streaming Layer
+    subgraph "Data Ingestion Layer"
+        NS["🔄 Nexus Streamer<br/>CSV → etcd Queue"]
+        CS["📡 Traditional Collector<br/>DCGM → etcd Queue"]
     end
-    
-    subgraph "Clients"
-        API[📱 REST API]
-        GQL[🔍 GraphQL]
-        WS[🔌 WebSocket]
+
+    %% Message Queue
+    subgraph "Distributed Message Queue"
+        ETCD["🗄️ etcd Cluster<br/>Message Queue & Coordination<br/>Topics: telemetry, metrics"]
     end
+
+    %% Processing Layer  
+    subgraph "Processing Layer"
+        NC["⚙️ Nexus Collector<br/>Message Processing<br/>Data Validation<br/>Host/GPU Registration"]
+    end
+
+    %% Storage Layer
+    subgraph "Storage Layer"
+        NEXUS["🏛️ Nexus Storage (etcd)<br/>Hierarchical Structure<br/>clusters/hosts/gpus"]
+        POSTGRES["🗃️ PostgreSQL<br/>Persistent Storage<br/>Backup & Analytics"]
+    end
+
+    %% API Layer
+    subgraph "API Gateway Layer"
+        NG["🌐 Nexus Gateway<br/>REST API<br/>GraphQL<br/>WebSocket<br/>Swagger UI"]
+    end
+
+    %% Service Discovery
+    subgraph "Service Discovery"
+        SR["🔍 Service Registry<br/>etcd-based Discovery<br/>Health Monitoring"]
+        SC["📊 Scaling Coordinator<br/>Auto-scaling Logic<br/>Load Balancing"]
+    end
+
+    %% Clients
+    subgraph "Client Applications"
+        WEB["💻 Web Dashboard<br/>Real-time Monitoring"]
+        API_CLIENT["📱 API Clients<br/>REST/GraphQL"]
+        GRAFANA["📈 Grafana<br/>Visualization"]
+    end
+
+    %% Data Flow Connections
+    CSV --> NS
+    DCGM --> CS
     
-    CSV --> S
-    S --> E
-    E --> C
-    C --> E
-    E --> G
-    G --> API
-    G --> GQL
-    G --> WS
+    NS --> ETCD
+    CS --> ETCD
+    
+    ETCD --> NC
+    
+    NC --> NEXUS
+    NC --> POSTGRES
+    
+    NEXUS --> NG
+    POSTGRES --> NG
+    
+    NG --> WEB
+    NG --> API_CLIENT
+    NG --> GRAFANA
+
+    %% Service Discovery Connections
+    NS -.-> SR
+    CS -.-> SR
+    NC -.-> SR
+    NG -.-> SR
+    
+    SR --> SC
+    SC -.-> NS
+    SC -.-> NC
+
+    %% Styling
+    classDef dataSource fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef processing fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef storage fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef api fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef client fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef queue fill:#f1f8e9,stroke:#689f38,stroke-width:2px
+    classDef discovery fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+
+    class CSV,DCGM dataSource
+    class NS,CS,NC processing
+    class NEXUS,POSTGRES storage
+    class NG api
+    class WEB,API_CLIENT,GRAFANA client
+    class ETCD queue
+    class SR,SC discovery
 ```
 
-### Components
+### CSV Processing Flow
+
+This sequence diagram shows the complete flow of how CSV files are read, processed, stored, and fetched through the API:
+
+```mermaid
+sequenceDiagram
+    participant User as User/Client
+    participant Streamer as Nexus Streamer
+    participant CSV as CSV File
+    participant Queue as etcd Message Queue
+    participant Collector as Nexus Collector
+    participant Storage as etcd Storage
+    participant Gateway as API Gateway
+    participant DB as PostgreSQL
+
+    Note over User,DB: CSV Telemetry Processing Pipeline
+
+    %% CSV Reading Phase
+    User->>Streamer: Start streaming CSV file
+    Streamer->>CSV: Open and read CSV file
+    CSV-->>Streamer: Return CSV headers and data
+    
+    loop For each batch of CSV records
+        Streamer->>Streamer: Parse CSV record to TelemetryRecord
+        Note right of Streamer: Extract: timestamp, GPU_ID, UUID,<br/>utilization, memory metrics, etc.
+        Streamer->>Queue: Publish batch to etcd topic "telemetry"
+        Note right of Queue: Store in etcd with key:<br/>/queue/telemetry/{message_id}
+    end
+
+    %% Processing Phase
+    Collector->>Queue: Consume messages from "telemetry" topic
+    Queue-->>Collector: Return batch of telemetry messages
+    
+    loop For each telemetry record
+        Collector->>Collector: Process and validate telemetry data
+        Collector->>Storage: Register host if not exists
+        Note right of Storage: Store in etcd:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}
+        Collector->>Storage: Register GPU if not exists  
+        Note right of Storage: Store in etcd:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}/gpus/{gpu_id}
+        Collector->>Storage: Store telemetry data in Nexus format
+        Note right of Storage: Store in etcd:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}/gpus/{gpu_id}/data/{timestamp}
+        Collector->>DB: Store in PostgreSQL (fallback/legacy)
+    end
+    
+    Collector->>Queue: Acknowledge processed messages
+    
+    %% Data Fetching Phase
+    User->>Gateway: GET /api/v1/gpus/{uuid}/telemetry
+    Gateway->>Storage: Query etcd for GPU by UUID
+    Note right of Storage: Search keys matching:<br/>/telemetry/clusters/*/hosts/*/gpus/*
+    Storage-->>Gateway: Return GPU location (hostname, gpu_id)
+    Gateway->>Storage: Query telemetry data by location
+    Note right of Storage: Query keys:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}/gpus/{gpu_id}/data/*
+    Storage-->>Gateway: Return telemetry data array
+    Gateway->>Gateway: Apply time filters and sorting
+    Gateway-->>User: Return JSON response with telemetry data
+
+    %% Alternative GraphQL Query
+    User->>Gateway: POST /graphql (telemetry query)
+    Gateway->>Storage: Query etcd storage (same as REST)
+    Storage-->>Gateway: Return telemetry data
+    Gateway-->>User: Return GraphQL response
+```
+
+### Key Components
 
 - **🔄 Nexus Streamer**: Reads CSV telemetry data and streams to etcd message queue
 - **⚙️ Nexus Collector**: Consumes messages, processes data, and stores in etcd
@@ -122,6 +254,20 @@ graph LR
   - **Message Queue**: Temporary storage for streaming telemetry data
   - **Data Storage**: Persistent hierarchical storage for processed data  
   - **Coordination**: Distributed locks and watches for component coordination
+- **🗃️ PostgreSQL**: Persistent storage for backup and analytics
+- **🔍 Service Discovery**: etcd-based service registry and health monitoring
+
+### Recent Architecture Changes
+
+✅ **Redis Cleanup Completed**: The system has been migrated from Redis to etcd-only architecture:
+- Removed Redis backend implementations (`redis_backend.go`, `redis_streams_backend.go`)
+- Updated message queue to use etcd as primary backend with in-memory fallback
+- Cleaned up Redis dependencies from `go.mod`
+- Simplified codebase by removing Redis fallback logic
+
+🔄 **Current Message Queue Strategy**:
+1. **Primary**: etcd cluster (distributed, persistent)
+2. **Fallback**: In-memory queue (local development only)
 
 ## 📊 Complete API Reference
 

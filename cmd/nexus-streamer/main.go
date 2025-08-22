@@ -14,6 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	configpkg "github.com/dilipmighty245/telemetry-pipeline/pkg/config"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/discovery"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	log "github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -63,26 +66,31 @@ type NexusStreamer struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 
+	// Enhanced etcd features
+	serviceRegistry *discovery.ServiceRegistry
+	configManager   *configpkg.ConfigManager
+	scalingCoord    *scaling.ScalingCoordinator
+
 	messageCount int64
 	startTime    time.Time
 }
 
 func main() {
-	config := parseFlags()
+	cfg := parseFlags()
 
 	// Set log level
-	level, err := log.ParseLevel(config.LogLevel)
+	level, err := log.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		log.Fatalf("Invalid log level: %v", err)
 	}
 	log.SetLevel(level)
 
 	log.Infof("Starting Nexus telemetry streamer")
-	log.Infof("Cluster ID: %s, Streamer ID: %s", config.ClusterID, config.StreamerID)
-	log.Infof("CSV File: %s, Batch Size: %d, Interval: %v", config.CSVFile, config.BatchSize, config.StreamInterval)
+	log.Infof("Cluster ID: %s, Streamer ID: %s", cfg.ClusterID, cfg.StreamerID)
+	log.Infof("CSV File: %s, Batch Size: %d, Interval: %v", cfg.CSVFile, cfg.BatchSize, cfg.StreamInterval)
 
 	// Create and start the streamer
-	streamer, err := NewNexusStreamer(config)
+	streamer, err := NewNexusStreamer(cfg)
 	if err != nil {
 		log.Fatalf("Failed to create streamer: %v", err)
 	}
@@ -106,29 +114,29 @@ func main() {
 
 // parseFlags parses command line flags and environment variables
 func parseFlags() *StreamerConfig {
-	config := &StreamerConfig{}
+	cfg := &StreamerConfig{}
 
 	// etcd configuration
-	flag.StringVar(&config.ClusterID, "cluster-id", getEnv("CLUSTER_ID", "default-cluster"), "Telemetry cluster ID")
-	flag.StringVar(&config.StreamerID, "streamer-id", getEnv("STREAMER_ID", fmt.Sprintf("streamer-%d", time.Now().Unix())), "Unique streamer ID")
+	flag.StringVar(&cfg.ClusterID, "cluster-id", getEnv("CLUSTER_ID", "default-cluster"), "Telemetry cluster ID")
+	flag.StringVar(&cfg.StreamerID, "streamer-id", getEnv("STREAMER_ID", fmt.Sprintf("streamer-%d", time.Now().Unix())), "Unique streamer ID")
 
 	etcdEndpointsStr := getEnv("ETCD_ENDPOINTS", "localhost:2379")
-	config.EtcdEndpoints = strings.Split(etcdEndpointsStr, ",")
+	cfg.EtcdEndpoints = strings.Split(etcdEndpointsStr, ",")
 
 	// Message queue configuration
-	flag.StringVar(&config.MessageQueuePrefix, "message-queue-prefix", getEnv("MESSAGE_QUEUE_PREFIX", "/telemetry/queue"), "etcd message queue prefix")
+	flag.StringVar(&cfg.MessageQueuePrefix, "message-queue-prefix", getEnv("MESSAGE_QUEUE_PREFIX", "/telemetry/queue"), "etcd message queue prefix")
 
 	// CSV configuration
-	flag.StringVar(&config.CSVFile, "csv", getEnv("CSV_FILE", "dcgm_metrics_20250718_134233.csv"), "CSV file to stream")
-	flag.IntVar(&config.BatchSize, "batch-size", getEnvInt("BATCH_SIZE", 100), "Batch size for streaming")
-	flag.DurationVar(&config.StreamInterval, "stream-interval", getEnvDuration("STREAM_INTERVAL", 3*time.Second), "Interval between batches")
-	flag.BoolVar(&config.LoopMode, "loop", getEnvBool("LOOP_MODE", false), "Loop through CSV file continuously")
+	flag.StringVar(&cfg.CSVFile, "csv", getEnv("CSV_FILE", "dcgm_metrics_20250718_134233.csv"), "CSV file to stream")
+	flag.IntVar(&cfg.BatchSize, "batch-size", getEnvInt("BATCH_SIZE", 100), "Batch size for streaming")
+	flag.DurationVar(&cfg.StreamInterval, "stream-interval", getEnvDuration("STREAM_INTERVAL", 3*time.Second), "Interval between batches")
+	flag.BoolVar(&cfg.LoopMode, "loop", getEnvBool("LOOP_MODE", false), "Loop through CSV file continuously")
 
 	// Logging
-	flag.StringVar(&config.LogLevel, "log-level", getEnv("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
+	flag.StringVar(&cfg.LogLevel, "log-level", getEnv("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 
 	flag.Parse()
-	return config
+	return cfg
 }
 
 // NewNexusStreamer creates a new etcd-based streamer
@@ -155,12 +163,32 @@ func NewNexusStreamer(config *StreamerConfig) (*NexusStreamer, error) {
 		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
 	}
 
+	// Initialize enhanced etcd features
+	serviceRegistry := discovery.NewServiceRegistry(etcdClient, 30)
+	configManager := configpkg.NewConfigManager(etcdClient)
+	scalingRules := &scaling.ScalingRules{
+		MinInstances:       1,
+		MaxInstances:       10,
+		ScaleUpThreshold:   0.8,
+		ScaleDownThreshold: 0.3,
+		CooldownPeriod:     5 * time.Minute,
+		MetricWeights: map[string]float64{
+			"cpu":    0.3,
+			"memory": 0.3,
+			"queue":  0.4,
+		},
+	}
+	scalingCoord := scaling.NewScalingCoordinator(etcdClient, "nexus-streamer", config.StreamerID, scalingRules)
+
 	streamer := &NexusStreamer{
-		config:     config,
-		etcdClient: etcdClient,
-		ctx:        ctx,
-		cancel:     cancel,
-		startTime:  time.Now(),
+		config:          config,
+		etcdClient:      etcdClient,
+		ctx:             ctx,
+		cancel:          cancel,
+		serviceRegistry: serviceRegistry,
+		configManager:   configManager,
+		scalingCoord:    scalingCoord,
+		startTime:       time.Now(),
 	}
 
 	return streamer, nil
@@ -168,7 +196,52 @@ func NewNexusStreamer(config *StreamerConfig) (*NexusStreamer, error) {
 
 // Start starts the streaming process
 func (ns *NexusStreamer) Start() error {
-	log.Info("Starting etcd-based telemetry streaming")
+	log.Info("Starting enhanced etcd-based telemetry streaming")
+
+	// Load initial configuration
+	if err := ns.configManager.LoadInitialConfig(); err != nil {
+		log.Warnf("Failed to load initial config: %v", err)
+	}
+
+	// Set default configuration values
+	defaults := map[string]interface{}{
+		"streamer/batch-size":      ns.config.BatchSize,
+		"streamer/stream-interval": ns.config.StreamInterval.String(),
+		"streamer/rate-limit":      1000.0,
+		"streamer/enabled":         true,
+	}
+	if err := ns.configManager.SetDefaults(defaults); err != nil {
+		log.Warnf("Failed to set default config: %v", err)
+	}
+
+	// Register service
+	serviceInfo := discovery.ServiceInfo{
+		ID:      ns.config.StreamerID,
+		Type:    "nexus-streamer",
+		Address: "localhost", // This could be determined dynamically
+		Port:    8080,
+		Metadata: map[string]string{
+			"cluster_id": ns.config.ClusterID,
+			"csv_file":   ns.config.CSVFile,
+			"version":    "2.0.0",
+		},
+		Health:  "healthy",
+		Version: "2.0.0",
+	}
+
+	if err := ns.serviceRegistry.Register(ns.ctx, serviceInfo); err != nil {
+		log.Errorf("Failed to register service: %v", err)
+	} else {
+		log.Infof("Service registered: %s", ns.config.StreamerID)
+	}
+
+	// Start scaling coordinator
+	if err := ns.scalingCoord.Start(); err != nil {
+		log.Errorf("Failed to start scaling coordinator: %v", err)
+	}
+
+	// Start configuration watcher
+	go ns.watchConfiguration()
 
 	// Start streaming in a goroutine
 	go ns.streamingLoop()
@@ -419,9 +492,83 @@ func (ns *NexusStreamer) PrintStats() {
 	log.Infof("  Rate: %.2f messages/second", rate)
 }
 
+// watchConfiguration watches for configuration changes
+func (ns *NexusStreamer) watchConfiguration() {
+	// Watch for batch size changes
+	batchSizeChan := ns.configManager.WatchConfig("streamer/batch-size")
+
+	// Watch for stream interval changes
+	intervalChan := ns.configManager.WatchConfig("streamer/stream-interval")
+
+	// Watch for rate limit changes
+	rateLimitChan := ns.configManager.WatchConfig("streamer/rate-limit")
+
+	for {
+		select {
+		case <-batchSizeChan:
+			if newBatchSize := ns.configManager.GetInt("streamer/batch-size", ns.config.BatchSize); newBatchSize != ns.config.BatchSize {
+				log.Infof("Updating batch size from %d to %d", ns.config.BatchSize, newBatchSize)
+				ns.config.BatchSize = newBatchSize
+			}
+
+		case <-intervalChan:
+			if intervalStr := ns.configManager.GetString("streamer/stream-interval", ns.config.StreamInterval.String()); intervalStr != ns.config.StreamInterval.String() {
+				if newInterval, err := time.ParseDuration(intervalStr); err == nil {
+					log.Infof("Updating stream interval from %v to %v", ns.config.StreamInterval, newInterval)
+					ns.config.StreamInterval = newInterval
+				}
+			}
+
+		case <-rateLimitChan:
+			rateLimit := ns.configManager.GetFloat("streamer/rate-limit", 1000.0)
+			log.Infof("Rate limit updated to %.2f messages/sec", rateLimit)
+
+		case <-ns.ctx.Done():
+			return
+		}
+	}
+}
+
+// reportMetrics reports instance metrics for scaling decisions
+func (ns *NexusStreamer) reportMetrics() {
+	metrics := scaling.InstanceMetrics{
+		CPUUsage:       0.5,                            // This would be real CPU usage
+		MemoryUsage:    0.4,                            // This would be real memory usage
+		QueueDepth:     float64(ns.messageCount % 100), // Simulated queue depth
+		ProcessingRate: float64(ns.messageCount) / time.Since(ns.startTime).Seconds(),
+		ErrorRate:      0.01, // 1% error rate
+		Health:         "healthy",
+	}
+
+	if err := ns.scalingCoord.ReportMetrics(metrics); err != nil {
+		log.Debugf("Failed to report metrics: %v", err)
+	}
+}
+
 // Close closes the streamer and cleans up resources
 func (ns *NexusStreamer) Close() error {
-	log.Info("Closing Nexus streamer")
+	log.Info("Closing enhanced Nexus streamer")
+
+	// Deregister service
+	if ns.serviceRegistry != nil {
+		if err := ns.serviceRegistry.Deregister(ns.ctx); err != nil {
+			log.Errorf("Failed to deregister service: %v", err)
+		}
+	}
+
+	// Stop scaling coordinator
+	if ns.scalingCoord != nil {
+		if err := ns.scalingCoord.Stop(); err != nil {
+			log.Errorf("Failed to stop scaling coordinator: %v", err)
+		}
+	}
+
+	// Close configuration manager
+	if ns.configManager != nil {
+		if err := ns.configManager.Close(); err != nil {
+			log.Errorf("Failed to close config manager: %v", err)
+		}
+	}
 
 	ns.cancel()
 
