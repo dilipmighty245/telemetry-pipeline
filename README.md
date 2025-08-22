@@ -2,6 +2,35 @@
 
 A scalable, elastic telemetry pipeline for AI clusters built with the Nexus framework and etcd. This system streams GPU telemetry data through a custom message queue, processes it with distributed collectors, and serves it via a multi-protocol API (REST, GraphQL, WebSocket).
 
+## 🎯 Enhanced Components (Recommended)
+
+**New in this version**: Enhanced components with production-ready resilience features:
+
+- **✅ Exactly-Once Processing**: ULID message IDs + idempotency keys prevent duplicates
+- **✅ Robust etcd Queue**: Lease-based processing with automatic recovery  
+- **✅ Backpressure & Throttling**: Token bucket algorithm with queue depth monitoring
+- **✅ Graceful Shutdown**: Proper signal handling and resource cleanup
+- **✅ Schema Versioning**: Versioned telemetry data with validation and migration
+- **✅ Centralized Config**: Environment-based configuration with validation
+
+### Quick Start (Enhanced Pipeline)
+
+```bash
+# Build enhanced components
+make build-enhanced
+
+# Start etcd
+docker run -d --name etcd-demo -p 2379:2379 quay.io/coreos/etcd:v3.5.0 \
+  /usr/local/bin/etcd --data-dir=/etcd-data --name node1 \
+  --advertise-client-urls http://localhost:2379 \
+  --listen-client-urls http://0.0.0.0:2379
+
+# Run demo (starts all enhanced components)
+./scripts/demo-enhanced.sh
+```
+
+**📖 For detailed information about enhancements, see [ENHANCEMENTS.md](./ENHANCEMENTS.md)**
+
 ## 🚀 Quick Start
 
 ### Prerequisites

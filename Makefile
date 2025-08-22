@@ -58,6 +58,8 @@ build: build-streamer build-collector ## Build all core components (api-gateway 
 
 build-nexus: build-nexus-collector build-nexus-streamer build-nexus-gateway ## Build all three telemetry pipeline components with Nexus integration
 
+build-enhanced: build-enhanced-collector build-enhanced-streamer build-enhanced-gateway ## Build all enhanced telemetry pipeline components
+
 build-nexus-collector: ## Build Nexus collector (component 2 of 3)
 	@echo "Building Nexus collector (component 2 of 3)..."
 	@mkdir -p $(BINARY_DIR)
@@ -77,6 +79,25 @@ build-nexus-gateway: ## Build Nexus gateway (multi-protocol API)
 	@mkdir -p $(BINARY_DIR)
 	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/nexus-gateway ./cmd/nexus-gateway
 	@echo "✅ Nexus API Gateway built successfully"
+
+# Enhanced build targets
+build-enhanced-collector: ## Build enhanced collector with exactly-once processing
+	@echo "Building enhanced collector..."
+	@mkdir -p $(BINARY_DIR)
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/enhanced-collector ./cmd/enhanced-collector
+	@echo "Enhanced collector build complete!"
+
+build-enhanced-streamer: ## Build enhanced streamer with backpressure and throttling
+	@echo "Building enhanced streamer..."
+	@mkdir -p $(BINARY_DIR)
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/enhanced-streamer ./cmd/enhanced-streamer
+	@echo "Enhanced streamer build complete!"
+
+build-enhanced-gateway: ## Build enhanced gateway with WebSocket support
+	@echo "Building enhanced gateway..."
+	@mkdir -p $(BINARY_DIR)
+	go build $(GO_BUILD_FLAGS) -o $(BINARY_DIR)/enhanced-gateway ./cmd/enhanced-gateway
+	@echo "Enhanced gateway build complete!"
 
 # Generate OpenAPI specification
 generate-swagger: ## Generate OpenAPI/Swagger specification
