@@ -1,71 +1,89 @@
-# Telemetry Pipeline Documentation
+# Documentation Index
 
-This directory contains comprehensive documentation for the Elastic GPU Telemetry Pipeline project.
+This directory contains comprehensive documentation for the Elastic GPU Telemetry Pipeline.
 
-## 📖 Documentation Index
+## 📚 Available Documentation
 
-### Architecture & Design
-- **[High Level Design](HIGH_LEVEL_DESIGN.md)** - System architecture and design decisions
-- **[API Specification](API_SPECIFICATION.md)** - Detailed REST API documentation
-- **[Message Queue Design](MESSAGE_QUEUE_DESIGN.md)** - Custom message queue implementation details
+### Core Documentation
 
-### Deployment Guides
-- **[Deployment Modes](DEPLOYMENT-MODES.md)** - Comprehensive guide for same-cluster and cross-cluster deployments
-- **[Cross-Cluster Deployment](CROSS_CLUSTER_DEPLOYMENT.md)** - Detailed cross-cluster deployment guide
-- **[Cross-Cluster Setup](CROSS_CLUSTER_SETUP.md)** - Step-by-step cross-cluster setup instructions
-- **[Kind Setup Guide](KIND_SETUP.md)** - Local development with Kind clusters
-- **[Deployment Strategy](DEPLOYMENT_STRATEGY.md)** - Production deployment guidelines
-- **[Deployment Comparison](DEPLOYMENT_COMPARISON.md)** - Comparison of different deployment approaches
-- **[Deployment Summary](DEPLOYMENT-SUMMARY.md)** - Quick reference for deployment commands
+- **[Architecture Guide](ARCHITECTURE.md)** - Complete system architecture, components, data flow, and design patterns
+- **[API Specification](API_SPECIFICATION.md)** - Detailed REST API documentation with examples and data models
+- **[Scaling & Kubernetes](SCALING_AND_KUBERNETES.md)** - Local scaling and Kubernetes deployment guide
+- **[Debugging Guide](DEBUGGING.md)** - Comprehensive troubleshooting and debugging instructions
 
-## 🗺️ Documentation Map
+### Integration Documentation
+
+- **[Nexus Integration Guide](NEXUS_INTEGRATION_GUIDE.md)** - Nexus framework integration details and patterns
+
+### API Specifications
+
+- **[swagger.json](swagger.json)** - OpenAPI 3.0 specification in JSON format
+- **[swagger.yaml](swagger.yaml)** - OpenAPI 3.0 specification in YAML format
+
+## 🚀 Quick Navigation
 
 ### For Developers
-1. Start with [High Level Design](HIGH_LEVEL_DESIGN.md) to understand the system architecture
-2. Review [API Specification](API_SPECIFICATION.md) for API details
-3. Understand [Message Queue Design](MESSAGE_QUEUE_DESIGN.md) for queue implementation
+1. Start with **[Architecture Guide](ARCHITECTURE.md)** to understand the system
+2. Follow **[Main README](../README.md)** for local development setup
+3. Use **[Debugging Guide](DEBUGGING.md)** when troubleshooting issues
 
-### For DevOps/Platform Engineers
-1. Read [Deployment Modes](DEPLOYMENT-MODES.md) to choose the right deployment pattern
-2. Follow [Kind Setup Guide](KIND_SETUP.md) for local testing
-3. Use [Cross-Cluster Setup](CROSS_CLUSTER_SETUP.md) for production deployments
-4. Reference [Deployment Strategy](DEPLOYMENT_STRATEGY.md) for best practices
+### For Operators  
+1. Review **[Scaling & Kubernetes](SCALING_AND_KUBERNETES.md)** for deployment
+2. Reference **[API Specification](API_SPECIFICATION.md)** for API usage
+3. Use **[Debugging Guide](DEBUGGING.md)** for operational issues
 
-### For Operations Teams
-1. Use [Deployment Summary](DEPLOYMENT-SUMMARY.md) for quick command reference
-2. Compare options with [Deployment Comparison](DEPLOYMENT_COMPARISON.md)
-3. Follow [Cross-Cluster Deployment](CROSS_CLUSTER_DEPLOYMENT.md) for detailed setup
+### For API Users
+1. Check **[API Specification](API_SPECIFICATION.md)** for complete API reference
+2. Test APIs using examples in **[Main README](../README.md)**
+3. Use **[swagger.json](swagger.json)** for API client generation
 
-## 🚀 Quick Start Links
+## 📖 Documentation Overview
 
-- **Development Setup**: [Kind Setup Guide](KIND_SETUP.md)
-- **Production Deployment**: [Deployment Modes](DEPLOYMENT-MODES.md)
-- **API Reference**: [API Specification](API_SPECIFICATION.md)
-- **Architecture Overview**: [High Level Design](HIGH_LEVEL_DESIGN.md)
+### What Each Document Covers
 
-## 📋 Document Status
+| Document | Purpose | Audience |
+|----------|---------|----------|
+| [Architecture](ARCHITECTURE.md) | System design, components, data flow | Developers, Architects |
+| [API Specification](API_SPECIFICATION.md) | REST API reference, examples | API Users, Frontend Devs |
+| [Scaling & Kubernetes](SCALING_AND_KUBERNETES.md) | Deployment, scaling, operations | DevOps, SRE |
+| [Debugging](DEBUGGING.md) | Troubleshooting, monitoring | Developers, Operators |
+| [Nexus Integration](NEXUS_INTEGRATION_GUIDE.md) | Framework integration details | Nexus Developers |
 
-| Document | Status | Last Updated | Audience |
-|----------|--------|-------------|----------|
-| High Level Design | ✅ Complete | Current | Developers, Architects |
-| API Specification | ✅ Complete | Current | Developers, API Users |
-| Message Queue Design | ✅ Complete | Current | Developers |
-| Deployment Modes | ✅ Complete | Current | DevOps, Platform Engineers |
-| Cross-Cluster Deployment | ✅ Complete | Current | DevOps, SRE |
-| Cross-Cluster Setup | ✅ Complete | Current | DevOps, Platform Engineers |
-| Kind Setup Guide | ✅ Complete | Current | Developers, QA |
-| Deployment Strategy | ✅ Complete | Current | DevOps, SRE |
-| Deployment Comparison | ✅ Complete | Current | Decision Makers, Architects |
-| Deployment Summary | ✅ Complete | Current | Operations, DevOps |
+### Key Features Documented
 
-## 🔄 Feedback and Updates
+- ✅ **Local Development**: Complete setup and testing instructions
+- ✅ **Kubernetes Deployment**: Production-ready Helm charts and configurations
+- ✅ **Scaling**: Both local and Kubernetes horizontal scaling
+- ✅ **API Reference**: All 20+ REST endpoints, GraphQL, and WebSocket APIs
+- ✅ **Debugging**: Comprehensive troubleshooting for all components
+- ✅ **Architecture**: System design patterns and data flow
+- ✅ **Monitoring**: Health checks, logging, and performance monitoring
 
-If you find any issues with the documentation or have suggestions for improvements:
+## 🔗 External References
 
-1. Create an issue in the project repository
-2. Submit a pull request with your changes
-3. Contact the development team
+- **[Main README](../README.md)** - Project overview and quick start
+- **[Makefile](../Makefile)** - All available commands and targets
+- **[Helm Charts](../deployments/helm/)** - Kubernetes deployment configurations
+- **[Docker Files](../deployments/docker/)** - Container build configurations
+
+## 📝 Contributing to Documentation
+
+When updating documentation:
+
+1. **Keep it current** - Update docs when making code changes
+2. **Be comprehensive** - Include examples and use cases
+3. **Cross-reference** - Link between related documents
+4. **Test examples** - Verify all code examples work
+5. **Update this index** - Add new documents to the table above
+
+### Documentation Standards
+
+- Use clear headings and structure
+- Include practical examples
+- Provide troubleshooting steps
+- Link to related sections
+- Keep examples up-to-date with current API
 
 ---
 
-**Back to**: [Main README](../README.md)
+**Need help?** Start with the [Main README](../README.md) or check the [Debugging Guide](DEBUGGING.md) for troubleshooting.
