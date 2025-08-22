@@ -39,14 +39,6 @@ type CollectorConfig struct {
 	BufferSize   int
 	Workers      int
 
-	// Database configuration
-	DBHost     string
-	DBPort     int
-	DBUser     string
-	DBPassword string
-	DBName     string
-	DBSSLMode  string
-
 	// Feature flags
 	EnableNexus     bool
 	EnableWatchAPI  bool
@@ -153,14 +145,6 @@ func parseFlags() *CollectorConfig {
 	flag.DurationVar(&config.PollInterval, "poll-interval", getEnvDuration("POLL_INTERVAL", 1*time.Second), "Polling interval")
 	flag.IntVar(&config.BufferSize, "buffer-size", getEnvInt("BUFFER_SIZE", 10000), "Buffer size for channels")
 	flag.IntVar(&config.Workers, "workers", getEnvInt("WORKERS", 8), "Number of worker goroutines")
-
-	// Database configuration
-	flag.StringVar(&config.DBHost, "db-host", getEnv("DB_HOST", "localhost"), "Database host")
-	flag.IntVar(&config.DBPort, "db-port", getEnvInt("DB_PORT", 5433), "Database port")
-	flag.StringVar(&config.DBUser, "db-user", getEnv("DB_USER", "postgres"), "Database user")
-	flag.StringVar(&config.DBPassword, "db-password", getEnv("DB_PASSWORD", "postgres"), "Database password")
-	flag.StringVar(&config.DBName, "db-name", getEnv("DB_NAME", "telemetry"), "Database name")
-	flag.StringVar(&config.DBSSLMode, "db-ssl-mode", getEnv("DB_SSL_MODE", "disable"), "Database SSL mode")
 
 	// Feature flags
 	flag.BoolVar(&config.EnableNexus, "enable-nexus", getEnvBool("ENABLE_NEXUS", true), "Enable Nexus integration")
@@ -363,13 +347,8 @@ func (nc *NexusCollector) processRecord(record *TelemetryRecord) error {
 	if nc.config.EnableNexus {
 		if err := nc.storeInNexus(record); err != nil {
 			log.Errorf("Failed to store in Nexus: %v", err)
-			// Continue with database storage as fallback
+			// Continue with database storage
 		}
-	}
-
-	// Store in PostgreSQL database (existing functionality)
-	if err := nc.storeInDatabase(record); err != nil {
-		return fmt.Errorf("failed to store in database: %w", err)
 	}
 
 	return nil
@@ -487,14 +466,6 @@ func (nc *NexusCollector) storeInNexus(record *TelemetryRecord) error {
 	}
 
 	return nc.nexusService.StoreTelemetryData(record.Hostname, record.GPUID, telemetryData)
-}
-
-// storeInDatabase stores telemetry data in PostgreSQL (existing functionality)
-func (nc *NexusCollector) storeInDatabase(record *TelemetryRecord) error {
-	// This would integrate with your existing database storage logic
-	// For now, we'll just log that we're storing it
-	log.Debugf("Storing in database: GPU %s on host %s", record.GPUID, record.Hostname)
-	return nil
 }
 
 // Close closes the collector and cleans up resources

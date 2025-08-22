@@ -132,10 +132,8 @@ func (cs *CollectorService) Stop() error {
 	// Flush remaining buffer
 	cs.flushBuffer()
 
-	// Close database connection
-	if cs.database != nil {
-		cs.database.Close()
-	}
+	// Database connections are handled by individual components
+	// No database cleanup needed in this service
 
 	logging.Infof("Stopped collector service %s", cs.config.CollectorID)
 	return nil
@@ -379,12 +377,8 @@ func (cs *CollectorService) Health() bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
-	// Service is healthy if it's running and database is healthy
+	// Service is healthy if it's running
 	if !cs.isRunning {
-		return false
-	}
-
-	if cs.database != nil && !cs.database.Health() {
 		return false
 	}
 

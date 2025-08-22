@@ -133,21 +133,7 @@ else
     print_status "Skipping PostgreSQL database reset"
 fi
 
-# 5. Optional: Reset Redis (if using legacy backend)
-read -p "Do you want to flush Redis data? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    print_status "Flushing Redis data..."
-    
-    if docker ps --format "table {{.Names}}" | grep -q "telemetry-redis"; then
-        docker exec telemetry-redis redis-cli FLUSHALL 2>/dev/null || print_warning "Failed to flush Redis"
-        print_success "Redis data flushed"
-    else
-        print_warning "Redis container not running, skipping Redis cleanup"
-    fi
-else
-    print_status "Skipping Redis cleanup"
-fi
+# 5. etcd cleanup completed above - no additional cleanup needed
 
 # 6. Verify cleanup
 print_status "Verifying cleanup..."
@@ -178,7 +164,7 @@ echo "----------------------------------------"
 
 # Show running containers
 print_status "Running containers:"
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(telemetry-|etcd|postgres|redis)" || print_status "No telemetry containers running"
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(telemetry-|etcd|postgres)" || print_status "No telemetry containers running"
 
 echo
 print_success "🎉 Cleanup and reset completed!"

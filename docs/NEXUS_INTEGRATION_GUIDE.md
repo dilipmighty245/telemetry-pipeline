@@ -39,13 +39,12 @@ graph TB
         end
         
         subgraph "Coordination Layer"
-            ETCD[etcd Cluster<br/>Distributed Coordination]
-            REDIS[Redis<br/>Message Queue<br/>Backward Compatibility]
+            ETCD[etcd Cluster<br/>Distributed Coordination<br/>Message Queue]
         end
         
         subgraph "Processing Layer"
-            NSTREAMER[Traditional Streamer<br/>CSV → Redis]
-            NCOLLECTOR[Nexus Collector<br/>Redis → etcd + PostgreSQL]
+            NSTREAMER[Nexus Streamer<br/>CSV → etcd Queue]
+            NCOLLECTOR[Nexus Collector<br/>etcd Queue → etcd + PostgreSQL]
         end
         
         subgraph "API Layer"
@@ -54,7 +53,7 @@ graph TB
         end
         
         subgraph "Storage Layer"
-            POSTGRES[PostgreSQL<br/>Persistent Storage]
+            POSTGRES[PostgreSQL + TimescaleDB<br/>Time-series Analytics<br/>Long-term Storage]
         end
         
         subgraph "Monitoring"
@@ -65,8 +64,8 @@ graph TB
     
     CSV --> NSTREAMER
     STREAM --> NSTREAMER
-    NSTREAMER --> REDIS
-    REDIS --> NCOLLECTOR
+    NSTREAMER --> ETCD
+    ETCD --> NCOLLECTOR
     NCOLLECTOR --> ETCD
     NCOLLECTOR --> POSTGRES
     ETCD --> NAPI
@@ -107,7 +106,7 @@ open http://localhost:8082                 # Database UI
 ```bash
 # 1. Setup infrastructure
 make setup-etcd
-make setup-redis  
+
 make setup-db
 
 # 2. Start Nexus components
@@ -131,12 +130,12 @@ helm install telemetry-nexus ./deployments/helm/nexus-telemetry \
 
 ### **1. Nexus Collector** (`cmd/nexus-collector`)
 
-Enhanced collector that integrates with both Redis (backward compatibility) and etcd (distributed coordination).
+Enhanced collector that integrates with etcd for distributed coordination and message processing.
 
 **Key Features:**
-- Consumes from Redis topics
+- Consumes from etcd message queue
 - Stores hierarchical data in etcd
-- Maintains PostgreSQL compatibility
+- Stores data in PostgreSQL + TimescaleDB for analytics
 - Real-time status updates
 - Automatic host/GPU registration
 
@@ -333,7 +332,7 @@ The `docker-compose.nexus.yml` file provides a complete environment with:
 
 - **etcd**: Distributed coordination
 - **Redis**: Message queue (backward compatibility)
-- **PostgreSQL**: Persistent storage
+- **PostgreSQL + TimescaleDB**: Time-series analytics and persistent storage
 - **Nexus Collector**: Enhanced data collection
 - **Nexus API**: Multi-protocol API server
 - **Traditional Components**: Streamer and API (for comparison)
@@ -345,7 +344,7 @@ The `docker-compose.nexus.yml` file provides a complete environment with:
 
 ```bash
 # Start infrastructure
-make setup-etcd setup-redis setup-db
+make setup-etcd setup-db
 
 # Build and run Nexus components
 make build-nexus

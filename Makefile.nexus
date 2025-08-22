@@ -111,7 +111,7 @@ logs-nexus-docker: ## Show logs from Nexus Docker services
 	docker-compose -f deployments/docker/docker-compose.nexus.yml logs -f
 
 # Development commands
-dev-nexus: setup-etcd setup-redis setup-db run-nexus-collector run-nexus-api ## Start full Nexus development environment
+dev-nexus: setup-etcd setup-db run-nexus-collector run-nexus-api ## Start full Nexus development environment
 
 # Testing commands
 test-nexus: ## Run tests for Nexus components

@@ -113,7 +113,7 @@ graph TB
     %% Storage Layer
     subgraph "Storage Layer"
         NEXUS["🏛️ Nexus Storage (etcd)<br/>Hierarchical Structure<br/>clusters/hosts/gpus"]
-        POSTGRES["🗃️ PostgreSQL<br/>Persistent Storage<br/>Backup & Analytics"]
+        POSTGRES["🗃️ PostgreSQL + TimescaleDB<br/>Time-series Analytics<br/>Long-term Data Retention"]
     end
 
     %% API Layer
@@ -222,7 +222,7 @@ sequenceDiagram
         Note right of Storage: Store in etcd:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}/gpus/{gpu_id}
         Collector->>Storage: Store telemetry data in Nexus format
         Note right of Storage: Store in etcd:<br/>/telemetry/clusters/{cluster}/hosts/{hostname}/gpus/{gpu_id}/data/{timestamp}
-        Collector->>DB: Store in PostgreSQL (fallback/legacy)
+        Collector->>DB: Store in PostgreSQL (persistent storage)
     end
     
     Collector->>Queue: Acknowledge processed messages
@@ -254,7 +254,7 @@ sequenceDiagram
   - **Message Queue**: Temporary storage for streaming telemetry data
   - **Data Storage**: Persistent hierarchical storage for processed data  
   - **Coordination**: Distributed locks and watches for component coordination
-- **🗃️ PostgreSQL**: Persistent storage for backup and analytics
+- **🗃️ PostgreSQL**: Persistent storage with TimescaleDB for time-series analytics and long-term data retention
 - **🔍 Service Discovery**: etcd-based service registry and health monitoring
 
 ### Recent Architecture Changes
@@ -265,9 +265,15 @@ sequenceDiagram
 - Cleaned up Redis dependencies from `go.mod`
 - Simplified codebase by removing Redis fallback logic
 
-🔄 **Current Message Queue Strategy**:
-1. **Primary**: etcd cluster (distributed, persistent)
-2. **Fallback**: In-memory queue (local development only)
+🔄 **Current Storage Strategy**:
+1. **Message Queue**: etcd cluster (distributed, persistent) with in-memory fallback for development
+2. **Dual Storage Architecture**:
+   - **etcd**: Real-time hierarchical storage for fast API queries and service coordination
+   - **PostgreSQL + TimescaleDB**: Long-term persistent storage for analytics, reporting, and data retention
+
+💡 **Why Dual Storage?**
+- **etcd**: Optimized for real-time queries, service discovery, and distributed coordination
+- **PostgreSQL**: Optimized for complex analytics, time-series queries, and long-term data retention
 
 ## 📊 Complete API Reference
 

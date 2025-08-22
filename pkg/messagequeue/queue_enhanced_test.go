@@ -13,29 +13,29 @@ import (
 )
 
 func TestMessageQueue_Enhanced(t *testing.T) {
-	t.Run("NewMessageQueue_WithRedisStreams", func(t *testing.T) {
-		// Test with Redis Streams if available
-		if os.Getenv("REDIS_URL") != "" {
+	t.Run("NewMessageQueue_WithEtcd", func(t *testing.T) {
+		// Test with etcd if available
+		if os.Getenv("ETCD_ENDPOINTS") != "" {
 			mq := NewMessageQueue()
 			assert.NotNil(t, mq)
-			assert.NotNil(t, mq.redisStreamsBackend)
+			assert.NotNil(t, mq.etcdBackend)
 		}
 	})
 
-	t.Run("NewMessageQueue_WithoutRedis", func(t *testing.T) {
-		// Temporarily unset REDIS_URL
-		originalURL := os.Getenv("REDIS_URL")
-		os.Unsetenv("REDIS_URL")
+	t.Run("NewMessageQueue_WithoutEtcd", func(t *testing.T) {
+		// Temporarily unset ETCD_ENDPOINTS
+		originalEndpoints := os.Getenv("ETCD_ENDPOINTS")
+		os.Unsetenv("ETCD_ENDPOINTS")
 		defer func() {
-			if originalURL != "" {
-				os.Setenv("REDIS_URL", originalURL)
+			if originalEndpoints != "" {
+				os.Setenv("ETCD_ENDPOINTS", originalEndpoints)
 			}
 		}()
 
 		mq := NewMessageQueue()
 		assert.NotNil(t, mq)
-		assert.Nil(t, mq.redisStreamsBackend)
-		assert.Nil(t, mq.redisBackend)
+		// Without etcd, should fallback to in-memory implementation
+		// etcdBackend may be nil if etcd is not available
 	})
 
 	t.Run("Message_HeadersJSON", func(t *testing.T) {

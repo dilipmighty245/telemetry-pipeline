@@ -2,34 +2,32 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
-// TelemetryData represents the telemetry data model for database storage
+// TelemetryData represents the telemetry data model
 type TelemetryData struct {
-	ID         uint      `gorm:"primarykey" json:"id"`
-	Timestamp  time.Time `gorm:"index;not null" json:"timestamp"`
-	MetricName string    `gorm:"index;size:255;not null" json:"metric_name"`
-	GPUID      string    `gorm:"column:gpu_id;index;size:255;not null" json:"gpu_id"`
-	Device     string    `gorm:"size:255" json:"device"`
-	UUID       string    `gorm:"index;size:255;not null" json:"uuid"`
-	ModelName  string    `gorm:"size:255" json:"model_name"`
-	Hostname   string    `gorm:"index;size:255" json:"hostname"`
-	Container  string    `gorm:"size:255" json:"container"`
-	Pod        string    `gorm:"size:255" json:"pod"`
-	Namespace  string    `gorm:"size:255" json:"namespace"`
-	Value      float64   `gorm:"not null" json:"value"`
-	LabelsRaw  string    `gorm:"type:text" json:"labels_raw"`
+	ID         uint      `json:"id"`
+	Timestamp  time.Time `json:"timestamp"`
+	MetricName string    `json:"metric_name"`
+	GPUID      string    `json:"gpu_id"`
+	Device     string    `json:"device"`
+	UUID       string    `json:"uuid"`
+	ModelName  string    `json:"model_name"`
+	Hostname   string    `json:"hostname"`
+	Container  string    `json:"container"`
+	Pod        string    `json:"pod"`
+	Namespace  string    `json:"namespace"`
+	Value      float64   `json:"value"`
+	LabelsRaw  string    `json:"labels_raw"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // GPU represents GPU information for API responses
 type GPU struct {
-	GPUID     string `gorm:"column:gpu_id" json:"gpu_id"`
+	GPUID     string `json:"gpu_id"`
 	UUID      string `json:"uuid"`
-	ModelName string `gorm:"column:model_name" json:"model_name"`
+	ModelName string `json:"model_name"`
 	Hostname  string `json:"hostname"`
 	Device    string `json:"device"`
 }
@@ -64,26 +62,4 @@ type CSVRecord struct {
 	Namespace  string `csv:"namespace"`
 	Value      string `csv:"value"`
 	LabelsRaw  string `csv:"labels_raw"`
-}
-
-// TableName returns the table name for TelemetryData
-func (TelemetryData) TableName() string {
-	return "telemetry_data"
-}
-
-// BeforeCreate will set a UUID rather than numeric ID.
-func (t *TelemetryData) BeforeCreate(tx *gorm.DB) error {
-	if t.CreatedAt.IsZero() {
-		t.CreatedAt = time.Now()
-	}
-	if t.UpdatedAt.IsZero() {
-		t.UpdatedAt = time.Now()
-	}
-	return nil
-}
-
-// BeforeUpdate will update the UpdatedAt timestamp
-func (t *TelemetryData) BeforeUpdate(tx *gorm.DB) error {
-	t.UpdatedAt = time.Now()
-	return nil
 }
