@@ -49,10 +49,20 @@ make k8s-deploy-nexus
 # 3. Check deployment status
 make k8s-status-nexus
 
-# 4. Access the API
+# 4. Access the API (Multiple Options)
+
+# Option A: Port Forward (Development/Testing)
 make k8s-port-forward
 # In another terminal:
 curl http://localhost:8080/api/v1/gpus | jq .
+
+# Option B: Ingress (Production - requires ingress controller)
+# Edit values-nexus.yaml to enable ingress, then:
+# curl https://your-domain.com/api/v1/gpus
+
+# Option C: LoadBalancer (Cloud)
+# Change service type to LoadBalancer in values-nexus.yaml
+# kubectl get svc to get external IP
 
 # 5. Scale components
 STREAMER_INSTANCES=3 COLLECTOR_INSTANCES=3 make k8s-deploy-nexus
@@ -99,7 +109,10 @@ graph LR
 - **🔄 Nexus Streamer**: Reads CSV telemetry data and streams to etcd message queue
 - **⚙️ Nexus Collector**: Consumes messages, processes data, and stores in etcd
 - **🌐 Nexus Gateway**: Multi-protocol API server (REST + GraphQL + WebSocket)
-- **🗄️ etcd**: Distributed message queue and hierarchical data storage
+- **🗄️ etcd**: Distributed message queue and hierarchical data storage (serves as both queue and database)
+  - **Message Queue**: Temporary storage for streaming telemetry data
+  - **Data Storage**: Persistent hierarchical storage for processed data  
+  - **Coordination**: Distributed locks and watches for component coordination
 
 ## 📊 Complete API Reference
 
@@ -446,10 +459,83 @@ kubectl get pods -n telemetry-system
 # View logs
 make k8s-logs-nexus
 kubectl logs -f deployment/telemetry-pipeline-nexus-gateway -n telemetry-system
+```
 
-# Access API via port forwarding
+### Accessing the API in Kubernetes
+
+**Why do we need port-forward?** Kubernetes services run inside the cluster network and aren't directly accessible from your local machine by default.
+
+#### Option 1: Port Forward (Development/Testing)
+```bash
+# Create secure tunnel: localhost:8080 → cluster service:8080
 make k8s-port-forward
-# Then test: curl http://localhost:8080/api/v1/gpus
+
+# Test in another terminal:
+curl http://localhost:8080/api/v1/gpus | jq .
+```
+✅ **Pros**: Simple, secure, works immediately  
+❌ **Cons**: Only for development, temporary, single user
+
+#### Option 2: Ingress (Production)
+```yaml
+# Enable in values-nexus.yaml:
+nexusGateway:
+  ingress:
+    enabled: true
+    hosts:
+      - host: telemetry-api.company.com
+        paths:
+          - path: /
+            pathType: Prefix
+```
+```bash
+# Deploy with ingress:
+make k8s-deploy-nexus
+
+# Access via domain:
+curl https://telemetry-api.company.com/api/v1/gpus
+```
+✅ **Pros**: Production-ready, multiple users, proper DNS  
+❌ **Cons**: Requires ingress controller setup
+
+#### Option 3: LoadBalancer (Cloud)
+```yaml
+# Change in values-nexus.yaml:
+nexusGateway:
+  service:
+    type: LoadBalancer
+```
+```bash
+# Get external IP:
+kubectl get svc telemetry-pipeline-nexus-gateway -n telemetry-system
+
+# Access via external IP:
+curl http://<EXTERNAL_IP>:8080/api/v1/gpus
+```
+✅ **Pros**: Automatic external access  
+❌ **Cons**: Cloud-specific, costs money
+
+#### Option 4: NodePort (Testing)
+```yaml
+# Change in values-nexus.yaml:
+nexusGateway:
+  service:
+    type: NodePort
+```
+```bash
+# Get node IP and port:
+kubectl get nodes -o wide
+kubectl get svc telemetry-pipeline-nexus-gateway -n telemetry-system
+
+# Access via node:
+curl http://<NODE_IP>:<NODE_PORT>/api/v1/gpus
+```
+✅ **Pros**: Works without ingress controller  
+❌ **Cons**: Exposes service on all cluster nodes
+
+### Continued Management
+
+```bash
 
 # Scale deployments
 kubectl scale deployment telemetry-pipeline-nexus-streamer --replicas=5 -n telemetry-system
@@ -639,6 +725,7 @@ make k8s-undeploy-nexus           # Remove from K8s
 - **[API Specification](docs/API_SPECIFICATION.md)** - REST API documentation
 - **[Debugging Guide](docs/DEBUGGING.md)** - Troubleshooting and debugging
 - **[Nexus Integration](docs/NEXUS_INTEGRATION_GUIDE.md)** - Nexus framework details
+- **[etcd Message Queue](docs/ETCD_MESSAGE_QUEUE.md)** - How etcd functions as a message queue
 
 ## 🔒 Security
 
