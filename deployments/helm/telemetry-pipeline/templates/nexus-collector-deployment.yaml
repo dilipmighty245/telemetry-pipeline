@@ -1,0 +1,91 @@
+{{- if .Values.nexusCollector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-collector
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-collector
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.nexusCollector.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nexus-collector
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nexus-collector
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "telemetry-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: nexus-collector
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.registry }}/{{ .Values.nexusCollector.image.repository | default "nexus-collector" }}:{{ .Values.nexusCollector.image.tag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.nexusCollector.image.pullPolicy | default .Values.image.pullPolicy }}
+          env:
+            - name: CLUSTER_ID
+              value: {{ .Values.global.clusterId | quote }}
+            - name: ETCD_ENDPOINTS
+              value: {{ .Values.config.etcd.endpoints | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.nexusCollector.env.LOG_LEVEL | default (.Values.dev.enabled | ternary .Values.dev.logLevel "info") | quote }}
+            - name: ENABLE_NEXUS
+              value: {{ .Values.nexusCollector.env.ENABLE_NEXUS | quote }}
+            - name: BATCH_SIZE
+              value: {{ .Values.nexusCollector.env.BATCH_SIZE | quote }}
+            - name: PROCESSING_INTERVAL
+              value: {{ .Values.nexusCollector.env.PROCESSING_INTERVAL | quote }}
+            - name: COLLECTOR_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            {{- if .Values.dev.enabled }}
+            {{- toYaml .Values.dev.resources | nindent 12 }}
+            {{- else }}
+            {{- toYaml .Values.nexusCollector.resources | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+      {{- with .Values.nexusCollector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusCollector.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusCollector.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -162,6 +162,82 @@ run-nexus-gateway: build-nexus-gateway ## Run Nexus gateway locally (multi-proto
 	LOG_LEVEL=info \
 	./$(BINARY_DIR)/nexus-gateway
 
+# Local scaling targets
+scale-local: ## Scale all components locally (usage: make scale-local INSTANCES=3)
+	@echo "🚀 Scaling pipeline locally with $(INSTANCES) instances of each component"
+	./scripts/scale-local.sh all $(INSTANCES)
+
+scale-streamers: ## Scale streamers locally (usage: make scale-streamers INSTANCES=5)
+	@echo "📤 Scaling streamers to $(STREAMER_INSTANCES) instances"
+	./scripts/scale-local.sh streamer $(STREAMER_INSTANCES)
+
+scale-collectors: ## Scale collectors locally (usage: make scale-collectors INSTANCES=3)
+	@echo "📥 Scaling collectors to $(COLLECTOR_INSTANCES) instances"
+	./scripts/scale-local.sh collector $(COLLECTOR_INSTANCES)
+
+scale-gateways: ## Scale gateways locally (usage: make scale-gateways INSTANCES=2)
+	@echo "🌐 Scaling gateways to $(API_GW_INSTANCES) instances"
+	./scripts/scale-local.sh gateway $(API_GW_INSTANCES)
+
+scale-status: ## Show scaling status
+	./scripts/scale-local.sh status
+
+scale-stop: ## Stop all scaled components
+	./scripts/scale-local.sh stop
+
+scale-logs: ## Follow logs from all scaled components
+	./scripts/scale-local.sh logs
+
+# Nexus Kubernetes deployment targets
+k8s-deploy-nexus: ## Deploy Nexus components to Kubernetes using Helm
+	@echo "🚀 Deploying Nexus telemetry pipeline to Kubernetes..."
+	helm upgrade --install telemetry-pipeline deployments/helm/telemetry-pipeline \
+		--namespace $(NAMESPACE) \
+		--create-namespace \
+		--values deployments/helm/telemetry-pipeline/values-nexus.yaml \
+		--set image.tag=$(VERSION) \
+		--set global.imageRegistry=$(DOCKER_REGISTRY) \
+		--set global.clusterId=$(NAMESPACE) \
+		--set nexusStreamer.replicaCount=$(STREAMER_INSTANCES) \
+		--set nexusCollector.replicaCount=$(COLLECTOR_INSTANCES) \
+		--set nexusGateway.replicaCount=$(API_GW_INSTANCES) \
+		--wait --timeout=10m
+	@echo "✅ Nexus telemetry pipeline deployed successfully"
+
+k8s-undeploy-nexus: ## Undeploy Nexus components from Kubernetes
+	@echo "🗑️  Undeploying Nexus telemetry pipeline from Kubernetes..."
+	helm uninstall telemetry-pipeline --namespace $(NAMESPACE) || true
+	@echo "✅ Nexus telemetry pipeline undeployed"
+
+k8s-status-nexus: ## Show Kubernetes deployment status for Nexus components
+	@echo "📊 Nexus Telemetry Pipeline Status:"
+	@echo ""
+	@echo "Helm Release:"
+	helm status telemetry-pipeline --namespace $(NAMESPACE) || echo "Not deployed"
+	@echo ""
+	@echo "Pods:"
+	kubectl get pods -n $(NAMESPACE) -l app.kubernetes.io/name=telemetry-pipeline || echo "No pods found"
+	@echo ""
+	@echo "Services:"
+	kubectl get svc -n $(NAMESPACE) -l app.kubernetes.io/name=telemetry-pipeline || echo "No services found"
+
+k8s-logs-nexus: ## Follow logs from Nexus components in Kubernetes
+	@echo "📋 Following logs from Nexus components..."
+	kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/name=telemetry-pipeline --all-containers=true -f
+
+k8s-port-forward: ## Port forward to Nexus Gateway in Kubernetes
+	@echo "🔗 Port forwarding to Nexus Gateway (8080 -> 8080)..."
+	kubectl port-forward -n $(NAMESPACE) svc/telemetry-pipeline-nexus-gateway 8080:8080
+
+# Development workflow targets
+dev-docker-build: ## Build Docker images for development
+	@echo "🔨 Building Docker images for development..."
+	DOCKER_REGISTRY=localhost:5000 VERSION=dev make docker-build-nexus
+
+dev-k8s-deploy: ## Deploy to local Kubernetes for development
+	@echo "🚀 Deploying to local Kubernetes for development..."
+	DOCKER_REGISTRY=localhost:5000 VERSION=dev NAMESPACE=telemetry-dev make k8s-deploy-nexus
+
 run-nexus-pipeline: ## Run complete Nexus pipeline (etcd-only, no Redis)
 	@echo "🚀 Starting complete Nexus pipeline (etcd-only)"
 	@echo "This will start all components in the background"
@@ -185,8 +261,17 @@ run-nexus-pipeline: ## Run complete Nexus pipeline (etcd-only, no Redis)
 	@echo "To stop: pkill -f 'nexus-'"
 
 # Docker targets
-docker-build: ## Build Docker images for all services
-	@echo "Building Docker images..."
+docker-build: docker-build-nexus ## Build Docker images (Nexus components)
+
+docker-build-nexus: ## Build Nexus Docker images
+	@echo "Building Nexus Docker images..."
+	docker build -f deployments/docker/Dockerfile.nexus-streamer -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-nexus-streamer:$(VERSION) .
+	docker build -f deployments/docker/Dockerfile.nexus-collector -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-nexus-collector:$(VERSION) .
+	docker build -f deployments/docker/Dockerfile.nexus-gateway -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-nexus-gateway:$(VERSION) .
+	@echo "✅ Nexus Docker images built successfully"
+
+docker-build-legacy: ## Build legacy Docker images (deprecated)
+	@echo "Building legacy Docker images..."
 	docker build -f deployments/docker/Dockerfile.streamer -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-streamer:$(VERSION) .
 	docker build -f deployments/docker/Dockerfile.collector -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-collector:$(VERSION) .
 	docker build -f deployments/docker/Dockerfile.api-gateway -t $(DOCKER_REGISTRY)/$(PROJECT_NAME)-api-gateway:$(VERSION) .

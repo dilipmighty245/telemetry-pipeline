@@ -1,9 +1,9 @@
 apiVersion: v2
 name: telemetry-pipeline
-description: Elastic GPU Telemetry Pipeline with Message Queue
+description: Elastic GPU Telemetry Pipeline with Nexus Framework and etcd Message Queue
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 home: https://github.com/dilipmighty245/telemetry-pipeline
 sources:
   - https://github.com/dilipmighty245/telemetry-pipeline
@@ -16,8 +16,10 @@ keywords:
   - monitoring
   - pipeline
   - kubernetes
+  - nexus
+  - etcd
 dependencies:
-  - name: postgresql
-    version: 12.x.x
+  - name: etcd
+    version: 8.x.x
     repository: https://charts.bitnami.com/bitnami
-    condition: postgresql.enabled
+    condition: etcd.enabled

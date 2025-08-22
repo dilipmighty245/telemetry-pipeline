@@ -1,4 +1,4 @@
-# Multi-stage build for Nexus Collector
+# Multi-stage build for Nexus Streamer
 FROM golang:1.21-alpine AS builder
 
 # Install build dependencies
@@ -19,8 +19,8 @@ COPY . .
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo 'v0.2.0') -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" \
-    -o nexus-collector \
-    ./cmd/nexus-collector
+    -o nexus-streamer \
+    ./cmd/nexus-streamer
 
 # Final stage
 FROM alpine:3.18
@@ -33,11 +33,14 @@ RUN addgroup -g 65534 -S telemetry && \
     adduser -u 65534 -S -G telemetry telemetry
 
 # Create directories
-RUN mkdir -p /app/logs /tmp && \
+RUN mkdir -p /app/data /app/logs /tmp && \
     chown -R telemetry:telemetry /app /tmp
 
 # Copy binary from builder
-COPY --from=builder /app/nexus-collector /app/nexus-collector
+COPY --from=builder /app/nexus-streamer /app/nexus-streamer
+
+# Copy CSV data (if available)
+COPY dcgm_metrics_20250718_134233.csv /app/data/ 2>/dev/null || true
 
 # Set ownership
 RUN chown -R telemetry:telemetry /app
@@ -50,17 +53,17 @@ WORKDIR /app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep nexus-collector || exit 1
+    CMD pgrep nexus-streamer || exit 1
 
 # Expose port (if needed for metrics/health)
-EXPOSE 9091
+EXPOSE 9090
 
 # Set default environment variables
 ENV LOG_LEVEL=info
 ENV CLUSTER_ID=k8s-cluster
-ENV ENABLE_NEXUS=true
-ENV BATCH_SIZE=50
-ENV PROCESSING_INTERVAL=5s
+ENV CSV_FILE=/app/data/dcgm_metrics_20250718_134233.csv
+ENV BATCH_SIZE=100
+ENV STREAM_INTERVAL=1s
 
 # Run the binary
-ENTRYPOINT ["/app/nexus-collector"]
+ENTRYPOINT ["/app/nexus-streamer"]

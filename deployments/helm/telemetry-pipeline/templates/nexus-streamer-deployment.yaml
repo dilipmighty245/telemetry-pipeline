@@ -1,0 +1,111 @@
+{{- if .Values.nexusStreamer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-streamer
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-streamer
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.nexusStreamer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nexus-streamer
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nexus-streamer
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "telemetry-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: nexus-streamer
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.registry }}/{{ .Values.nexusStreamer.image.repository | default "nexus-streamer" }}:{{ .Values.nexusStreamer.image.tag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.nexusStreamer.image.pullPolicy | default .Values.image.pullPolicy }}
+          env:
+            - name: CLUSTER_ID
+              value: {{ .Values.global.clusterId | quote }}
+            - name: ETCD_ENDPOINTS
+              value: {{ .Values.config.etcd.endpoints | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.nexusStreamer.env.LOG_LEVEL | default (.Values.dev.enabled | ternary .Values.dev.logLevel "info") | quote }}
+            - name: CSV_FILE
+              value: {{ .Values.nexusStreamer.env.CSV_FILE | quote }}
+            - name: BATCH_SIZE
+              value: {{ .Values.nexusStreamer.env.BATCH_SIZE | quote }}
+            - name: STREAM_INTERVAL
+              value: {{ .Values.nexusStreamer.env.STREAM_INTERVAL | quote }}
+            - name: STREAMER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            {{- if .Values.dev.enabled }}
+            {{- toYaml .Values.dev.resources | nindent 12 }}
+            {{- else }}
+            {{- toYaml .Values.nexusStreamer.resources | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            {{- if .Values.nexusStreamer.csvData.configMap.enabled }}
+            - name: csv-data
+              mountPath: /data
+              readOnly: true
+            {{- end }}
+            {{- if .Values.nexusStreamer.csvData.persistentVolume.enabled }}
+            - name: csv-data-pv
+              mountPath: /data
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        {{- if .Values.nexusStreamer.csvData.configMap.enabled }}
+        - name: csv-data
+          configMap:
+            name: {{ .Values.nexusStreamer.csvData.configMap.name }}
+        {{- end }}
+        {{- if .Values.nexusStreamer.csvData.persistentVolume.enabled }}
+        - name: csv-data-pv
+          persistentVolumeClaim:
+            claimName: {{ include "telemetry-pipeline.fullname" . }}-csv-data
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+      {{- with .Values.nexusStreamer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusStreamer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusStreamer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-config
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: config
+data:
+  # Cluster configuration
+  cluster.yaml: |
+    id: {{ .Values.config.cluster.id | quote }}
+    region: {{ .Values.config.cluster.region | quote }}
+    environment: {{ .Values.config.cluster.environment | quote }}
+  
+  # etcd configuration
+  etcd.yaml: |
+    endpoints: {{ .Values.config.etcd.endpoints | quote }}
+    dialTimeout: {{ .Values.config.etcd.dialTimeout | quote }}
+    requestTimeout: {{ .Values.config.etcd.requestTimeout | quote }}
+  
+  # Telemetry configuration
+  telemetry.yaml: |
+    retentionDays: {{ .Values.config.telemetry.retentionDays }}
+    batchSize: {{ .Values.config.telemetry.batchSize }}
+    processingInterval: {{ .Values.config.telemetry.processingInterval | quote }}
+    streamingInterval: {{ .Values.config.telemetry.streamingInterval | quote }}
+
+---
+{{- if and .Values.nexusStreamer.enabled .Values.nexusStreamer.csvData.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.nexusStreamer.csvData.configMap.name }}
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: csv-data
+data:
+  # CSV data would be populated here
+  # This is typically done via kubectl create configmap --from-file
+  # or by including the CSV content in the values file
+  README.md: |
+    This ConfigMap should contain the CSV telemetry data.
+    
+    To populate it with your CSV file, run:
+    kubectl create configmap {{ .Values.nexusStreamer.csvData.configMap.name }} \
+      --from-file=dcgm_metrics_20250718_134233.csv=/path/to/your/csv/file.csv \
+      --namespace {{ .Release.Namespace }}
+{{- end }}
