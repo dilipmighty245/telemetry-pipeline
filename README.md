@@ -32,6 +32,9 @@ INSTANCES=2 make scale-local
 curl http://localhost:8080/api/v1/gpus | jq .
 curl http://localhost:8080/health
 
+# 6. Use custom CSV file
+CSV_FILE="path/to/your/data.csv" make run-nexus-streamer
+
 # 6. Check status and logs
 make scale-status
 make scale-logs
@@ -64,10 +67,16 @@ curl http://localhost:8080/api/v1/gpus | jq .
 # Change service type to LoadBalancer in values-nexus.yaml
 # kubectl get svc to get external IP
 
-# 5. Scale components
+# 5. Use custom CSV file (ConfigMap for small files)
+make csv-deploy-configmap CSV_FILE="path/to/your/data.csv"
+
+# 6. Use custom CSV file (PVC for large files)  
+make csv-deploy-pvc CSV_FILE="path/to/your/data.csv" SIZE=5Gi
+
+# 7. Scale components
 STREAMER_INSTANCES=3 COLLECTOR_INSTANCES=3 make k8s-deploy-nexus
 
-# 6. Clean up
+# 8. Clean up
 make k8s-undeploy-nexus
 ```
 
@@ -726,6 +735,7 @@ make k8s-undeploy-nexus           # Remove from K8s
 - **[Debugging Guide](docs/DEBUGGING.md)** - Troubleshooting and debugging
 - **[Nexus Integration](docs/NEXUS_INTEGRATION_GUIDE.md)** - Nexus framework details
 - **[etcd Message Queue](docs/ETCD_MESSAGE_QUEUE.md)** - How etcd functions as a message queue
+- **[Dynamic CSV Handling](docs/DYNAMIC_CSV_HANDLING.md)** - Methods to pass CSV files dynamically
 
 ## 🔒 Security
 
