@@ -116,6 +116,24 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 		LogLevel:        "info",
 	}
 
+	// Parse command line arguments
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--port=") {
+			portStr := strings.TrimPrefix(arg, "--port=")
+			if p, err := strconv.Atoi(portStr); err == nil {
+				config.Port = p
+			}
+		} else if strings.HasPrefix(arg, "--cluster-id=") {
+			config.ClusterID = strings.TrimPrefix(arg, "--cluster-id=")
+		} else if strings.HasPrefix(arg, "--log-level=") {
+			config.LogLevel = strings.TrimPrefix(arg, "--log-level=")
+		} else if arg == "--disable-websocket" {
+			config.EnableWebSocket = false
+		} else if arg == "--disable-cors" {
+			config.EnableCORS = false
+		}
+	}
+
 	// Parse etcd endpoints
 	etcdEndpointsStr := os.Getenv("ETCD_ENDPOINTS")
 	if etcdEndpointsStr == "" {
@@ -123,7 +141,7 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 	}
 	config.EtcdEndpoints = strings.Split(etcdEndpointsStr, ",")
 
-	// Override from environment variables
+	// Override from environment variables (environment variables take precedence over command line)
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			config.Port = p

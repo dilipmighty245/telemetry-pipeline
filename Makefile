@@ -90,11 +90,12 @@ test: ## Run all tests and collect unified coverage
 	@echo "🚀 Running all tests with unified coverage collection..."
 	@echo ""
 	@echo "Step 1: Cleaning previous coverage data..."
-	@rm -f *.out coverage.html coverage-*.html
+	@rm -f *.out coverage.html
+	@rm -f coverage-*.html 2>/dev/null || true
 	@mkdir -p coverage-reports
 	@echo ""
 	@echo "Step 2: Running unit tests with coverage..."
-	go test -v -coverprofile=unit-coverage.out -coverpkg=./... ./...	
+	go test -v -coverprofile=unit-coverage.out -coverpkg=./... ./...
 	@echo ""
 	@echo "Step 3: Running E2E tests with coverage..."
 	@if command -v etcd >/dev/null 2>&1; then \

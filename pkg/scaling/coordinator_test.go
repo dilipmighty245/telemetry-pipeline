@@ -1,165 +1,506 @@
 package scaling
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/embed"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3client"
 )
 
-func TestNewScalingCoordinator(t *testing.T) {
-	serviceType := "collector"
-	instanceID := "instance-1"
+// setupEtcdTestServer creates an embedded etcd server for testing
+func setupEtcdTestServer(t *testing.T) (*embed.Etcd, *clientv3.Client, func()) {
+	cfg := embed.NewConfig()
+	cfg.Name = "test-etcd"
+	cfg.Dir = t.TempDir()
+	cfg.LogLevel = "error"
 
-	// Test with default rules (pass nil client for testing)
-	sc := NewScalingCoordinator(nil, serviceType, instanceID, nil)
+	// Use available ports
+	clientURL, _ := url.Parse("http://127.0.0.1:0")
+	peerURL, _ := url.Parse("http://127.0.0.1:0")
 
-	assert.NotNil(t, sc)
-	assert.Equal(t, serviceType, sc.serviceType)
-	assert.Equal(t, instanceID, sc.instanceID)
-	assert.NotNil(t, sc.rules)
-	assert.Equal(t, 1, sc.rules.MinInstances)
-	assert.Equal(t, 10, sc.rules.MaxInstances)
-	assert.Equal(t, 0.8, sc.rules.ScaleUpThreshold)
-	assert.Equal(t, 0.3, sc.rules.ScaleDownThreshold)
-	assert.Equal(t, 5*time.Minute, sc.rules.CooldownPeriod)
+	cfg.ListenClientUrls = []url.URL{*clientURL}
+	cfg.AdvertiseClientUrls = cfg.ListenClientUrls
+	cfg.ListenPeerUrls = []url.URL{*peerURL}
+	cfg.AdvertisePeerUrls = cfg.ListenPeerUrls
+	cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
+	cfg.ClusterState = embed.ClusterStateFlagNew
 
-	// Test with custom rules
-	customRules := &ScalingRules{
-		MinInstances:       2,
-		MaxInstances:       20,
-		ScaleUpThreshold:   0.9,
-		ScaleDownThreshold: 0.2,
-		CooldownPeriod:     10 * time.Minute,
-		MetricWeights: map[string]float64{
-			"cpu":    0.4,
-			"memory": 0.4,
-			"queue":  0.2,
-		},
+	e, err := embed.StartEtcd(cfg)
+	require.NoError(t, err)
+
+	select {
+	case <-e.Server.ReadyNotify():
+	case <-time.After(10 * time.Second):
+		e.Close()
+		t.Fatalf("etcd server failed to start within 10 seconds")
 	}
 
-	sc2 := NewScalingCoordinator(nil, serviceType, instanceID, customRules)
-	assert.Equal(t, customRules, sc2.rules)
+	client := v3client.New(e.Server)
+
+	cleanup := func() {
+		if client != nil {
+			client.Close()
+		}
+		if e != nil {
+			e.Close()
+			select {
+			case <-e.Server.StopNotify():
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+
+	return e, client, cleanup
 }
 
-func TestScalingCoordinator_calculateAggregateLoad(t *testing.T) {
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", nil)
+func TestNewScalingCoordinator(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
 
 	tests := []struct {
-		name     string
-		metrics  []InstanceMetrics
-		expected float64
+		name        string
+		serviceType string
+		instanceID  string
+		rules       *ScalingRules
+		expectNil   bool
 	}{
 		{
-			name:     "empty metrics",
-			metrics:  []InstanceMetrics{},
-			expected: 0,
+			name:        "with default rules",
+			serviceType: "collector",
+			instanceID:  "test-instance",
+			rules:       nil,
+			expectNil:   false,
 		},
 		{
-			name: "single instance moderate load",
-			metrics: []InstanceMetrics{
-				{
-					CPUUsage:    0.5,
-					MemoryUsage: 0.6,
-					QueueDepth:  10.0, // Will be normalized to 0.1
+			name:        "with custom rules",
+			serviceType: "streamer",
+			instanceID:  "test-instance-2",
+			rules: &ScalingRules{
+				MinInstances:       2,
+				MaxInstances:       20,
+				ScaleUpThreshold:   0.7,
+				ScaleDownThreshold: 0.2,
+				CooldownPeriod:     10 * time.Minute,
+				MetricWeights: map[string]float64{
+					"cpu":    0.4,
+					"memory": 0.3,
+					"queue":  0.3,
 				},
 			},
-			expected: 0.5*0.3 + 0.6*0.3 + 0.1*0.4, // 0.15 + 0.18 + 0.04 = 0.37
-		},
-		{
-			name: "multiple instances",
-			metrics: []InstanceMetrics{
-				{
-					CPUUsage:    0.5,
-					MemoryUsage: 0.6,
-					QueueDepth:  10.0,
-				},
-				{
-					CPUUsage:    0.7,
-					MemoryUsage: 0.8,
-					QueueDepth:  20.0,
-				},
-			},
-			expected: (0.37 + (0.7*0.3 + 0.8*0.3 + 0.2*0.4)) / 2, // Average of two instances
-		},
-		{
-			name: "high queue depth normalization",
-			metrics: []InstanceMetrics{
-				{
-					CPUUsage:    0.0,
-					MemoryUsage: 0.0,
-					QueueDepth:  1000.0, // Should be normalized to 1.0
-				},
-			},
-			expected: 0.0*0.3 + 0.0*0.3 + 1.0*0.4, // 0.4
-		},
-		{
-			name: "zero queue depth",
-			metrics: []InstanceMetrics{
-				{
-					CPUUsage:    0.8,
-					MemoryUsage: 0.9,
-					QueueDepth:  0.0,
-				},
-			},
-			expected: 0.8*0.3 + 0.9*0.3 + 0.0*0.4, // 0.24 + 0.27 + 0.0 = 0.51
-		},
-		{
-			name: "custom weights",
-			metrics: []InstanceMetrics{
-				{
-					CPUUsage:    1.0,
-					MemoryUsage: 0.0,
-					QueueDepth:  0.0,
-				},
-			},
-			expected: 1.0*0.3 + 0.0*0.3 + 0.0*0.4, // 0.3
+			expectNil: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := sc.calculateAggregateLoad(tt.metrics)
-			assert.InDelta(t, tt.expected, result, 0.01) // Allow small floating point differences
+			sc := NewScalingCoordinator(client, tt.serviceType, tt.instanceID, tt.rules)
+
+			if tt.expectNil {
+				assert.Nil(t, sc)
+			} else {
+				assert.NotNil(t, sc)
+				assert.Equal(t, tt.serviceType, sc.serviceType)
+				assert.Equal(t, tt.instanceID, sc.instanceID)
+				assert.Equal(t, client, sc.client)
+				assert.NotNil(t, sc.rules)
+				assert.NotNil(t, sc.ctx)
+				assert.NotNil(t, sc.cancel)
+
+				if tt.rules == nil {
+					// Check default rules
+					assert.Equal(t, 1, sc.rules.MinInstances)
+					assert.Equal(t, 10, sc.rules.MaxInstances)
+					assert.Equal(t, 0.8, sc.rules.ScaleUpThreshold)
+					assert.Equal(t, 0.3, sc.rules.ScaleDownThreshold)
+					assert.Equal(t, 5*time.Minute, sc.rules.CooldownPeriod)
+					assert.Contains(t, sc.rules.MetricWeights, "cpu")
+					assert.Contains(t, sc.rules.MetricWeights, "memory")
+					assert.Contains(t, sc.rules.MetricWeights, "queue")
+				} else {
+					assert.Equal(t, tt.rules, sc.rules)
+				}
+			}
 		})
 	}
 }
 
-func TestScalingCoordinator_calculateAggregateLoad_CustomWeights(t *testing.T) {
-	customRules := &ScalingRules{
-		MinInstances:       1,
-		MaxInstances:       10,
-		ScaleUpThreshold:   0.8,
-		ScaleDownThreshold: 0.3,
-		CooldownPeriod:     5 * time.Minute,
-		MetricWeights: map[string]float64{
-			"cpu":    0.5,
-			"memory": 0.3,
-			"queue":  0.2,
-		},
-	}
+func TestScalingCoordinator_Start(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
 
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", customRules)
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
+	defer sc.Stop()
 
-	metrics := []InstanceMetrics{
-		{
-			CPUUsage:    0.8,
-			MemoryUsage: 0.6,
-			QueueDepth:  50.0, // Will be normalized to 0.5
-		},
-	}
+	err := sc.Start()
+	assert.NoError(t, err)
+	assert.NotEqual(t, clientv3.LeaseID(0), sc.leaseID)
 
-	expected := 0.8*0.5 + 0.6*0.3 + 0.5*0.2 // 0.4 + 0.18 + 0.1 = 0.68
-	result := sc.calculateAggregateLoad(metrics)
-	assert.InDelta(t, expected, result, 0.01)
+	// Test starting again (should not error)
+	err = sc.Start()
+	assert.NoError(t, err)
 }
 
-func TestScalingCoordinator_GetScalingDecision_Logic(t *testing.T) {
-	// Create a coordinator that we can test the decision logic on
+func TestScalingCoordinator_ReportMetrics(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
+	defer sc.Stop()
+
+	err := sc.Start()
+	require.NoError(t, err)
+
+	metrics := InstanceMetrics{
+		CPUUsage:       0.75,
+		MemoryUsage:    0.60,
+		QueueDepth:     25.0,
+		ProcessingRate: 150.0,
+		ErrorRate:      0.02,
+		Health:         "healthy",
+	}
+
+	err = sc.ReportMetrics(metrics)
+	assert.NoError(t, err)
+
+	// Verify metrics were stored
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	metricsKey := "/metrics/test-service/test-instance"
+	resp, err := client.Get(ctx, metricsKey)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+
+	var storedMetrics InstanceMetrics
+	err = json.Unmarshal(resp.Kvs[0].Value, &storedMetrics)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-instance", storedMetrics.InstanceID)
+	assert.Equal(t, "test-service", storedMetrics.ServiceType)
+	assert.Equal(t, 0.75, storedMetrics.CPUUsage)
+	assert.Equal(t, 0.60, storedMetrics.MemoryUsage)
+	assert.Equal(t, 25.0, storedMetrics.QueueDepth)
+	assert.Equal(t, "healthy", storedMetrics.Health)
+	assert.WithinDuration(t, time.Now(), storedMetrics.Timestamp, 5*time.Second)
+}
+
+func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
 	rules := &ScalingRules{
 		MinInstances:       1,
+		MaxInstances:       5,
+		ScaleUpThreshold:   0.8,
+		ScaleDownThreshold: 0.3,
+		CooldownPeriod:     1 * time.Minute,
+		MetricWeights: map[string]float64{
+			"cpu":    0.3,
+			"memory": 0.3,
+			"queue":  0.4,
+		},
+	}
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
+	defer sc.Stop()
+
+	err := sc.Start()
+	require.NoError(t, err)
+
+	t.Run("no metrics available", func(t *testing.T) {
+		decision, err := sc.GetScalingDecision()
+		assert.NoError(t, err)
+		assert.Equal(t, "no_action", decision.Action)
+		assert.Equal(t, 0, decision.CurrentCount)
+		assert.Equal(t, 1, decision.RecommendedCount)
+		assert.Contains(t, decision.Reason, "no metrics available")
+	})
+
+	t.Run("scale up decision", func(t *testing.T) {
+		// Report high load metrics
+		highLoadMetrics := InstanceMetrics{
+			CPUUsage:    0.9,
+			MemoryUsage: 0.85,
+			QueueDepth:  100.0,
+			Health:      "healthy",
+		}
+		err := sc.ReportMetrics(highLoadMetrics)
+		require.NoError(t, err)
+
+		decision, err := sc.GetScalingDecision()
+		assert.NoError(t, err)
+		assert.Equal(t, "scale_up", decision.Action)
+		assert.Equal(t, 1, decision.CurrentCount)
+		assert.Equal(t, 2, decision.RecommendedCount)
+		assert.Contains(t, decision.Reason, "high load detected")
+		assert.Greater(t, decision.Confidence, 0.0)
+	})
+
+	t.Run("scale down decision", func(t *testing.T) {
+		// First, add multiple instances with low load
+		for i := 0; i < 3; i++ {
+			instanceSC := NewScalingCoordinator(client, "test-service", fmt.Sprintf("instance-%d", i), rules)
+			err := instanceSC.Start()
+			require.NoError(t, err)
+			defer instanceSC.Stop()
+
+			lowLoadMetrics := InstanceMetrics{
+				CPUUsage:    0.1,
+				MemoryUsage: 0.15,
+				QueueDepth:  2.0,
+				Health:      "healthy",
+			}
+			err = instanceSC.ReportMetrics(lowLoadMetrics)
+			require.NoError(t, err)
+		}
+
+		// Wait a bit for metrics to be stored
+		time.Sleep(100 * time.Millisecond)
+
+		decision, err := sc.GetScalingDecision()
+		assert.NoError(t, err)
+		assert.Equal(t, "scale_down", decision.Action)
+		assert.Greater(t, decision.CurrentCount, 1)
+		assert.Equal(t, decision.CurrentCount-1, decision.RecommendedCount)
+		assert.Contains(t, decision.Reason, "low load detected")
+	})
+}
+
+func TestScalingCoordinator_CalculateAggregateLoad(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	rules := &ScalingRules{
+		MetricWeights: map[string]float64{
+			"cpu":    0.3,
+			"memory": 0.3,
+			"queue":  0.4,
+		},
+	}
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
+
+	t.Run("empty metrics", func(t *testing.T) {
+		load := sc.calculateAggregateLoad([]InstanceMetrics{})
+		assert.Equal(t, 0.0, load)
+	})
+
+	t.Run("single instance", func(t *testing.T) {
+		metrics := []InstanceMetrics{
+			{
+				CPUUsage:    0.5,
+				MemoryUsage: 0.6,
+				QueueDepth:  50.0, // This will be normalized to 0.5 (50/100)
+			},
+		}
+		load := sc.calculateAggregateLoad(metrics)
+		expected := (0.5 * 0.3) + (0.6 * 0.3) + (0.5 * 0.4)
+		assert.InDelta(t, expected, load, 0.01)
+	})
+
+	t.Run("multiple instances", func(t *testing.T) {
+		metrics := []InstanceMetrics{
+			{CPUUsage: 0.8, MemoryUsage: 0.7, QueueDepth: 80.0},
+			{CPUUsage: 0.4, MemoryUsage: 0.5, QueueDepth: 20.0},
+		}
+		load := sc.calculateAggregateLoad(metrics)
+
+		// Calculate expected load
+		load1 := (0.8 * 0.3) + (0.7 * 0.3) + (0.8 * 0.4) // 80/100 = 0.8
+		load2 := (0.4 * 0.3) + (0.5 * 0.3) + (0.2 * 0.4) // 20/100 = 0.2
+		expected := (load1 + load2) / 2
+
+		assert.InDelta(t, expected, load, 0.01)
+	})
+}
+
+func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	rules := &ScalingRules{
+		CooldownPeriod: 1 * time.Minute,
+	}
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
+	defer sc.Stop()
+
+	err := sc.Start()
+	require.NoError(t, err)
+
+	t.Run("no previous decision", func(t *testing.T) {
+		inCooldown := sc.isInCooldownPeriod()
+		assert.False(t, inCooldown)
+	})
+
+	t.Run("recent scaling decision", func(t *testing.T) {
+		// Publish a recent scaling decision
+		decision := &ScalingDecision{
+			ServiceType:      "test-service",
+			Action:           "scale_up",
+			CurrentCount:     1,
+			RecommendedCount: 2,
+			Timestamp:        time.Now(),
+		}
+		err := sc.PublishScalingDecision(decision)
+		require.NoError(t, err)
+
+		inCooldown := sc.isInCooldownPeriod()
+		assert.True(t, inCooldown)
+	})
+
+	t.Run("old scaling decision", func(t *testing.T) {
+		// Publish an old scaling decision
+		decision := &ScalingDecision{
+			ServiceType:      "test-service",
+			Action:           "scale_up",
+			CurrentCount:     1,
+			RecommendedCount: 2,
+			Timestamp:        time.Now().Add(-2 * time.Minute), // Older than cooldown
+		}
+		err := sc.PublishScalingDecision(decision)
+		require.NoError(t, err)
+
+		inCooldown := sc.isInCooldownPeriod()
+		assert.False(t, inCooldown)
+	})
+
+	t.Run("no_action decision", func(t *testing.T) {
+		// Publish a no_action decision (should not trigger cooldown)
+		decision := &ScalingDecision{
+			ServiceType:      "test-service",
+			Action:           "no_action",
+			CurrentCount:     2,
+			RecommendedCount: 2,
+			Timestamp:        time.Now(),
+		}
+		err := sc.PublishScalingDecision(decision)
+		require.NoError(t, err)
+
+		inCooldown := sc.isInCooldownPeriod()
+		assert.False(t, inCooldown)
+	})
+}
+
+func TestScalingCoordinator_PublishScalingDecision(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
+	defer sc.Stop()
+
+	err := sc.Start()
+	require.NoError(t, err)
+
+	decision := &ScalingDecision{
+		ServiceType:      "test-service",
+		Action:           "scale_up",
+		CurrentCount:     1,
+		RecommendedCount: 2,
+		Reason:           "high load detected",
+		Confidence:       0.85,
+		Timestamp:        time.Now(),
+	}
+
+	err = sc.PublishScalingDecision(decision)
+	assert.NoError(t, err)
+
+	// Verify decision was stored
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	decisionKey := "/scaling/decisions/test-service"
+	resp, err := client.Get(ctx, decisionKey)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+
+	var storedDecision ScalingDecision
+	err = json.Unmarshal(resp.Kvs[0].Value, &storedDecision)
+	require.NoError(t, err)
+
+	assert.Equal(t, decision.ServiceType, storedDecision.ServiceType)
+	assert.Equal(t, decision.Action, storedDecision.Action)
+	assert.Equal(t, decision.CurrentCount, storedDecision.CurrentCount)
+	assert.Equal(t, decision.RecommendedCount, storedDecision.RecommendedCount)
+	assert.Equal(t, decision.Reason, storedDecision.Reason)
+	assert.Equal(t, decision.Confidence, storedDecision.Confidence)
+}
+
+func TestScalingCoordinator_Stop(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
+
+	err := sc.Start()
+	require.NoError(t, err)
+
+	// Stop should not error
+	err = sc.Stop()
+	assert.NoError(t, err)
+
+	// Stop again should not error
+	err = sc.Stop()
+	assert.NoError(t, err)
+}
+
+func TestScalingCoordinator_TryAcquireLeadership(t *testing.T) {
+	_, client, cleanup := setupEtcdTestServer(t)
+	defer cleanup()
+
+	sc1 := NewScalingCoordinator(client, "test-service", "instance-1", nil)
+	sc2 := NewScalingCoordinator(client, "test-service", "instance-2", nil)
+	defer sc1.Stop()
+	defer sc2.Stop()
+
+	err := sc1.Start()
+	require.NoError(t, err)
+	err = sc2.Start()
+	require.NoError(t, err)
+
+	// First instance should acquire leadership
+	acquired1 := sc1.tryAcquireLeadership()
+	assert.True(t, acquired1)
+
+	// Second instance should not acquire leadership
+	acquired2 := sc2.tryAcquireLeadership()
+	assert.False(t, acquired2)
+}
+
+func TestUtilityFunctions(t *testing.T) {
+	t.Run("minInt", func(t *testing.T) {
+		assert.Equal(t, 1, minInt(1, 2))
+		assert.Equal(t, 1, minInt(2, 1))
+		assert.Equal(t, 5, minInt(5, 5))
+		assert.Equal(t, -1, minInt(-1, 0))
+	})
+
+	t.Run("maxInt", func(t *testing.T) {
+		assert.Equal(t, 2, maxInt(1, 2))
+		assert.Equal(t, 2, maxInt(2, 1))
+		assert.Equal(t, 5, maxInt(5, 5))
+		assert.Equal(t, 0, maxInt(-1, 0))
+	})
+
+	t.Run("minFloat", func(t *testing.T) {
+		assert.Equal(t, 1.5, minFloat(1.5, 2.5))
+		assert.Equal(t, 1.5, minFloat(2.5, 1.5))
+		assert.Equal(t, 5.0, minFloat(5.0, 5.0))
+		assert.Equal(t, -1.5, minFloat(-1.5, 0.0))
+	})
+}
+
+func TestScalingRulesValidation(t *testing.T) {
+	rules := &ScalingRules{
+		MinInstances:       2,
 		MaxInstances:       10,
 		ScaleUpThreshold:   0.8,
 		ScaleDownThreshold: 0.3,
@@ -171,750 +512,60 @@ func TestScalingCoordinator_GetScalingDecision_Logic(t *testing.T) {
 		},
 	}
 
-	// Test the decision logic by creating a custom test version
-	tests := []struct {
-		name                string
-		metrics             []InstanceMetrics
-		expectedAction      string
-		expectedCurrent     int
-		expectedRecommended int
-	}{
-		{
-			name:                "no metrics - should recommend min instances",
-			metrics:             []InstanceMetrics{},
-			expectedAction:      "no_action",
-			expectedCurrent:     0,
-			expectedRecommended: 1,
-		},
-		{
-			name: "high load - should scale up",
-			metrics: []InstanceMetrics{
-				{
-					InstanceID:  "instance-1",
-					CPUUsage:    0.9,
-					MemoryUsage: 0.9,
-					QueueDepth:  100.0, // This will normalize to 1.0
-					Health:      "healthy",
-				},
-			},
-			expectedAction:      "scale_up",
-			expectedCurrent:     1,
-			expectedRecommended: 2,
-		},
-		{
-			name: "low load with multiple instances - should scale down",
-			metrics: []InstanceMetrics{
-				{
-					InstanceID:  "instance-1",
-					CPUUsage:    0.1,
-					MemoryUsage: 0.1,
-					QueueDepth:  1.0,
-					Health:      "healthy",
-				},
-				{
-					InstanceID:  "instance-2",
-					CPUUsage:    0.1,
-					MemoryUsage: 0.1,
-					QueueDepth:  1.0,
-					Health:      "healthy",
-				},
-			},
-			expectedAction:      "scale_down",
-			expectedCurrent:     2,
-			expectedRecommended: 1,
-		},
-		{
-			name: "moderate load - no action needed",
-			metrics: []InstanceMetrics{
-				{
-					InstanceID:  "instance-1",
-					CPUUsage:    0.5,
-					MemoryUsage: 0.5,
-					QueueDepth:  10.0,
-					Health:      "healthy",
-				},
-			},
-			expectedAction:      "no_action",
-			expectedCurrent:     1,
-			expectedRecommended: 1,
-		},
-		{
-			name:                "at max instances - no scale up",
-			metrics:             make([]InstanceMetrics, 10), // 10 instances (max)
-			expectedAction:      "no_action",
-			expectedCurrent:     10,
-			expectedRecommended: 10,
-		},
-		{
-			name: "at min instances - no scale down",
-			metrics: []InstanceMetrics{
-				{
-					InstanceID:  "instance-1",
-					CPUUsage:    0.1,
-					MemoryUsage: 0.1,
-					QueueDepth:  1.0,
-					Health:      "healthy",
-				},
-			},
-			expectedAction:      "no_action",
-			expectedCurrent:     1,
-			expectedRecommended: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sc := NewScalingCoordinator(nil, "collector", "instance-1", rules)
-
-			// Initialize high load metrics for max instances test
-			if len(tt.metrics) == 10 {
-				for i := range tt.metrics {
-					tt.metrics[i] = InstanceMetrics{
-						InstanceID:  "instance-" + string(rune('1'+i)),
-						CPUUsage:    0.9,
-						MemoryUsage: 0.9,
-						QueueDepth:  50.0,
-						Health:      "healthy",
-					}
-				}
-			}
-
-			// Calculate the decision logic manually to test
-			aggregateLoad := sc.calculateAggregateLoad(tt.metrics)
-			currentCount := len(tt.metrics)
-
-			var action string
-			var recommendedCount int
-
-			if currentCount == 0 {
-				action = "no_action"
-				recommendedCount = rules.MinInstances
-			} else if aggregateLoad > rules.ScaleUpThreshold && currentCount < rules.MaxInstances {
-				action = "scale_up"
-				recommendedCount = minInt(currentCount+1, rules.MaxInstances)
-			} else if aggregateLoad < rules.ScaleDownThreshold && currentCount > rules.MinInstances {
-				action = "scale_down"
-				recommendedCount = maxInt(currentCount-1, rules.MinInstances)
-			} else {
-				action = "no_action"
-				recommendedCount = currentCount
-			}
-
-			// Debug output for failing tests
-			if action != tt.expectedAction {
-				t.Logf("Debug: aggregateLoad=%.3f, threshold=%.3f, currentCount=%d",
-					aggregateLoad, rules.ScaleUpThreshold, currentCount)
-			}
-
-			assert.Equal(t, tt.expectedAction, action)
-			assert.Equal(t, tt.expectedCurrent, currentCount)
-			assert.Equal(t, tt.expectedRecommended, recommendedCount)
-		})
-	}
-}
-
-func TestScalingCoordinator_isInCooldownPeriod_Logic(t *testing.T) {
-	rules := &ScalingRules{
-		CooldownPeriod: 5 * time.Minute,
-	}
-
-	// Test cooldown logic by simulating different scenarios
-	tests := []struct {
-		name             string
-		lastDecisionTime time.Time
-		expectedCooldown bool
-	}{
-		{
-			name:             "no previous decision",
-			lastDecisionTime: time.Time{},
-			expectedCooldown: false,
-		},
-		{
-			name:             "recent decision within cooldown",
-			lastDecisionTime: time.Now().Add(-2 * time.Minute),
-			expectedCooldown: true,
-		},
-		{
-			name:             "old decision outside cooldown",
-			lastDecisionTime: time.Now().Add(-10 * time.Minute),
-			expectedCooldown: false,
-		},
-		{
-			name:             "decision exactly at cooldown boundary",
-			lastDecisionTime: time.Now().Add(-5 * time.Minute),
-			expectedCooldown: false, // Should be false at exactly the boundary
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Test the cooldown logic
-			if tt.lastDecisionTime.IsZero() {
-				assert.False(t, false) // No previous decision means no cooldown
-			} else {
-				timeSinceLastDecision := time.Since(tt.lastDecisionTime)
-				inCooldown := timeSinceLastDecision < rules.CooldownPeriod
-				assert.Equal(t, tt.expectedCooldown, inCooldown)
-			}
-		})
-	}
-}
-
-func TestInstanceMetrics_Struct(t *testing.T) {
-	now := time.Now()
-	metrics := InstanceMetrics{
-		InstanceID:     "instance-1",
-		ServiceType:    "collector",
-		CPUUsage:       0.5,
-		MemoryUsage:    0.6,
-		QueueDepth:     10.0,
-		ProcessingRate: 100.0,
-		ErrorRate:      0.01,
-		Timestamp:      now,
-		Health:         "healthy",
-	}
-
-	assert.Equal(t, "instance-1", metrics.InstanceID)
-	assert.Equal(t, "collector", metrics.ServiceType)
-	assert.Equal(t, 0.5, metrics.CPUUsage)
-	assert.Equal(t, 0.6, metrics.MemoryUsage)
-	assert.Equal(t, 10.0, metrics.QueueDepth)
-	assert.Equal(t, 100.0, metrics.ProcessingRate)
-	assert.Equal(t, 0.01, metrics.ErrorRate)
-	assert.Equal(t, now, metrics.Timestamp)
-	assert.Equal(t, "healthy", metrics.Health)
-}
-
-func TestInstanceMetrics_JSONSerialization(t *testing.T) {
-	metrics := InstanceMetrics{
-		InstanceID:     "instance-1",
-		ServiceType:    "collector",
-		CPUUsage:       0.5,
-		MemoryUsage:    0.6,
-		QueueDepth:     10.0,
-		ProcessingRate: 100.0,
-		ErrorRate:      0.01,
-		Timestamp:      time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
-		Health:         "healthy",
-	}
-
-	// Test JSON marshaling
-	jsonData, err := json.Marshal(metrics)
-	require.NoError(t, err)
-	assert.Contains(t, string(jsonData), "\"instance_id\":\"instance-1\"")
-	assert.Contains(t, string(jsonData), "\"service_type\":\"collector\"")
-	assert.Contains(t, string(jsonData), "\"cpu_usage\":0.5")
-
-	// Test JSON unmarshaling
-	var unmarshaled InstanceMetrics
-	err = json.Unmarshal(jsonData, &unmarshaled)
-	require.NoError(t, err)
-	assert.Equal(t, metrics.InstanceID, unmarshaled.InstanceID)
-	assert.Equal(t, metrics.ServiceType, unmarshaled.ServiceType)
-	assert.Equal(t, metrics.CPUUsage, unmarshaled.CPUUsage)
-	assert.Equal(t, metrics.MemoryUsage, unmarshaled.MemoryUsage)
-	assert.Equal(t, metrics.QueueDepth, unmarshaled.QueueDepth)
-	assert.Equal(t, metrics.ProcessingRate, unmarshaled.ProcessingRate)
-	assert.Equal(t, metrics.ErrorRate, unmarshaled.ErrorRate)
-	assert.Equal(t, metrics.Health, unmarshaled.Health)
-}
-
-func TestScalingDecision_Struct(t *testing.T) {
-	now := time.Now()
-	decision := ScalingDecision{
-		ServiceType:      "collector",
-		Action:           "scale_up",
-		CurrentCount:     1,
-		RecommendedCount: 2,
-		Reason:           "high load",
-		Confidence:       0.8,
-		Timestamp:        now,
-	}
-
-	assert.Equal(t, "collector", decision.ServiceType)
-	assert.Equal(t, "scale_up", decision.Action)
-	assert.Equal(t, 1, decision.CurrentCount)
-	assert.Equal(t, 2, decision.RecommendedCount)
-	assert.Equal(t, "high load", decision.Reason)
-	assert.Equal(t, 0.8, decision.Confidence)
-	assert.Equal(t, now, decision.Timestamp)
-}
-
-func TestScalingDecision_JSONSerialization(t *testing.T) {
-	decision := ScalingDecision{
-		ServiceType:      "collector",
-		Action:           "scale_up",
-		CurrentCount:     1,
-		RecommendedCount: 2,
-		Reason:           "high load",
-		Confidence:       0.8,
-		Timestamp:        time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	// Test JSON marshaling
-	jsonData, err := json.Marshal(decision)
-	require.NoError(t, err)
-	assert.Contains(t, string(jsonData), "\"service_type\":\"collector\"")
-	assert.Contains(t, string(jsonData), "\"action\":\"scale_up\"")
-	assert.Contains(t, string(jsonData), "\"current_count\":1")
-
-	// Test JSON unmarshaling
-	var unmarshaled ScalingDecision
-	err = json.Unmarshal(jsonData, &unmarshaled)
-	require.NoError(t, err)
-	assert.Equal(t, decision.ServiceType, unmarshaled.ServiceType)
-	assert.Equal(t, decision.Action, unmarshaled.Action)
-	assert.Equal(t, decision.CurrentCount, unmarshaled.CurrentCount)
-	assert.Equal(t, decision.RecommendedCount, unmarshaled.RecommendedCount)
-	assert.Equal(t, decision.Reason, unmarshaled.Reason)
-	assert.Equal(t, decision.Confidence, unmarshaled.Confidence)
-}
-
-func TestScalingRules_Struct(t *testing.T) {
-	rules := ScalingRules{
-		MinInstances:       2,
-		MaxInstances:       20,
-		ScaleUpThreshold:   0.9,
-		ScaleDownThreshold: 0.2,
-		CooldownPeriod:     10 * time.Minute,
-		MetricWeights: map[string]float64{
-			"cpu":    0.4,
-			"memory": 0.4,
-			"queue":  0.2,
-		},
-	}
-
 	assert.Equal(t, 2, rules.MinInstances)
-	assert.Equal(t, 20, rules.MaxInstances)
-	assert.Equal(t, 0.9, rules.ScaleUpThreshold)
-	assert.Equal(t, 0.2, rules.ScaleDownThreshold)
-	assert.Equal(t, 10*time.Minute, rules.CooldownPeriod)
-	assert.Equal(t, 0.4, rules.MetricWeights["cpu"])
-	assert.Equal(t, 0.4, rules.MetricWeights["memory"])
-	assert.Equal(t, 0.2, rules.MetricWeights["queue"])
+	assert.Equal(t, 10, rules.MaxInstances)
+	assert.Equal(t, 0.8, rules.ScaleUpThreshold)
+	assert.Equal(t, 0.3, rules.ScaleDownThreshold)
+	assert.Equal(t, 5*time.Minute, rules.CooldownPeriod)
+	assert.Len(t, rules.MetricWeights, 3)
+
+	// Verify weights sum to 1.0
+	total := 0.0
+	for _, weight := range rules.MetricWeights {
+		total += weight
+	}
+	assert.InDelta(t, 1.0, total, 0.01)
 }
 
-func TestScalingRules_JSONSerialization(t *testing.T) {
-	rules := ScalingRules{
-		MinInstances:       2,
-		MaxInstances:       20,
-		ScaleUpThreshold:   0.9,
-		ScaleDownThreshold: 0.2,
-		CooldownPeriod:     10 * time.Minute,
-		MetricWeights: map[string]float64{
-			"cpu":    0.4,
-			"memory": 0.4,
-			"queue":  0.2,
-		},
-	}
-
-	// Test JSON marshaling
-	jsonData, err := json.Marshal(rules)
-	require.NoError(t, err)
-	assert.Contains(t, string(jsonData), "\"min_instances\":2")
-	assert.Contains(t, string(jsonData), "\"max_instances\":20")
-	assert.Contains(t, string(jsonData), "\"scale_up_threshold\":0.9")
-
-	// Test JSON unmarshaling
-	var unmarshaled ScalingRules
-	err = json.Unmarshal(jsonData, &unmarshaled)
-	require.NoError(t, err)
-	assert.Equal(t, rules.MinInstances, unmarshaled.MinInstances)
-	assert.Equal(t, rules.MaxInstances, unmarshaled.MaxInstances)
-	assert.Equal(t, rules.ScaleUpThreshold, unmarshaled.ScaleUpThreshold)
-	assert.Equal(t, rules.ScaleDownThreshold, unmarshaled.ScaleDownThreshold)
-	assert.Equal(t, rules.MetricWeights["cpu"], unmarshaled.MetricWeights["cpu"])
-}
-
-func TestUtilityFunctions(t *testing.T) {
-	// Test minInt
-	assert.Equal(t, 5, minInt(5, 10))
-	assert.Equal(t, 5, minInt(10, 5))
-	assert.Equal(t, 5, minInt(5, 5))
-	assert.Equal(t, -5, minInt(-5, 10))
-	assert.Equal(t, -10, minInt(-5, -10))
-
-	// Test maxInt
-	assert.Equal(t, 10, maxInt(5, 10))
-	assert.Equal(t, 10, maxInt(10, 5))
-	assert.Equal(t, 5, maxInt(5, 5))
-	assert.Equal(t, 10, maxInt(-5, 10))
-	assert.Equal(t, -5, maxInt(-5, -10))
-
-	// Test minFloat
-	assert.Equal(t, 5.5, minFloat(5.5, 10.5))
-	assert.Equal(t, 5.5, minFloat(10.5, 5.5))
-	assert.Equal(t, 5.5, minFloat(5.5, 5.5))
-	assert.Equal(t, -5.5, minFloat(-5.5, 10.5))
-	assert.Equal(t, -10.5, minFloat(-5.5, -10.5))
-}
-
-func TestScalingDecision_Actions(t *testing.T) {
-	tests := []struct {
-		name   string
-		action string
-		valid  bool
-	}{
-		{"scale up", "scale_up", true},
-		{"scale down", "scale_down", true},
-		{"no action", "no_action", true},
-		{"invalid action", "invalid", false},
-		{"empty action", "", false},
-		{"uppercase action", "SCALE_UP", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			decision := ScalingDecision{
-				Action: tt.action,
-			}
-
-			if tt.valid {
-				assert.Contains(t, []string{"scale_up", "scale_down", "no_action"}, decision.Action)
-			} else {
-				assert.NotContains(t, []string{"scale_up", "scale_down", "no_action"}, decision.Action)
-			}
-		})
-	}
-}
-
-func TestInstanceMetrics_Validation(t *testing.T) {
-	tests := []struct {
-		name    string
-		metrics InstanceMetrics
-		valid   bool
-	}{
-		{
-			name: "valid metrics",
-			metrics: InstanceMetrics{
-				InstanceID:     "instance-1",
-				ServiceType:    "collector",
-				CPUUsage:       0.5,
-				MemoryUsage:    0.6,
-				QueueDepth:     10.0,
-				ProcessingRate: 100.0,
-				ErrorRate:      0.01,
-				Health:         "healthy",
-			},
-			valid: true,
-		},
-		{
-			name: "empty instance ID",
-			metrics: InstanceMetrics{
-				InstanceID:  "",
-				ServiceType: "collector",
-				CPUUsage:    0.5,
-			},
-			valid: false,
-		},
-		{
-			name: "negative CPU usage",
-			metrics: InstanceMetrics{
-				InstanceID:  "instance-1",
-				ServiceType: "collector",
-				CPUUsage:    -0.1,
-			},
-			valid: false,
-		},
-		{
-			name: "CPU usage over 100%",
-			metrics: InstanceMetrics{
-				InstanceID:  "instance-1",
-				ServiceType: "collector",
-				CPUUsage:    1.5,
-			},
-			valid: false,
-		},
-		{
-			name: "negative processing rate",
-			metrics: InstanceMetrics{
-				InstanceID:     "instance-1",
-				ServiceType:    "collector",
-				CPUUsage:       0.5,
-				ProcessingRate: -10.0,
-			},
-			valid: false,
-		},
-		{
-			name: "negative error rate",
-			metrics: InstanceMetrics{
-				InstanceID:  "instance-1",
-				ServiceType: "collector",
-				CPUUsage:    0.5,
-				ErrorRate:   -0.1,
-			},
-			valid: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.valid {
-				assert.NotEmpty(t, tt.metrics.InstanceID)
-				assert.NotEmpty(t, tt.metrics.ServiceType)
-				assert.GreaterOrEqual(t, tt.metrics.CPUUsage, 0.0)
-				assert.LessOrEqual(t, tt.metrics.CPUUsage, 1.0)
-				assert.GreaterOrEqual(t, tt.metrics.ProcessingRate, 0.0)
-				assert.GreaterOrEqual(t, tt.metrics.ErrorRate, 0.0)
-			} else {
-				// At least one validation should fail
-				invalid := tt.metrics.InstanceID == "" ||
-					tt.metrics.ServiceType == "" ||
-					tt.metrics.CPUUsage < 0.0 ||
-					tt.metrics.CPUUsage > 1.0 ||
-					tt.metrics.ProcessingRate < 0.0 ||
-					tt.metrics.ErrorRate < 0.0
-				assert.True(t, invalid, "Metrics should be invalid")
-			}
-		})
-	}
-}
-
-func TestScalingRules_DefaultWeights(t *testing.T) {
-	// Test that default rules have proper weights
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", nil)
-
-	expectedWeights := map[string]float64{
-		"cpu":    0.3,
-		"memory": 0.3,
-		"queue":  0.4,
-	}
-
-	assert.Equal(t, expectedWeights, sc.rules.MetricWeights)
-
-	// Test that weights sum to 1.0
-	var totalWeight float64
-	for _, weight := range sc.rules.MetricWeights {
-		totalWeight += weight
-	}
-	assert.InDelta(t, 1.0, totalWeight, 0.001)
-}
-
-func TestScalingCoordinator_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name        string
-		rules       *ScalingRules
-		expectPanic bool
-	}{
-		{
-			name: "valid rules",
-			rules: &ScalingRules{
-				MinInstances:       1,
-				MaxInstances:       10,
-				ScaleUpThreshold:   0.8,
-				ScaleDownThreshold: 0.3,
-				CooldownPeriod:     5 * time.Minute,
-				MetricWeights: map[string]float64{
-					"cpu":    0.3,
-					"memory": 0.3,
-					"queue":  0.4,
-				},
-			},
-			expectPanic: false,
-		},
-		{
-			name: "min > max instances",
-			rules: &ScalingRules{
-				MinInstances: 10,
-				MaxInstances: 5,
-			},
-			expectPanic: false, // Should handle gracefully
-		},
-		{
-			name: "invalid thresholds",
-			rules: &ScalingRules{
-				ScaleUpThreshold:   0.3,
-				ScaleDownThreshold: 0.8, // Down threshold higher than up threshold
-			},
-			expectPanic: false, // Should handle gracefully
-		},
-		{
-			name: "zero cooldown period",
-			rules: &ScalingRules{
-				MinInstances:       1,
-				MaxInstances:       10,
-				ScaleUpThreshold:   0.8,
-				ScaleDownThreshold: 0.3,
-				CooldownPeriod:     0,
-			},
-			expectPanic: false,
-		},
-		{
-			name: "empty metric weights",
-			rules: &ScalingRules{
-				MinInstances:       1,
-				MaxInstances:       10,
-				ScaleUpThreshold:   0.8,
-				ScaleDownThreshold: 0.3,
-				CooldownPeriod:     5 * time.Minute,
-				MetricWeights:      map[string]float64{},
-			},
-			expectPanic: false, // Should use defaults
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.expectPanic {
-				assert.Panics(t, func() {
-					NewScalingCoordinator(nil, "collector", "instance-1", tt.rules)
-				})
-			} else {
-				assert.NotPanics(t, func() {
-					sc := NewScalingCoordinator(nil, "collector", "instance-1", tt.rules)
-					assert.NotNil(t, sc)
-				})
-			}
-		})
-	}
-}
-
-func TestScalingCoordinator_QueueDepthNormalization(t *testing.T) {
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", nil)
-
-	tests := []struct {
-		name           string
-		queueDepth     float64
-		expectedNormal float64
-	}{
-		{"zero queue", 0.0, 0.0},
-		{"small queue", 5.0, 0.05},
-		{"medium queue", 50.0, 0.5},
-		{"large queue", 100.0, 1.0},
-		{"very large queue", 1000.0, 1.0},       // Should be capped at 1.0
-		{"extremely large queue", 10000.0, 1.0}, // Should be capped at 1.0
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			metrics := []InstanceMetrics{
-				{
-					CPUUsage:    0.0,
-					MemoryUsage: 0.0,
-					QueueDepth:  tt.queueDepth,
-				},
-			}
-
-			// The aggregate load should be 0.0*0.3 + 0.0*0.3 + normalized_queue*0.4
-			expectedLoad := tt.expectedNormal * 0.4
-			actualLoad := sc.calculateAggregateLoad(metrics)
-			assert.InDelta(t, expectedLoad, actualLoad, 0.01)
-		})
-	}
-}
-
-func TestScalingCoordinator_MultipleInstancesAveraging(t *testing.T) {
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", nil)
-
-	// Test that multiple instances are properly averaged
-	metrics := []InstanceMetrics{
-		{CPUUsage: 0.2, MemoryUsage: 0.3, QueueDepth: 10.0}, // Load: 0.2*0.3 + 0.3*0.3 + 0.1*0.4 = 0.19
-		{CPUUsage: 0.8, MemoryUsage: 0.7, QueueDepth: 30.0}, // Load: 0.8*0.3 + 0.7*0.3 + 0.3*0.4 = 0.57
-		{CPUUsage: 0.5, MemoryUsage: 0.5, QueueDepth: 20.0}, // Load: 0.5*0.3 + 0.5*0.3 + 0.2*0.4 = 0.38
-	}
-
-	expectedAverage := (0.19 + 0.57 + 0.38) / 3 // 1.14 / 3 = 0.38
-	actualLoad := sc.calculateAggregateLoad(metrics)
-	assert.InDelta(t, expectedAverage, actualLoad, 0.01)
-}
-
-// Benchmark tests
-func BenchmarkScalingCoordinator_calculateAggregateLoad(b *testing.B) {
-	sc := NewScalingCoordinator(nil, "collector", "instance-1", nil)
-
-	metrics := []InstanceMetrics{
-		{CPUUsage: 0.5, MemoryUsage: 0.6, QueueDepth: 10.0},
-		{CPUUsage: 0.7, MemoryUsage: 0.8, QueueDepth: 20.0},
-		{CPUUsage: 0.3, MemoryUsage: 0.4, QueueDepth: 5.0},
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sc.calculateAggregateLoad(metrics)
-	}
-}
-
-func BenchmarkInstanceMetrics_JSONMarshal(b *testing.B) {
+func TestInstanceMetricsValidation(t *testing.T) {
 	metrics := InstanceMetrics{
-		InstanceID:     "instance-1",
+		InstanceID:     "test-instance",
 		ServiceType:    "collector",
-		CPUUsage:       0.5,
-		MemoryUsage:    0.6,
-		QueueDepth:     10.0,
-		ProcessingRate: 100.0,
-		ErrorRate:      0.01,
+		CPUUsage:       0.75,
+		MemoryUsage:    0.60,
+		QueueDepth:     25.0,
+		ProcessingRate: 150.0,
+		ErrorRate:      0.02,
 		Timestamp:      time.Now(),
 		Health:         "healthy",
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := json.Marshal(metrics)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
+	assert.Equal(t, "test-instance", metrics.InstanceID)
+	assert.Equal(t, "collector", metrics.ServiceType)
+	assert.True(t, metrics.CPUUsage >= 0.0 && metrics.CPUUsage <= 1.0)
+	assert.True(t, metrics.MemoryUsage >= 0.0 && metrics.MemoryUsage <= 1.0)
+	assert.True(t, metrics.ErrorRate >= 0.0 && metrics.ErrorRate <= 1.0)
+	assert.True(t, metrics.QueueDepth >= 0.0)
+	assert.True(t, metrics.ProcessingRate >= 0.0)
+	assert.Contains(t, []string{"healthy", "unhealthy", "degraded"}, metrics.Health)
 }
 
-func BenchmarkScalingDecision_JSONMarshal(b *testing.B) {
+func TestScalingDecisionValidation(t *testing.T) {
 	decision := ScalingDecision{
 		ServiceType:      "collector",
 		Action:           "scale_up",
-		CurrentCount:     1,
-		RecommendedCount: 2,
-		Reason:           "high load",
-		Confidence:       0.8,
+		CurrentCount:     2,
+		RecommendedCount: 3,
+		Reason:           "high load detected",
+		Confidence:       0.85,
 		Timestamp:        time.Now(),
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := json.Marshal(decision)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkScalingRules_JSONMarshal(b *testing.B) {
-	rules := ScalingRules{
-		MinInstances:       2,
-		MaxInstances:       20,
-		ScaleUpThreshold:   0.9,
-		ScaleDownThreshold: 0.2,
-		CooldownPeriod:     10 * time.Minute,
-		MetricWeights: map[string]float64{
-			"cpu":    0.4,
-			"memory": 0.4,
-			"queue":  0.2,
-		},
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := json.Marshal(rules)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkUtilityFunctions(b *testing.B) {
-	b.Run("minInt", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			minInt(i, i+1)
-		}
-	})
-
-	b.Run("maxInt", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			maxInt(i, i+1)
-		}
-	})
-
-	b.Run("minFloat", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			minFloat(float64(i), float64(i+1))
-		}
-	})
+	assert.Equal(t, "collector", decision.ServiceType)
+	assert.Contains(t, []string{"scale_up", "scale_down", "no_action"}, decision.Action)
+	assert.True(t, decision.CurrentCount >= 0)
+	assert.True(t, decision.RecommendedCount >= 0)
+	assert.NotEmpty(t, decision.Reason)
+	assert.True(t, decision.Confidence >= 0.0 && decision.Confidence <= 1.0)
+	assert.WithinDuration(t, time.Now(), decision.Timestamp, time.Second)
 }

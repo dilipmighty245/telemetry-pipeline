@@ -160,9 +160,38 @@ func (ns *NexusStreamerService) Run(args []string, _ io.Writer) error {
 func (ns *NexusStreamerService) parseConfig(args []string) (*NexusStreamerConfig, error) {
 	cfg := &NexusStreamerConfig{}
 
+	// Set defaults
+	cfg.ClusterID = "default-cluster"
+	cfg.StreamerID = fmt.Sprintf("streamer-%d", time.Now().Unix())
+	cfg.HTTPPort = 8081
+	cfg.BatchSize = 100
+	cfg.StreamInterval = 3 * time.Second
+	cfg.LogLevel = "info"
+
+	// Parse command line arguments
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--port=") {
+			portStr := strings.TrimPrefix(arg, "--port=")
+			if p, err := strconv.Atoi(portStr); err == nil {
+				cfg.HTTPPort = p
+			}
+		} else if strings.HasPrefix(arg, "--cluster-id=") {
+			cfg.ClusterID = strings.TrimPrefix(arg, "--cluster-id=")
+		} else if strings.HasPrefix(arg, "--streamer-id=") {
+			cfg.StreamerID = strings.TrimPrefix(arg, "--streamer-id=")
+		} else if strings.HasPrefix(arg, "--log-level=") {
+			cfg.LogLevel = strings.TrimPrefix(arg, "--log-level=")
+		} else if strings.HasPrefix(arg, "--batch-size=") {
+			batchStr := strings.TrimPrefix(arg, "--batch-size=")
+			if b, err := strconv.Atoi(batchStr); err == nil {
+				cfg.BatchSize = b
+			}
+		}
+	}
+
 	// etcd configuration
-	cfg.ClusterID = getEnv("CLUSTER_ID", "default-cluster")
-	cfg.StreamerID = getEnv("STREAMER_ID", fmt.Sprintf("streamer-%d", time.Now().Unix()))
+	cfg.ClusterID = getEnv("CLUSTER_ID", cfg.ClusterID)
+	cfg.StreamerID = getEnv("STREAMER_ID", cfg.StreamerID)
 
 	etcdEndpointsStr := getEnv("ETCD_ENDPOINTS", "localhost:2379")
 	cfg.EtcdEndpoints = strings.Split(etcdEndpointsStr, ",")
@@ -170,19 +199,19 @@ func (ns *NexusStreamerService) parseConfig(args []string) (*NexusStreamerConfig
 	// Message queue configuration
 	cfg.MessageQueuePrefix = getEnv("MESSAGE_QUEUE_PREFIX", "/telemetry/queue")
 
-	// Processing configuration
-	cfg.BatchSize = getEnvInt("BATCH_SIZE", 100)
-	cfg.StreamInterval = getEnvDuration("STREAM_INTERVAL", 3*time.Second)
+	// Processing configuration (environment variables override command line)
+	cfg.BatchSize = getEnvInt("BATCH_SIZE", cfg.BatchSize)
+	cfg.StreamInterval = getEnvDuration("STREAM_INTERVAL", cfg.StreamInterval)
 
-	// HTTP server configuration for CSV upload
-	cfg.HTTPPort = getEnvInt("HTTP_PORT", 8081)
+	// HTTP server configuration for CSV upload (environment variables override command line)
+	cfg.HTTPPort = getEnvInt("HTTP_PORT", cfg.HTTPPort)
 	cfg.EnableHTTP = true // Always enable HTTP server in API-only mode
 	cfg.UploadDir = getEnv("UPLOAD_DIR", "/tmp/telemetry-uploads")
 	cfg.MaxUploadSize = int64(getEnvInt("MAX_UPLOAD_SIZE", 100*1024*1024)) // 100MB
 	cfg.MaxMemory = int64(getEnvInt("MAX_MEMORY", 32*1024*1024))           // 32MB
 
-	// Logging
-	cfg.LogLevel = getEnv("LOG_LEVEL", "info")
+	// Logging (environment variables override command line)
+	cfg.LogLevel = getEnv("LOG_LEVEL", cfg.LogLevel)
 
 	return cfg, nil
 }
