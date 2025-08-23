@@ -2,10 +2,23 @@
 
 # Telemetry Pipeline Cleanup and Reset Script
 # This script kills all nexus processes and flushes etcd data
+# 
+# Usage:
+#   ./cleanup-and-reset.sh          # Full cleanup with prompts
+#   ./cleanup-and-reset.sh --quick  # Quick cleanup without prompts
 
 set -e
 
+# Check for quick mode
+QUICK_MODE=false
+if [[ "$1" == "--quick" ]]; then
+    QUICK_MODE=true
+fi
+
 echo "🧹 Starting Telemetry Pipeline Cleanup and Reset..."
+if [[ "$QUICK_MODE" == "true" ]]; then
+    echo "⚡ Quick mode enabled - no prompts"
+fi
 echo "=================================================="
 
 # Colors for output
@@ -116,9 +129,14 @@ else
 fi
 
 # 4. Optional: Reset PostgreSQL database
-read -p "Do you want to reset the PostgreSQL database? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ "$QUICK_MODE" == "true" ]]; then
+    print_status "Skipping PostgreSQL database reset (quick mode)"
+else
+    read -p "Do you want to reset the PostgreSQL database? (y/N): " -n 1 -r
+    echo
+fi
+
+if [[ "$QUICK_MODE" == "true" ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
     print_status "Resetting PostgreSQL database..."
     
     if docker ps --format "table {{.Names}}" | grep -q "telemetry-postgres"; then

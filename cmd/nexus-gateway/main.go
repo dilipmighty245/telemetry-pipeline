@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/docs/generated"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/calibration"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/graphql"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
@@ -1230,9 +1231,33 @@ func (ng *NexusGateway) swaggerHandler(c echo.Context) error {
 	}
 
 	if path == "spec.json" {
-		// Serve OpenAPI spec
-		spec := ng.generateOpenAPISpec()
+		// Serve OpenAPI spec from generated docs
+		doc := generated.SwaggerInfo.ReadDoc()
+		var spec map[string]interface{}
+		if err := json.Unmarshal([]byte(doc), &spec); err != nil {
+			log.WithError(err).Error("Failed to parse generated swagger spec")
+			// Fallback to manual generation
+			spec = ng.generateOpenAPISpec()
+		}
 		return c.JSON(http.StatusOK, spec)
+	}
+
+	if path == "spec.yaml" || path == "swagger.yaml" {
+		// Serve OpenAPI spec as YAML from generated docs
+		doc := generated.SwaggerInfo.ReadDoc()
+		var spec map[string]interface{}
+		if err := json.Unmarshal([]byte(doc), &spec); err != nil {
+			log.WithError(err).Error("Failed to parse generated swagger spec")
+			return c.String(http.StatusInternalServerError, "Failed to generate YAML spec")
+		}
+
+		// Convert JSON to YAML (simple approach)
+		yamlBytes, err := json.Marshal(spec)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, "Failed to generate YAML spec")
+		}
+
+		return c.Blob(http.StatusOK, "application/x-yaml", yamlBytes)
 	}
 
 	return c.String(http.StatusNotFound, "Not found")

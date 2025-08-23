@@ -2,7 +2,49 @@
 
 ## Overview
 
-This guide covers timestamp handling in the telemetry pipeline, including storage in etcd, processing timestamps, and demo data generation.
+This guide covers timestamp handling in the telemetry pipeline, including storage in etcd, processing timestamps, demo data generation, and relative timestamp queries.
+
+## 📋 Quick Reference for Relative Timestamps
+
+### Format: `now[+/-]<number><unit>`
+
+| Expression | Description | Example Output |
+|------------|-------------|----------------|
+| `now` | Current time | `2025-08-23T07:37:57Z` |
+| `now-5s` | 5 seconds ago | `2025-08-23T07:37:52Z` |
+| `now-30s` | 30 seconds ago | `2025-08-23T07:37:27Z` |
+| `now-1m` | 1 minute ago | `2025-08-23T07:36:57Z` |
+| `now-5m` | 5 minutes ago | `2025-08-23T07:32:57Z` |
+| `now-15m` | 15 minutes ago | `2025-08-23T07:22:57Z` |
+| `now-30m` | 30 minutes ago | `2025-08-23T07:07:57Z` |
+| `now-1h` | 1 hour ago | `2025-08-23T06:37:57Z` |
+| `now-2h` | 2 hours ago | `2025-08-23T05:37:57Z` |
+| `now-6h` | 6 hours ago | `2025-08-23T01:37:57Z` |
+| `now-12h` | 12 hours ago | `2025-08-22T19:37:57Z` |
+| `now-1d` | 1 day ago | `2025-08-22T07:37:57Z` |
+| `now-2d` | 2 days ago | `2025-08-21T07:37:57Z` |
+| `now-7d` | 1 week ago | `2025-08-16T07:37:57Z` |
+| `now+5m` | 5 minutes from now | `2025-08-23T07:42:57Z` |
+| `now+1h` | 1 hour from now | `2025-08-23T08:37:57Z` |
+
+### Units
+- `s` = seconds
+- `m` = minutes  
+- `h` = hours
+- `d` = days
+
+### API Usage Examples
+
+```bash
+# Get telemetry from last 5 minutes
+curl "http://localhost:8080/api/v1/gpus/GPU-12345/telemetry?start_time=now-5m&end_time=now"
+
+# Get telemetry from last hour
+curl "http://localhost:8080/api/v1/gpus/GPU-12345/telemetry?start_time=now-1h&end_time=now"
+
+# Get telemetry from yesterday
+curl "http://localhost:8080/api/v1/gpus/GPU-12345/telemetry?start_time=now-1d&end_time=now-23h"
+```
 
 ## Current Timestamp Usage
 

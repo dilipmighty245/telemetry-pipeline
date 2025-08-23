@@ -44,6 +44,7 @@ Troubleshooting guide for common issues and debugging techniques.
 The REST API specification is auto-generated and available at:
 - **Swagger UI**: `http://localhost:8080/swagger/`
 - **OpenAPI JSON**: `http://localhost:8080/swagger/spec.json`
+- **Generated Files**: See `./generated/` directory for auto-generated documentation files
 
 Generate updated docs:
 ```bash

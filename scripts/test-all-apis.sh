@@ -197,10 +197,10 @@ main() {
     if test_endpoint "GET" "/docs" "API docs redirect" "301"; then ((passed++)); else ((failed++)); fi
     ((total++))
     
-    if test_endpoint "GET" "/swagger/swagger.json" "OpenAPI JSON spec"; then ((passed++)); else ((failed++)); fi
+    if test_endpoint "GET" "/swagger/spec.json" "OpenAPI JSON spec"; then ((passed++)); else ((failed++)); fi
     ((total++))
     
-    if test_endpoint "GET" "/swagger/swagger.yaml" "OpenAPI YAML spec"; then ((passed++)); else ((failed++)); fi
+    if test_endpoint "GET" "/swagger/spec.yaml" "OpenAPI YAML spec"; then ((passed++)); else ((failed++)); fi
     ((total++))
     
     echo ""

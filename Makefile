@@ -81,8 +81,9 @@ build-nexus-gateway: ## Build Nexus gateway (multi-protocol API)
 # Generate OpenAPI specification
 generate-swagger: ## Generate OpenAPI/Swagger specification
 	@echo "Generating OpenAPI specification..."
-	$(shell go env GOPATH)/bin/swag init -g cmd/api-gateway/main.go -o ./docs --parseInternal --parseDependency
-	@echo "OpenAPI specification generated in ./docs/"
+	@mkdir -p ./docs/generated
+	$(shell go env GOPATH)/bin/swag init -g cmd/nexus-gateway/main.go -o ./docs/generated --parseInternal --parseDependency
+	@echo "OpenAPI specification generated in ./docs/generated/"
 
 # Testing
 test: ## Run unit tests
@@ -511,7 +512,7 @@ security-scan: ## Run security scan
 # Documentation
 docs: generate-swagger ## Generate all documentation
 	@echo "Generating documentation..."
-	@echo "OpenAPI documentation: ./docs/"
+	@echo "OpenAPI documentation: ./docs/generated/"
 	@echo "Coverage report: coverage.html"
 
 # Kind cluster management
