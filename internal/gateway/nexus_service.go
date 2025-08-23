@@ -450,6 +450,16 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 		})
 	}
 
+	// Check if etcd client is available
+	if ng.etcdClient == nil || ng.config == nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+			"data":    []TelemetryData{},
+			"count":   0,
+			"message": "etcd client not initialized - returning empty result",
+		})
+	}
+
 	// Parse query parameters
 	startTimeStr := c.QueryParam("start_time")
 	endTimeStr := c.QueryParam("end_time")
@@ -459,32 +469,115 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 	limit := 100
 
 	if startTimeStr != "" {
-		if t, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+		if t, err := time.Parse(time.RFC3339, startTimeStr); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "Invalid start_time format. Use RFC3339 format (e.g., 2024-01-01T00:00:00Z)",
+			})
+		} else {
 			startTime = &t
 		}
 	}
 	if endTimeStr != "" {
-		if t, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
+		if t, err := time.Parse(time.RFC3339, endTimeStr); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "Invalid end_time format. Use RFC3339 format (e.g., 2024-01-01T00:00:00Z)",
+			})
+		} else {
 			endTime = &t
 		}
 	}
 	if limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		if l, err := strconv.Atoi(limitStr); err != nil || l <= 0 {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "Invalid limit parameter. Must be a positive integer",
+			})
+		} else {
 			limit = l
 		}
 	}
 
-	// Use the parsed parameters (placeholder implementation)
-	_ = startTime
-	_ = endTime
-	_ = limit
+	// Validate time range
+	if startTime != nil && endTime != nil && startTime.After(*endTime) {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success": false,
+			"error":   "start_time must be before end_time",
+		})
+	}
 
-	// Implementation would query telemetry data from etcd
-	// For now, return empty result
+	// Query telemetry data from etcd
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	// Build the key pattern to search for telemetry data for this GPU
+	// We search across all hosts and clusters for this GPU UUID
+	keyPattern := fmt.Sprintf("/telemetry/clusters/%s/hosts/", ng.config.ClusterID)
+
+	resp, err := ng.etcdClient.Get(ctx, keyPattern, clientv3.WithPrefix())
+	if err != nil {
+		log.Errorf("Failed to query telemetry data from etcd: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success": false,
+			"error":   "Failed to query telemetry data",
+		})
+	}
+
+	var telemetryData []TelemetryData
+
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// Look for telemetry data entries that contain our GPU ID
+		if strings.Contains(key, "/data/") && (strings.Contains(key, gpuID) || strings.Contains(key, fmt.Sprintf("gpu_%s", gpuID))) {
+			var data TelemetryData
+			if err := json.Unmarshal(kv.Value, &data); err != nil {
+				continue // Skip invalid entries
+			}
+
+			// Filter by GPU ID (either by ID or UUID)
+			if data.GPUID == gpuID || strings.Contains(data.GPUID, gpuID) {
+				// Parse timestamp for filtering
+				if timestamp, err := time.Parse(time.RFC3339, data.Timestamp); err == nil {
+					// Apply time filters
+					if startTime != nil && timestamp.Before(*startTime) {
+						continue
+					}
+					if endTime != nil && timestamp.After(*endTime) {
+						continue
+					}
+					telemetryData = append(telemetryData, data)
+				}
+			}
+		}
+	}
+
+	// Sort by timestamp (most recent first)
+	for i := 0; i < len(telemetryData)-1; i++ {
+		for j := i + 1; j < len(telemetryData); j++ {
+			t1, _ := time.Parse(time.RFC3339, telemetryData[i].Timestamp)
+			t2, _ := time.Parse(time.RFC3339, telemetryData[j].Timestamp)
+			if t1.Before(t2) {
+				telemetryData[i], telemetryData[j] = telemetryData[j], telemetryData[i]
+			}
+		}
+	}
+
+	// Apply limit
+	if len(telemetryData) > limit {
+		telemetryData = telemetryData[:limit]
+	}
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"success": true,
-		"data":    []interface{}{},
-		"count":   0,
+		"data":    telemetryData,
+		"count":   len(telemetryData),
+		"gpu_id":  gpuID,
+		"filters": map[string]interface{}{
+			"start_time": startTimeStr,
+			"end_time":   endTimeStr,
+			"limit":      limit,
+		},
 	})
 }
 

@@ -23,77 +23,7 @@ const docTemplate = `{
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
-    "paths": {
-        "/api/v1/gpus": {
-            "get": {
-                "description": "Return a list of all GPUs for which telemetry data is available",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "gpus"
-                ],
-                "summary": "List all GPUs",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/gpus/{id}/telemetry": {
-            "get": {
-                "description": "Return all telemetry entries for a specific GPU, ordered by time",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "telemetry"
-                ],
-                "summary": "Query telemetry by GPU",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "GPU ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start time (RFC3339 format)",
-                        "name": "start_time",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End time (RFC3339 format)",
-                        "name": "end_time",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Limit number of results (default 100)",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        }
-    },
+    "paths": {},
     "securityDefinitions": {
         "BasicAuth": {
             "type": "basic"
