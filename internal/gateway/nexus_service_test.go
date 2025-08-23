@@ -8,12 +8,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGatewayConfig_Validation(t *testing.T) {
+	// Setup embedded etcd server for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
 	tests := []struct {
 		name   string
 		config *GatewayConfig
@@ -22,10 +28,10 @@ func TestGatewayConfig_Validation(t *testing.T) {
 		{
 			name: "valid config",
 			config: &GatewayConfig{
-				Port:            8080,
-				ClusterID:       "test-cluster",
-				EtcdEndpoints:   []string{"localhost:2379"},
-				EnableGraphQL:   true,
+				Port:          8080,
+				ClusterID:     "test-cluster",
+				EtcdEndpoints: etcdServer.Endpoints,
+
 				EnableWebSocket: true,
 				EnableCORS:      true,
 				LogLevel:        "info",
@@ -37,7 +43,7 @@ func TestGatewayConfig_Validation(t *testing.T) {
 			config: &GatewayConfig{
 				Port:          8080,
 				ClusterID:     "test-cluster",
-				EtcdEndpoints: []string{"localhost:2379"},
+				EtcdEndpoints: etcdServer.Endpoints,
 			},
 			valid: true,
 		},
@@ -96,35 +102,12 @@ func TestTelemetryData_Validation(t *testing.T) {
 	}
 }
 
-func TestGraphQLQuery_Validation(t *testing.T) {
-	query := &GraphQLQuery{
-		Query:     "query { clusters { id name } }",
-		Variables: map[string]interface{}{"limit": 10},
-	}
-
-	assert.NotEmpty(t, query.Query)
-	assert.NotNil(t, query.Variables)
-	assert.Equal(t, 10, query.Variables["limit"])
-}
-
-func TestGraphQLResponse_Validation(t *testing.T) {
-	response := &GraphQLResponse{
-		Data:   map[string]interface{}{"clusters": []interface{}{}},
-		Errors: []string{"test error"},
-	}
-
-	assert.NotNil(t, response.Data)
-	assert.NotEmpty(t, response.Errors)
-	assert.Equal(t, "test error", response.Errors[0])
-}
-
 func TestNexusGatewayService_ParseConfig(t *testing.T) {
 	// Set environment variables for testing
 	os.Setenv("PORT", "9090")
 	os.Setenv("CLUSTER_ID", "test-cluster")
 	os.Setenv("ETCD_ENDPOINTS", "localhost:2379,localhost:2380")
 	os.Setenv("LOG_LEVEL", "debug")
-	os.Setenv("ENABLE_GRAPHQL", "false")
 	os.Setenv("ENABLE_WEBSOCKET", "false")
 	os.Setenv("ENABLE_CORS", "false")
 	defer func() {
@@ -132,7 +115,6 @@ func TestNexusGatewayService_ParseConfig(t *testing.T) {
 		os.Unsetenv("CLUSTER_ID")
 		os.Unsetenv("ETCD_ENDPOINTS")
 		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("ENABLE_GRAPHQL")
 		os.Unsetenv("ENABLE_WEBSOCKET")
 		os.Unsetenv("ENABLE_CORS")
 	}()
@@ -145,7 +127,6 @@ func TestNexusGatewayService_ParseConfig(t *testing.T) {
 	assert.Equal(t, "test-cluster", config.ClusterID)
 	assert.Equal(t, []string{"localhost:2379", "localhost:2380"}, config.EtcdEndpoints)
 	assert.Equal(t, "debug", config.LogLevel)
-	assert.False(t, config.EnableGraphQL)
 	assert.False(t, config.EnableWebSocket)
 	assert.False(t, config.EnableCORS)
 }
@@ -159,7 +140,7 @@ func TestNexusGatewayService_ParseConfigDefaults(t *testing.T) {
 	assert.Equal(t, "default-cluster", config.ClusterID)
 	assert.Equal(t, []string{"localhost:2379"}, config.EtcdEndpoints)
 	assert.Equal(t, "info", config.LogLevel)
-	assert.True(t, config.EnableGraphQL)
+
 	assert.True(t, config.EnableWebSocket)
 	assert.True(t, config.EnableCORS)
 }
@@ -182,8 +163,9 @@ func TestNexusGatewayService_HealthHandler(t *testing.T) {
 	// Test health handler (will fail due to no etcd connection, but we can test the structure)
 	err := service.healthHandler(c)
 
-	// Should return an error due to no etcd connection
-	assert.Error(t, err)
+	// Should not return an error, but should return unhealthy status
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func TestNexusGatewayService_ListAllGPUsHandler(t *testing.T) {
@@ -201,7 +183,8 @@ func TestNexusGatewayService_ListAllGPUsHandler(t *testing.T) {
 
 	// Test handler (will fail due to no etcd connection)
 	err := service.listAllGPUsHandler(c)
-	assert.Error(t, err)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 func TestNexusGatewayService_QueryTelemetryByGPUHandler(t *testing.T) {
@@ -265,8 +248,7 @@ func TestNexusGatewayService_PlaceholderHandlers(t *testing.T) {
 		{"getLatestTelemetry", service.getLatestTelemetryHandler, "/telemetry/latest"},
 		{"listAllHosts", service.listAllHostsHandler, "/hosts"},
 		{"listGPUsByHost", service.listGPUsByHostHandler, "/hosts/test/gpus"},
-		{"graphql", service.graphqlHandler, "/graphql"},
-		{"graphqlPlayground", service.graphqlPlaygroundHandler, "/graphql"},
+
 		{"websocket", service.websocketHandler, "/ws"},
 		{"swagger", service.swaggerHandler, "/swagger"},
 	}
@@ -290,31 +272,6 @@ func TestNexusGatewayService_PlaceholderHandlers(t *testing.T) {
 	}
 }
 
-func TestNexusGatewayService_GraphQLHandler_InvalidRequest(t *testing.T) {
-	service := &NexusGatewayService{}
-	e := echo.New()
-
-	// Test with invalid JSON
-	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader("invalid json"))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	err := service.graphqlHandler(c)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	// Test with missing query
-	req = httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"variables": {}}`))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec = httptest.NewRecorder()
-	c = e.NewContext(req, rec)
-
-	err = service.graphqlHandler(c)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
 func TestNexusGatewayService_Close(t *testing.T) {
 	service := &NexusGatewayService{}
 
@@ -330,7 +287,6 @@ func BenchmarkGatewayConfig_Creation(b *testing.B) {
 			Port:            8080,
 			ClusterID:       "test-cluster",
 			EtcdEndpoints:   []string{"localhost:2379"},
-			EnableGraphQL:   true,
 			EnableWebSocket: true,
 			EnableCORS:      true,
 			LogLevel:        "info",
@@ -355,15 +311,5 @@ func BenchmarkTelemetryData_Creation(b *testing.B) {
 			MemoryClockMHz:    1215,
 		}
 		_ = data
-	}
-}
-
-func BenchmarkGraphQLQuery_Creation(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		query := &GraphQLQuery{
-			Query:     "query { clusters { id name } }",
-			Variables: map[string]interface{}{"limit": 10},
-		}
-		_ = query
 	}
 }

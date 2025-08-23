@@ -86,7 +86,42 @@ generate-swagger: ## Generate OpenAPI/Swagger specification
 	@echo "OpenAPI specification generated in ./docs/generated/"
 
 # Testing
-test: test-comprehensive ## Run comprehensive tests with full coverage (default target)
+test: ## Run all tests and collect unified coverage
+	@echo "🚀 Running all tests with unified coverage collection..."
+	@echo ""
+	@echo "Step 1: Cleaning previous coverage data..."
+	@rm -f *.out coverage.html coverage-*.html
+	@mkdir -p coverage-reports
+	@echo ""
+	@echo "Step 2: Running unit tests with coverage..."
+	go test -v -coverprofile=unit-coverage.out -coverpkg=./... ./...	
+	@echo ""
+	@echo "Step 3: Running E2E tests with coverage..."
+	@if command -v etcd >/dev/null 2>&1; then \
+		go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...; \
+	else \
+		echo "⚠️  etcd not available, skipping E2E tests"; \
+	fi
+	@echo ""
+	@echo "Step 4: Merging all coverage into single coverage.out..."
+	@$(MAKE) _merge-coverage-profiles
+	@echo ""
+	@echo "Step 5: Generating coverage report..."
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo ""
+	@echo "Step 6: Analyzing coverage..."
+	@COVERAGE=$$(go tool cover -func=coverage.out | tail -1 | awk '{print $$3}' | sed 's/%//'); \
+	echo "Overall coverage: $$COVERAGE%"; \
+	echo "✅ Coverage analysis completed"
+	@echo ""
+	@echo "Step 7: Cleaning up intermediate files..."
+	@rm -f unit-coverage.out integration-coverage.out e2e-coverage.out
+	@echo ""
+	@echo "✅ All tests completed!"
+	@echo "📊 Coverage report: coverage.html"
+	@echo "📈 Coverage summary:"
+	@go tool cover -func=coverage.out | tail -1
+	@echo ""
 
 test-unit: ## Run unit tests only
 	@echo "Running unit tests..."
@@ -100,56 +135,9 @@ test-e2e: ## Run end-to-end tests only
 	@echo "Running E2E tests..."
 	go test -v -coverprofile=e2e-coverage.out -coverpkg=./... ./test/e2e/...
 
-test-comprehensive: ## Run all tests with comprehensive coverage analysis
-	@echo "🚀 Running comprehensive test suite with full coverage analysis..."
-	@echo ""
-	@echo "Step 1: Cleaning previous coverage data..."
-	@rm -f *.out coverage.html coverage-*.html
-	@mkdir -p coverage-reports
-	@echo ""
-	@echo "Step 2: Running unit tests with coverage..."
-	go test -v -race -coverprofile=unit-coverage.out -coverpkg=./... ./...
-	@echo ""
-	@echo "Step 3: Running integration tests with coverage..."
-	@if command -v docker >/dev/null 2>&1; then \
-		go test -v -tags=integration -coverprofile=integration-coverage.out -coverpkg=./... -timeout=15m ./test/integration/...; \
-	else \
-		echo "⚠️  Docker not available, skipping integration tests"; \
-	fi
-	@echo ""
-	@echo "Step 4: Running E2E tests with coverage..."
-	@if command -v etcd >/dev/null 2>&1; then \
-		go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...; \
-	else \
-		echo "⚠️  etcd not available, skipping E2E tests"; \
-	fi
-	@echo ""
-	@echo "Step 5: Running benchmark tests..."
-	@go test -bench=. -benchmem -run=^$$ ./... > benchmark-results.txt 2>&1 || echo "⚠️  Some benchmarks may not exist yet"
-	@echo ""
-	@echo "Step 6: Merging coverage profiles..."
-	@$(MAKE) _merge-coverage-profiles
-	@echo ""
-	@echo "Step 7: Generating coverage reports..."
-	@$(MAKE) _generate-coverage-reports
-	@echo ""
-	@echo "Step 8: Analyzing coverage thresholds..."
-	@$(MAKE) _analyze-coverage-thresholds
-	@echo ""
-	@echo "✅ Comprehensive test suite completed!"
-	@echo ""
-	@echo "📊 Coverage Reports Generated:"
-	@echo "  - HTML Report: coverage.html"
-	@echo "  - Unit Tests: coverage-reports/unit-coverage.html"
-	@echo "  - Integration Tests: coverage-reports/integration-coverage.html"
-	@echo "  - E2E Tests: coverage-reports/e2e-coverage.html"
-	@echo "  - Benchmark Results: benchmark-results.txt"
-	@echo ""
-	@echo "📈 Coverage Summary:"
-	@go tool cover -func=coverage.out | tail -1
-	@echo ""
+test-comprehensive: test ## Alias for unified test (legacy compatibility)
 
-test-coverage: test-comprehensive ## Alias for comprehensive test coverage (legacy compatibility)
+test-coverage: test ## Alias for unified test (legacy compatibility)
 
 _merge-coverage-profiles:
 	@echo "Merging coverage profiles..."

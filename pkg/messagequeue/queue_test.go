@@ -309,8 +309,8 @@ func TestConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			payload := []byte("test message " + string(rune(id+'0')))
-			_, err = mq.Publish(ctx, "test-topic", payload, nil, 3600)
-			assert.NoError(t, err)
+			_, publishErr := mq.Publish(ctx, "test-topic", payload, nil, 3600)
+			assert.NoError(t, publishErr)
 			done <- true
 		}(i)
 	}

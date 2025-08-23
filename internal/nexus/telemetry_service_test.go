@@ -17,7 +17,6 @@ func TestServiceConfig_Struct(t *testing.T) {
 		UpdateInterval: 30 * time.Second,
 		BatchSize:      100,
 		EnableWatchAPI: true,
-		EnableGraphQL:  true,
 	}
 
 	assert.Equal(t, []string{"localhost:2379"}, config.EtcdEndpoints)
@@ -26,7 +25,6 @@ func TestServiceConfig_Struct(t *testing.T) {
 	assert.Equal(t, 30*time.Second, config.UpdateInterval)
 	assert.Equal(t, 100, config.BatchSize)
 	assert.True(t, config.EnableWatchAPI)
-	assert.True(t, config.EnableGraphQL)
 }
 
 func TestTelemetryCluster_Struct(t *testing.T) {
@@ -392,19 +390,22 @@ func TestGPUStatus_Struct(t *testing.T) {
 }
 
 func TestNewTelemetryService(t *testing.T) {
+	// Setup embedded etcd server for testing
+	clientURL, cleanup := SetupTestEtcd(t)
+	defer cleanup()
+
 	config := &ServiceConfig{
-		EtcdEndpoints:  []string{"localhost:2379"},
+		EtcdEndpoints:  []string{clientURL},
 		ClusterID:      "test-cluster",
 		ServiceID:      "test-service",
 		UpdateInterval: 30 * time.Second,
 		BatchSize:      100,
 		EnableWatchAPI: true,
-		EnableGraphQL:  true,
 	}
 
-	// Test with nil etcd client (for unit testing)
 	service, err := NewTelemetryService(config)
 	require.NoError(t, err)
+	defer service.Close()
 
 	assert.NotNil(t, service)
 	assert.Equal(t, config, service.config)
@@ -413,7 +414,12 @@ func TestNewTelemetryService(t *testing.T) {
 }
 
 func TestTelemetryService_initializeCluster(t *testing.T) {
+	// Setup embedded etcd server for testing
+	clientURL, cleanup := SetupTestEtcd(t)
+	defer cleanup()
+
 	config := &ServiceConfig{
+		EtcdEndpoints:  []string{clientURL},
 		ClusterID:      "test-cluster",
 		ServiceID:      "test-service",
 		UpdateInterval: 30 * time.Second,
@@ -422,9 +428,9 @@ func TestTelemetryService_initializeCluster(t *testing.T) {
 
 	service, err := NewTelemetryService(config)
 	require.NoError(t, err)
-	_ = service // Use the service variable to avoid unused variable error
+	defer service.Close()
 
-	// Test cluster initialization logic (without etcd)
+	// Test cluster initialization logic (with embedded etcd)
 	cluster := &TelemetryCluster{
 		ClusterID:   config.ClusterID,
 		ClusterName: "Test Cluster",
@@ -451,9 +457,14 @@ func TestTelemetryService_initializeCluster(t *testing.T) {
 }
 
 func TestTelemetryService_Close(t *testing.T) {
+	// Setup embedded etcd server for testing
+	clientURL, cleanup := SetupTestEtcd(t)
+	defer cleanup()
+
 	config := &ServiceConfig{
-		ClusterID: "test-cluster",
-		ServiceID: "test-service",
+		EtcdEndpoints: []string{clientURL},
+		ClusterID:     "test-cluster",
+		ServiceID:     "test-service",
 	}
 
 	service, err := NewTelemetryService(config)
@@ -586,21 +597,96 @@ func TestTelemetryService_ValidationLogic(t *testing.T) {
 }
 
 func TestTelemetryService_EdgeCases(t *testing.T) {
+	// Setup embedded etcd server for testing
+	clientURL, cleanup := SetupTestEtcd(t)
+	defer cleanup()
+
 	// Test with minimal config
 	config := &ServiceConfig{
-		ClusterID: "minimal",
-		ServiceID: "minimal-service",
-		BatchSize: 1,
+		EtcdEndpoints: []string{clientURL},
+		ClusterID:     "minimal",
+		ServiceID:     "minimal-service",
+		BatchSize:     1,
 	}
 
 	service, err := NewTelemetryService(config)
 	require.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, config, service.config)
+	service.Close()
 
 	// Test with nil config (should return error)
 	_, err = NewTelemetryService(nil)
 	assert.Error(t, err)
+}
+
+func TestTelemetryService_EtcdIntegration(t *testing.T) {
+	// Setup embedded etcd server for testing
+	clientURL, cleanup := SetupTestEtcd(t)
+	defer cleanup()
+
+	config := &ServiceConfig{
+		EtcdEndpoints:  []string{clientURL},
+		ClusterID:      "integration-test-cluster",
+		ServiceID:      "integration-test-service",
+		UpdateInterval: 30 * time.Second,
+		BatchSize:      100,
+	}
+
+	service, err := NewTelemetryService(config)
+	require.NoError(t, err)
+	defer service.Close()
+
+	// Test registering a host
+	hostInfo := &TelemetryHost{
+		HostID:    "test-host-1",
+		Hostname:  "gpu-node-1",
+		IPAddress: "192.168.1.100",
+		OSVersion: "Ubuntu 20.04",
+		Labels:    map[string]string{"zone": "us-west-2a"},
+	}
+
+	err = service.RegisterHost(hostInfo)
+	require.NoError(t, err)
+
+	// Test registering a GPU
+	gpuInfo := &TelemetryGPU{
+		GPUID:         "0",
+		UUID:          "GPU-12345-abcde",
+		Device:        "nvidia0",
+		DeviceName:    "NVIDIA H100 80GB HBM3",
+		DriverVersion: "535.129.03",
+		CudaVersion:   "12.2",
+		MemoryTotal:   81920,
+		Properties:    map[string]string{"compute_capability": "9.0"},
+	}
+
+	err = service.RegisterGPU("test-host-1", gpuInfo)
+	require.NoError(t, err)
+
+	// Test storing telemetry data
+	telemetryData := &TelemetryData{
+		TelemetryID:       "telemetry-test-1",
+		Timestamp:         time.Now(),
+		GPUID:             "0",
+		UUID:              "GPU-12345-abcde",
+		Device:            "nvidia0",
+		ModelName:         "NVIDIA H100 80GB HBM3",
+		Hostname:          "gpu-node-1",
+		GPUUtilization:    85.5,
+		MemoryUtilization: 60.2,
+		Temperature:       72.0,
+		PowerDraw:         350.5,
+		CollectorID:       "test-collector",
+	}
+
+	err = service.StoreTelemetryData("test-host-1", "0", telemetryData)
+	require.NoError(t, err)
+
+	// Verify the data was stored by checking the service's internal state
+	// (In a real implementation, you might want to add methods to retrieve data)
+	assert.NotNil(t, service.etcdClient)
+	assert.Equal(t, config.ClusterID, service.config.ClusterID)
 }
 
 func TestTelemetryData_Validation(t *testing.T) {

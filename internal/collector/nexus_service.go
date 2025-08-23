@@ -43,7 +43,6 @@ type NexusCollectorConfig struct {
 	// Feature flags
 	EnableNexus     bool
 	EnableWatchAPI  bool
-	EnableGraphQL   bool
 	EnableStreaming bool
 
 	// Logging
@@ -107,7 +106,6 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 			UpdateInterval: config.PollInterval,
 			BatchSize:      config.BatchSize,
 			EnableWatchAPI: config.EnableWatchAPI,
-			EnableGraphQL:  config.EnableGraphQL,
 		}
 
 		nexusService, err := nexus.NewTelemetryService(nexusConfig)
@@ -490,7 +488,6 @@ func (nc *NexusCollectorService) parseConfig(args []string) (*NexusCollectorConf
 	// Feature flags
 	config.EnableNexus = getEnvBool("ENABLE_NEXUS", true)
 	config.EnableWatchAPI = getEnvBool("ENABLE_WATCH_API", true)
-	config.EnableGraphQL = getEnvBool("ENABLE_GRAPHQL", true)
 	config.EnableStreaming = getEnvBool("ENABLE_STREAMING", true)
 
 	// Logging

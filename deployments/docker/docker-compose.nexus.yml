@@ -127,27 +127,7 @@ services:
       - telemetry-network
     restart: unless-stopped
 
-  # Telemetry Calibration Tool
-  telemetry-calibration:
-    build:
-      context: ../..
-      dockerfile: deployments/docker/Dockerfile.calibration
-    container_name: telemetry-calibration
-    environment:
-      - TELEMETRY_URL=http://nexus-api:8080
-      - GRAPHQL_URL=http://nexus-graphql:9090
-      - ETCD_URL=http://etcd:2379
-      - PORT=8083
-    ports:
-      - "8083:8083"
-    depends_on:
-      nexus-api:
-        condition: service_started
-      nexus-graphql:
-        condition: service_started
-    networks:
-      - telemetry-network
-    restart: unless-stopped
+
 
 
 

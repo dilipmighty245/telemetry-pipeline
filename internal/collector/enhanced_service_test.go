@@ -2,7 +2,6 @@ package collector
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -496,44 +495,26 @@ func TestEnhancedCollectorService_CollectBatchEnhanced(t *testing.T) {
 		EnableStreaming: false, // Disable streaming for simpler test
 	}
 
-	// Create mock messages
-	telemetryData1 := &models.TelemetryData{
-		Timestamp:  time.Now(),
-		Hostname:   "host1",
-		GPUID:      "gpu1",
-		MetricName: "utilization",
-		Value:      75.5,
+	// Setup etcd for testing
+	_, cleanup, err := messagequeue.SetupEtcdForTest()
+	if err != nil {
+		t.Skip("Cannot setup etcd for testing:", err)
 	}
-	telemetryData2 := &models.TelemetryData{
-		Timestamp:  time.Now(),
-		Hostname:   "host2",
-		GPUID:      "gpu2",
-		MetricName: "temperature",
-		Value:      65.0,
+	defer cleanup()
+
+	// Create a properly initialized MessageQueueService for testing
+	mqService, err := messagequeue.NewMessageQueueService()
+	if err != nil {
+		t.Skip("Cannot create MessageQueueService for testing:", err)
 	}
+	defer mqService.Stop()
 
-	data1, _ := json.Marshal(telemetryData1)
-	data2, _ := json.Marshal(telemetryData2)
-
-	messages := []*messagequeue.Message{
-		{ID: "msg1", Payload: data1},
-		{ID: "msg2", Payload: data2},
-	}
-
-	mockMQ := &MockMessageQueueService{}
-	mockMQ.On("Start").Return(nil)
-	mockMQ.On("ConsumeTelemetry", "test-group", "test-collector", 2).Return(messages, nil)
-	mockMQ.On("AcknowledgeMessages", "test-group", messages).Return(nil)
-
-	service, err := NewEnhancedCollectorService(config, &messagequeue.MessageQueueService{})
+	service, err := NewEnhancedCollectorService(config, mqService)
 	assert.NoError(t, err)
 
 	// Test collectBatchEnhanced
 	err = service.collectBatchEnhanced(2)
 	assert.NoError(t, err)
-
-	// Verify mock calls
-	mockMQ.AssertExpectations(t)
 }
 
 func TestEnhancedCollectorService_CollectBatchWithCircuitBreaker(t *testing.T) {

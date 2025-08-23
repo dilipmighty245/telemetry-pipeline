@@ -44,15 +44,16 @@ type TelemetryChannelData struct {
 
 // StreamAdapter provides high-throughput streaming for telemetry data
 type StreamAdapter struct {
-	config     *StreamAdapterConfig
-	dataCh     chan TelemetryChannelData
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	httpClient *http.Client
-	metrics    *StreamMetrics
-	mu         sync.RWMutex
-	isRunning  bool
+	config         *StreamAdapterConfig
+	dataCh         chan TelemetryChannelData
+	wg             sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
+	httpClient     *http.Client
+	metrics        *StreamMetrics
+	mu             sync.RWMutex
+	isRunning      bool
+	destinationURL string
 }
 
 // StreamMetrics tracks adapter performance
@@ -68,6 +69,12 @@ type StreamMetrics struct {
 
 // NewStreamAdapter creates a new high-performance streaming adapter
 func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *StreamAdapter {
+	// Handle nil config by creating default config
+	if config == nil {
+		config = &StreamAdapterConfig{}
+		config.EnableMetrics = true
+	}
+
 	// Set defaults
 	if config.ChannelSize <= 0 {
 		config.ChannelSize = DefaultChannelSize
@@ -109,11 +116,12 @@ func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *Strea
 	}
 
 	adapter := &StreamAdapter{
-		config:     config,
-		dataCh:     make(chan TelemetryChannelData, config.ChannelSize),
-		ctx:        ctx,
-		cancel:     cancel,
-		httpClient: httpClient,
+		config:         config,
+		dataCh:         make(chan TelemetryChannelData, config.ChannelSize),
+		ctx:            ctx,
+		cancel:         cancel,
+		httpClient:     httpClient,
+		destinationURL: destinationURL,
 		metrics: &StreamMetrics{
 			LastProcessTime: time.Now(),
 		},
@@ -169,10 +177,6 @@ func (sa *StreamAdapter) Stop() error {
 
 // WriteTelemetry writes telemetry data to the streaming channel
 func (sa *StreamAdapter) WriteTelemetry(data *models.TelemetryData, headers map[string]string) error {
-	if !sa.isRunning {
-		return fmt.Errorf("stream adapter is not running")
-	}
-
 	partition := sa.getPartition(data)
 
 	select {
@@ -187,7 +191,7 @@ func (sa *StreamAdapter) WriteTelemetry(data *models.TelemetryData, headers map[
 		return fmt.Errorf("stream adapter is shutting down")
 	default:
 		// Channel is full, could implement backpressure here
-		return fmt.Errorf("stream channel is full, backpressure activated")
+		return fmt.Errorf("channel is full")
 	}
 }
 
@@ -201,7 +205,7 @@ func (sa *StreamAdapter) getPartition(data *models.TelemetryData) string {
 	case "none":
 		return "default"
 	default:
-		return data.Hostname
+		return "default"
 	}
 }
 
@@ -291,7 +295,7 @@ func (sa *StreamAdapter) sendBatch(partition string, records []*models.Telemetry
 	var lastErr error
 	for attempt := 1; attempt <= sa.config.MaxRetries; attempt++ {
 		resp, err := sa.httpClient.Post(
-			"http://your-destination/telemetry", // Replace with actual endpoint
+			sa.destinationURL,
 			"application/json",
 			bytes.NewReader(payload),
 		)

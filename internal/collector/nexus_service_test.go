@@ -5,11 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNexusCollectorConfig_Validation(t *testing.T) {
+	// Setup embedded etcd server for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
 	tests := []struct {
 		name   string
 		config *NexusCollectorConfig
@@ -18,7 +24,7 @@ func TestNexusCollectorConfig_Validation(t *testing.T) {
 		{
 			name: "valid config",
 			config: &NexusCollectorConfig{
-				EtcdEndpoints:      []string{"localhost:2379"},
+				EtcdEndpoints:      etcdServer.Endpoints,
 				ClusterID:          "test-cluster",
 				CollectorID:        "test-collector",
 				MessageQueuePrefix: "/telemetry/queue",
@@ -29,16 +35,16 @@ func TestNexusCollectorConfig_Validation(t *testing.T) {
 				Workers:            4,
 				EnableNexus:        true,
 				EnableWatchAPI:     true,
-				EnableGraphQL:      true,
-				EnableStreaming:    true,
-				LogLevel:           "info",
+
+				EnableStreaming: true,
+				LogLevel:        "info",
 			},
 			valid: true,
 		},
 		{
 			name: "minimal config",
 			config: &NexusCollectorConfig{
-				EtcdEndpoints: []string{"localhost:2379"},
+				EtcdEndpoints: etcdServer.Endpoints,
 				ClusterID:     "test-cluster",
 				CollectorID:   "test-collector",
 			},
@@ -151,7 +157,7 @@ func TestNexusCollectorService_ParseConfigDefaults(t *testing.T) {
 	assert.Equal(t, 10000, config.BufferSize)
 	assert.True(t, config.EnableNexus)
 	assert.True(t, config.EnableWatchAPI)
-	assert.True(t, config.EnableGraphQL)
+
 	assert.True(t, config.EnableStreaming)
 }
 
@@ -254,7 +260,6 @@ func BenchmarkNexusCollectorConfig_Creation(b *testing.B) {
 			Workers:            4,
 			EnableNexus:        true,
 			EnableWatchAPI:     true,
-			EnableGraphQL:      true,
 			EnableStreaming:    true,
 			LogLevel:           "info",
 		}

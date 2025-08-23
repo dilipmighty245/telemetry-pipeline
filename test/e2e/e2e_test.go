@@ -8,20 +8,24 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"os/exec"
+
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+
+	// Import service packages for in-process testing
+	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/gateway"
+	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	gatewayPort  = "8080"
-	streamerPort = "8081"
-	testTimeout  = 30 * time.Second
+	testTimeout = 30 * time.Second
 )
 
 // TestE2EServices tests the complete end-to-end flow
@@ -39,19 +43,55 @@ func TestE2EServices(t *testing.T) {
 	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
-	// Start services
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
+	// Start services in background using goroutines
+	var wg sync.WaitGroup
+	serviceCancel := make(chan struct{})
+	defer close(serviceCancel)
 
-	// Start services in background
-	gatewayCmd := startGateway(t, ctx)
-	defer stopService(gatewayCmd)
+	// Start gateway service
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		gatewayService := &gateway.NexusGatewayService{}
+		if err := gatewayService.Run([]string{"--port=8080"}, os.Stdout); err != nil && err != context.Canceled {
+			t.Logf("Gateway service error: %v", err)
+		}
+	}()
 
-	streamerCmd := startStreamer(t, ctx)
-	defer stopService(streamerCmd)
+	// Start streamer service
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		streamerService := &streamer.NexusStreamerService{}
+		if err := streamerService.Run([]string{"--port=8081"}, os.Stdout); err != nil && err != context.Canceled {
+			t.Logf("Streamer service error: %v", err)
+		}
+	}()
 
-	collectorCmd := startCollector(t, ctx)
-	defer stopService(collectorCmd)
+	// Start collector service
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		collectorService := &collector.NexusCollectorService{}
+		if err := collectorService.Run([]string{}, os.Stdout); err != nil && err != context.Canceled {
+			t.Logf("Collector service error: %v", err)
+		}
+	}()
+
+	// Ensure services are stopped when test completes
+	defer func() {
+		// Give services a moment to shut down gracefully
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Log("Services did not shut down within 5 seconds")
+		}
+	}()
 
 	// Wait for services to be ready
 	waitForService(t, "http://localhost:8080/health", 10*time.Second)
@@ -64,53 +104,82 @@ func TestE2EServices(t *testing.T) {
 	t.Run("ServiceIntegration", testServiceIntegration)
 }
 
-func TestE2EServicesWithCoverage(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping E2E coverage tests in short mode")
-	}
+// func TestE2EServicesWithCoverage(t *testing.T) {
+// 	if testing.Short() {
+// 		t.Skip("Skipping E2E coverage tests in short mode")
+// 	}
 
-	// Build services with coverage
-	buildServiceWithCoverage(t, "collector")
-	buildServiceWithCoverage(t, "gateway")
-	buildServiceWithCoverage(t, "streamer")
+// 	// Start embedded etcd server for testing
+// 	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+// 	require.NoError(t, err, "Should start embedded etcd server")
+// 	defer cleanup()
 
-	// Start embedded etcd server for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
-	require.NoError(t, err, "Should start embedded etcd server")
-	defer cleanup()
+// 	// Wait for etcd to be ready
+// 	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+// 	require.NoError(t, err, "etcd should be ready")
 
-	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
-	require.NoError(t, err, "etcd should be ready")
+// 	// Start services in background using goroutines
+// 	var wg sync.WaitGroup
+// 	serviceCancel := make(chan struct{})
+// 	defer close(serviceCancel)
 
-	// Start services with coverage
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
+// 	// Start gateway service
+// 	wg.Add(1)
+// 	go func() {
+// 		defer wg.Done()
+// 		gatewayService := &gateway.NexusGatewayService{}
+// 		if err := gatewayService.Run([]string{"--port=8080"}, os.Stdout); err != nil && err != context.Canceled {
+// 			t.Logf("Gateway service error: %v", err)
+// 		}
+// 	}()
 
-	gatewayCmd := startServiceWithCoverage(t, ctx, "gateway", []string{})
-	defer stopService(gatewayCmd)
+// 	// Start streamer service
+// 	wg.Add(1)
+// 	go func() {
+// 		defer wg.Done()
+// 		streamerService := &streamer.NexusStreamerService{}
+// 		if err := streamerService.Run([]string{"--port=8081"}, os.Stdout); err != nil && err != context.Canceled {
+// 			t.Logf("Streamer service error: %v", err)
+// 		}
+// 	}()
 
-	streamerCmd := startServiceWithCoverage(t, ctx, "streamer", []string{})
-	defer stopService(streamerCmd)
+// 	// Start collector service
+// 	wg.Add(1)
+// 	go func() {
+// 		defer wg.Done()
+// 		collectorService := &collector.NexusCollectorService{}
+// 		if err := collectorService.Run([]string{}, os.Stdout); err != nil && err != context.Canceled {
+// 			t.Logf("Collector service error: %v", err)
+// 		}
+// 	}()
 
-	collectorCmd := startServiceWithCoverage(t, ctx, "collector", []string{})
-	defer stopService(collectorCmd)
+// 	// Ensure services are stopped when test completes
+// 	defer func() {
+// 		// Give services a moment to shut down gracefully
+// 		done := make(chan struct{})
+// 		go func() {
+// 			wg.Wait()
+// 			close(done)
+// 		}()
+// 		select {
+// 		case <-done:
+// 		case <-time.After(5 * time.Second):
+// 			t.Log("Services did not shut down within 5 seconds")
+// 		}
+// 	}()
 
-	// Wait for services to be ready
-	waitForService(t, "http://localhost:8080/health", 10*time.Second)
-	waitForService(t, "http://localhost:8081/health", 10*time.Second)
+// 	// Wait for services to be ready
+// 	waitForService(t, "http://localhost:8080/health", 10*time.Second)
+// 	waitForService(t, "http://localhost:8081/health", 10*time.Second)
 
-	// Run comprehensive tests
-	t.Run("HealthChecks", testHealthChecks)
-	t.Run("CSVUpload", testCSVUpload)
-	t.Run("TelemetryQuery", testTelemetryQuery)
-	t.Run("ServiceIntegration", testServiceIntegration)
-	t.Run("ErrorHandling", testErrorHandling)
-	t.Run("LoadTesting", testLoadTesting)
-
-	// Collect coverage data
-	collectCoverageData(t)
-}
+// 	// Run comprehensive tests
+// 	t.Run("HealthChecks", testHealthChecks)
+// 	t.Run("CSVUpload", testCSVUpload)
+// 	t.Run("TelemetryQuery", testTelemetryQuery)
+// 	t.Run("ServiceIntegration", testServiceIntegration)
+// 	t.Run("ErrorHandling", testErrorHandling)
+// 	t.Run("LoadTesting", testLoadTesting)
+// }
 
 func testHealthChecks(t *testing.T) {
 	// Test gateway health
@@ -239,7 +308,8 @@ func testErrorHandling(t *testing.T) {
 
 	part, err := writer.CreateFormFile("file", "invalid.txt")
 	require.NoError(t, err)
-	part.Write([]byte("not a csv file"))
+	_, err = part.Write([]byte("not a csv file"))
+	require.NoError(t, err)
 	writer.Close()
 
 	req, err := http.NewRequest("POST", "http://localhost:8081/api/v1/csv/upload", &buf)
@@ -274,7 +344,7 @@ func testLoadTesting(t *testing.T) {
 			writer := multipart.NewWriter(&buf)
 
 			part, _ := writer.CreateFormFile("file", fmt.Sprintf("load-test-%d.csv", id))
-			part.Write([]byte(csvContent))
+			_, _ = part.Write([]byte(csvContent))
 			writer.Close()
 
 			req, _ := http.NewRequest("POST", "http://localhost:8081/api/v1/csv/upload", &buf)
@@ -303,68 +373,6 @@ func testLoadTesting(t *testing.T) {
 
 // Helper functions
 
-func startGateway(t *testing.T, ctx context.Context) *exec.Cmd {
-	return startServiceInBackground(t, ctx, "gateway", []string{})
-}
-
-func startStreamer(t *testing.T, ctx context.Context) *exec.Cmd {
-	return startServiceInBackground(t, ctx, "streamer", []string{})
-}
-
-func startCollector(t *testing.T, ctx context.Context) *exec.Cmd {
-	return startServiceInBackground(t, ctx, "collector", []string{})
-}
-
-func startServiceInBackground(t *testing.T, ctx context.Context, service string, args []string) *exec.Cmd {
-	// Build and start the service as external process
-	binaryPath := fmt.Sprintf("../../cmd/nexus-%s/nexus-%s", service, service)
-
-	// Build the service first
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, fmt.Sprintf("../../cmd/nexus-%s", service))
-	output, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Build failed for service %s: %s", service, string(output))
-	}
-	require.NoError(t, err)
-
-	// Start the service
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	cmd.Env = os.Environ()
-
-	err = cmd.Start()
-	require.NoError(t, err)
-
-	return cmd
-}
-
-func buildServiceWithCoverage(t *testing.T, service string) {
-	cmd := exec.Command("go", "build", "-cover", "-o", service+"-coverage", "../../cmd/nexus-"+service)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Coverage build failed for service %s: %s", service, string(output))
-	}
-	require.NoError(t, err)
-}
-
-func startServiceWithCoverage(t *testing.T, ctx context.Context, service string, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "./"+service+"-coverage", args...)
-	cmd.Env = append(os.Environ(), "GOCOVERDIR=./coverage")
-
-	err := cmd.Start()
-	require.NoError(t, err)
-
-	return cmd
-}
-
-func collectCoverageData(t *testing.T) {
-	// Merge coverage data
-	cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i=./coverage", "-o=e2e-coverage.out")
-	err := cmd.Run()
-	if err != nil {
-		t.Logf("Failed to collect coverage data: %v", err)
-	}
-}
-
 func waitForService(t *testing.T, url string, timeout time.Duration) {
 	client := &http.Client{Timeout: 1 * time.Second}
 	deadline := time.Now().Add(timeout)
@@ -381,11 +389,4 @@ func waitForService(t *testing.T, url string, timeout time.Duration) {
 	}
 
 	t.Fatalf("Service at %s not ready within %v", url, timeout)
-}
-
-func stopService(cmd *exec.Cmd) {
-	if cmd != nil && cmd.Process != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-	}
 }

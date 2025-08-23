@@ -11,12 +11,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNexusStreamerConfig_Validation(t *testing.T) {
+	// Setup embedded etcd server for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
 	tests := []struct {
 		name   string
 		config *NexusStreamerConfig
@@ -25,7 +31,7 @@ func TestNexusStreamerConfig_Validation(t *testing.T) {
 		{
 			name: "valid config",
 			config: &NexusStreamerConfig{
-				EtcdEndpoints:      []string{"localhost:2379"},
+				EtcdEndpoints:      etcdServer.Endpoints,
 				ClusterID:          "test-cluster",
 				StreamerID:         "test-streamer",
 				MessageQueuePrefix: "/telemetry/queue",
@@ -43,7 +49,7 @@ func TestNexusStreamerConfig_Validation(t *testing.T) {
 		{
 			name: "minimal config",
 			config: &NexusStreamerConfig{
-				EtcdEndpoints: []string{"localhost:2379"},
+				EtcdEndpoints: etcdServer.Endpoints,
 				ClusterID:     "test-cluster",
 				StreamerID:    "test-streamer",
 			},

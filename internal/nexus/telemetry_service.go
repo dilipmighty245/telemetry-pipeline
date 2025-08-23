@@ -27,7 +27,6 @@ type ServiceConfig struct {
 	UpdateInterval time.Duration
 	BatchSize      int
 	EnableWatchAPI bool
-	EnableGraphQL  bool
 }
 
 // TelemetryCluster represents the root telemetry cluster
@@ -130,6 +129,10 @@ type ClusterMetadata struct {
 
 // NewTelemetryService creates a new Nexus-style telemetry service
 func NewTelemetryService(config *ServiceConfig) (*TelemetryService, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+
 	// Create etcd client
 	etcdClient, err := clientv3.New(clientv3.Config{
 		Endpoints:   config.EtcdEndpoints,
@@ -181,7 +184,6 @@ func (ts *TelemetryService) initializeCluster() error {
 				"batch_size":      fmt.Sprintf("%d", ts.config.BatchSize),
 				"update_interval": ts.config.UpdateInterval.String(),
 				"watch_api":       fmt.Sprintf("%t", ts.config.EnableWatchAPI),
-				"graphql_enabled": fmt.Sprintf("%t", ts.config.EnableGraphQL),
 			},
 		},
 	}
@@ -432,7 +434,6 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 			"batch_size":      fmt.Sprintf("%d", ts.config.BatchSize),
 			"update_interval": ts.config.UpdateInterval.String(),
 			"watch_api":       fmt.Sprintf("%t", ts.config.EnableWatchAPI),
-			"graphql_enabled": fmt.Sprintf("%t", ts.config.EnableGraphQL),
 		},
 	}
 	cluster.UpdatedAt = time.Now()
@@ -567,6 +568,17 @@ func (ts *TelemetryService) WatchTelemetryChanges(callback func(string, []byte, 
 	return nil
 }
 
+// Start starts the telemetry service
+func (ts *TelemetryService) Start() error {
+	log.Info("Nexus-style telemetry service started")
+	return nil
+}
+
+// Stop stops the telemetry service
+func (ts *TelemetryService) Stop() error {
+	return ts.Close()
+}
+
 // Close closes the telemetry service and cleans up resources
 func (ts *TelemetryService) Close() error {
 	ts.cancel()
@@ -583,9 +595,28 @@ func (ts *TelemetryService) Close() error {
 
 // isGPUKey checks if an etcd key represents a GPU entry
 func isGPUKey(key string) bool {
-	return len(key) > 0 && key[len(key)-1] != '/' &&
-		(key[len(key)-36:] != "/data" || len(key) < 36) &&
-		contains(key, "/gpus/")
+	if len(key) == 0 {
+		return false
+	}
+
+	// Check if key ends with '/'
+	if key[len(key)-1] == '/' {
+		return false
+	}
+
+	// Check if key contains "/gpus/"
+	if !contains(key, "/gpus/") {
+		return false
+	}
+
+	// Check if key doesn't end with "/data" (original logic was: key[len(key)-36:] != "/data" || len(key) < 36)
+	// This means: if key is less than 36 chars OR doesn't end with "/data", then continue
+	// Inversely: if key is >= 36 chars AND ends with "/data", then return false
+	if len(key) >= 5 && key[len(key)-5:] == "/data" {
+		return false
+	}
+
+	return true
 }
 
 // isTelemetryDataKey checks if an etcd key represents telemetry data
@@ -595,14 +626,31 @@ func isTelemetryDataKey(key string) bool {
 
 // contains checks if a string contains a substring
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		(s == substr || (len(s) > len(substr) &&
-			(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-				indexOfSubstring(s, substr) >= 0)))
+	// Empty substring should return false based on test expectations
+	if len(substr) == 0 {
+		return false
+	}
+
+	// Empty string cannot contain non-empty substring
+	if len(s) == 0 {
+		return false
+	}
+
+	return indexOfSubstring(s, substr) >= 0
 }
 
 // indexOfSubstring finds the index of a substring in a string
 func indexOfSubstring(s, substr string) int {
+	// Empty substring should return 0 (found at beginning) based on test expectations
+	if len(substr) == 0 {
+		return 0
+	}
+
+	// Empty string cannot contain non-empty substring
+	if len(s) == 0 {
+		return -1
+	}
+
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
 			return i

@@ -427,8 +427,8 @@ func (cw *CollectorWorker) collectBatch(batchSize int) error {
 // Circuit breaker methods
 
 func (cb *CircuitBreaker) canExecute() bool {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 
 	switch cb.state {
 	case Closed:
@@ -441,7 +441,11 @@ func (cb *CircuitBreaker) canExecute() bool {
 		}
 		return false
 	case HalfOpen:
-		return cb.halfOpenReqs < cb.config.HalfOpenRequests
+		if cb.halfOpenReqs < cb.config.HalfOpenRequests {
+			cb.halfOpenReqs++
+			return true
+		}
+		return false
 	default:
 		return false
 	}

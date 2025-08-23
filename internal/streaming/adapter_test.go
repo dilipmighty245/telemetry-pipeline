@@ -181,16 +181,26 @@ func TestStreamAdapter_WriteTelemetry(t *testing.T) {
 	var receivedData []models.TelemetryData
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var batch []models.TelemetryData
-		err := json.NewDecoder(r.Body).Decode(&batch)
+		var payload map[string]interface{}
+		err := json.NewDecoder(r.Body).Decode(&payload)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		mu.Lock()
-		receivedData = append(receivedData, batch...)
-		mu.Unlock()
+		// Extract records from the payload
+		if records, ok := payload["records"].([]interface{}); ok {
+			mu.Lock()
+			for _, record := range records {
+				if recordBytes, err := json.Marshal(record); err == nil {
+					var telemetryData models.TelemetryData
+					if err := json.Unmarshal(recordBytes, &telemetryData); err == nil {
+						receivedData = append(receivedData, telemetryData)
+					}
+				}
+			}
+			mu.Unlock()
+		}
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -381,16 +391,19 @@ func TestStreamAdapter_ConcurrentWrites(t *testing.T) {
 	var receivedCount int64
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var batch []models.TelemetryData
-		err := json.NewDecoder(r.Body).Decode(&batch)
+		var payload map[string]interface{}
+		err := json.NewDecoder(r.Body).Decode(&payload)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		mu.Lock()
-		receivedCount += int64(len(batch))
-		mu.Unlock()
+		// Extract records from the payload
+		if records, ok := payload["records"].([]interface{}); ok {
+			mu.Lock()
+			receivedCount += int64(len(records))
+			mu.Unlock()
+		}
 
 		w.WriteHeader(http.StatusOK)
 	}))

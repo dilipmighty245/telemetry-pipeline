@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dilipmighty245/telemetry-pipeline/internal/calibration"
-	"github.com/dilipmighty245/telemetry-pipeline/internal/graphql"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/gorilla/websocket"
@@ -34,16 +32,14 @@ const (
 
 // NexusGatewayService represents the API Gateway component of the telemetry pipeline
 type NexusGatewayService struct {
-	port               int
-	etcdClient         *clientv3.Client
-	nexusService       *nexus.TelemetryService
-	graphqlService     *graphql.GraphQLService
-	calibrationService *calibration.CalibrationService
-	nexusGraphQL       nexusgraphql.ServerClient
-	messageQueue       *messagequeue.MessageQueueService
-	echo               *echo.Echo
-	upgrader           websocket.Upgrader
-	config             *GatewayConfig
+	port         int
+	etcdClient   *clientv3.Client
+	nexusService *nexus.TelemetryService
+	nexusGraphQL nexusgraphql.ServerClient
+	messageQueue *messagequeue.MessageQueueService
+	echo         *echo.Echo
+	upgrader     websocket.Upgrader
+	config       *GatewayConfig
 }
 
 // GatewayConfig holds configuration for the Nexus gateway
@@ -51,7 +47,6 @@ type GatewayConfig struct {
 	Port            int
 	ClusterID       string
 	EtcdEndpoints   []string
-	EnableGraphQL   bool
 	EnableWebSocket bool
 	EnableCORS      bool
 	LogLevel        string
@@ -70,18 +65,6 @@ type TelemetryData struct {
 	PowerDraw         float32 `json:"power_draw"`
 	SMClockMHz        float32 `json:"sm_clock_mhz"`
 	MemoryClockMHz    float32 `json:"memory_clock_mhz"`
-}
-
-// GraphQLQuery represents a GraphQL query
-type GraphQLQuery struct {
-	Query     string                 `json:"query"`
-	Variables map[string]interface{} `json:"variables,omitempty"`
-}
-
-// GraphQLResponse represents a GraphQL response
-type GraphQLResponse struct {
-	Data   interface{} `json:"data,omitempty"`
-	Errors []string    `json:"errors,omitempty"`
 }
 
 // Run is the main entry point for the gateway service
@@ -103,7 +86,7 @@ func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
 
 	log.Infof("Starting Nexus Gateway Service")
 	log.Infof("Cluster ID: %s, Port: %d", config.ClusterID, config.Port)
-	log.Infof("GraphQL: %v, WebSocket: %v, CORS: %v", config.EnableGraphQL, config.EnableWebSocket, config.EnableCORS)
+	log.Infof("WebSocket: %v, CORS: %v", config.EnableWebSocket, config.EnableCORS)
 
 	// Create and start the gateway
 	gateway, err := NewNexusGatewayService(ctx, config)
@@ -128,7 +111,6 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 	config := &GatewayConfig{
 		Port:            8080,
 		ClusterID:       "default-cluster",
-		EnableGraphQL:   true,
 		EnableWebSocket: true,
 		EnableCORS:      true,
 		LogLevel:        "info",
@@ -152,9 +134,6 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 	}
 	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
 		config.LogLevel = envLogLevel
-	}
-	if envGraphQL := os.Getenv("ENABLE_GRAPHQL"); envGraphQL != "" {
-		config.EnableGraphQL = envGraphQL == "true"
 	}
 	if envWebSocket := os.Getenv("ENABLE_WEBSOCKET"); envWebSocket != "" {
 		config.EnableWebSocket = envWebSocket == "true"
@@ -201,21 +180,6 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 	}
 
-	// Create GraphQL service with Nexus integration
-	graphqlService, err := graphql.NewGraphQLService(nexusService)
-	if err != nil {
-		if etcdClient != nil {
-			etcdClient.Close()
-		}
-		if nexusService != nil {
-			nexusService.Close()
-		}
-		return nil, fmt.Errorf("failed to create GraphQL service: %w", err)
-	}
-
-	// Create calibration service
-	calibrationService := calibration.NewCalibrationService(nexusService)
-
 	// Create Nexus GraphQL client (would connect to Nexus GraphQL server)
 	// For now, we'll use a mock/placeholder as we're integrating with existing Nexus
 	var nexusGraphQLClient nexusgraphql.ServerClient
@@ -238,16 +202,14 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	}
 
 	gateway := &NexusGatewayService{
-		port:               config.Port,
-		etcdClient:         etcdClient,
-		nexusService:       nexusService,
-		graphqlService:     graphqlService,
-		calibrationService: calibrationService,
-		nexusGraphQL:       nexusGraphQLClient,
-		messageQueue:       messageQueue,
-		echo:               e,
-		upgrader:           upgrader,
-		config:             config,
+		port:         config.Port,
+		etcdClient:   etcdClient,
+		nexusService: nexusService,
+		nexusGraphQL: nexusGraphQLClient,
+		messageQueue: messageQueue,
+		echo:         e,
+		upgrader:     upgrader,
+		config:       config,
 	}
 
 	// Setup routes
@@ -351,19 +313,10 @@ func (ng *NexusGatewayService) setupRoutes() {
 		v1.GET("/hosts/:hostname/gpus", ng.listGPUsByHostHandler) // List GPUs by host
 	}
 
-	// GraphQL endpoint
-	if ng.config.EnableGraphQL {
-		ng.echo.POST("/graphql", ng.graphqlHandler)
-		ng.echo.GET("/graphql", ng.graphqlPlaygroundHandler)
-	}
-
 	// WebSocket endpoint
 	if ng.config.EnableWebSocket {
 		ng.echo.GET("/ws", ng.websocketHandler)
 	}
-
-	// Calibration endpoints
-	ng.calibrationService.SetupCalibrationRoutes(ng.echo)
 
 	// Swagger UI endpoint
 	ng.echo.GET("/swagger/*", ng.swaggerHandler)
@@ -378,6 +331,14 @@ func (ng *NexusGatewayService) setupRoutes() {
 // HTTP Handlers (simplified versions - full implementations would be moved from main.go)
 
 func (ng *NexusGatewayService) healthHandler(c echo.Context) error {
+	// Check if etcd client is available
+	if ng.etcdClient == nil || ng.config == nil || len(ng.config.EtcdEndpoints) == 0 {
+		return c.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"status": "unhealthy",
+			"error":  "etcd client not initialized",
+		})
+	}
+
 	// Check etcd health
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 	defer cancel()
@@ -398,6 +359,14 @@ func (ng *NexusGatewayService) healthHandler(c echo.Context) error {
 }
 
 func (ng *NexusGatewayService) listAllGPUsHandler(c echo.Context) error {
+	// Check if etcd client is available
+	if ng.etcdClient == nil || ng.config == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success": false,
+			"error":   "etcd client not initialized",
+		})
+	}
+
 	// Query all GPUs from etcd across all hosts in the cluster
 	gpusKey := fmt.Sprintf("/telemetry/clusters/%s/hosts/", ng.config.ClusterID)
 
@@ -566,14 +535,6 @@ func (ng *NexusGatewayService) listAllHostsHandler(c echo.Context) error {
 
 func (ng *NexusGatewayService) listGPUsByHostHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"gpus": []interface{}{}, "count": 0})
-}
-
-func (ng *NexusGatewayService) graphqlHandler(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]interface{}{"data": nil})
-}
-
-func (ng *NexusGatewayService) graphqlPlaygroundHandler(c echo.Context) error {
-	return c.HTML(http.StatusOK, "<html><body>GraphQL Playground</body></html>")
 }
 
 func (ng *NexusGatewayService) websocketHandler(c echo.Context) error {
