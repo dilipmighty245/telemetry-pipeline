@@ -1,3 +1,6 @@
+// Package discovery provides service registration and discovery functionality using etcd.
+// It enables services to register themselves, discover other services, and maintain
+// health status information in a distributed system.
 package discovery
 
 import (
@@ -11,28 +14,39 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// ServiceInfo represents a service instance
+// ServiceInfo represents a service instance in the distributed system.
+// It contains all the necessary information for service discovery and health monitoring.
 type ServiceInfo struct {
-	ID           string            `json:"id"`
-	Type         string            `json:"type"`
-	Address      string            `json:"address"`
-	Port         int               `json:"port"`
-	Metadata     map[string]string `json:"metadata"`
-	RegisteredAt time.Time         `json:"registered_at"`
-	Health       string            `json:"health"`
-	Version      string            `json:"version"`
+	ID           string            `json:"id"`            // Unique identifier for the service instance
+	Type         string            `json:"type"`          // Type/category of the service (e.g., "collector", "streamer")
+	Address      string            `json:"address"`       // Network address where the service is accessible
+	Port         int               `json:"port"`          // Port number the service is listening on
+	Metadata     map[string]string `json:"metadata"`      // Additional key-value metadata about the service
+	RegisteredAt time.Time         `json:"registered_at"` // Timestamp when the service was registered
+	Health       string            `json:"health"`        // Current health status ("healthy", "unhealthy", etc.)
+	Version      string            `json:"version"`       // Version of the service
 }
 
-// ServiceRegistry manages service registration and discovery
+// ServiceRegistry manages service registration and discovery using etcd as the backend.
+// It provides functionality for services to register themselves, discover other services,
+// and maintain health status with automatic lease management and heartbeats.
 type ServiceRegistry struct {
-	client     *clientv3.Client
-	leaseID    clientv3.LeaseID
-	serviceKey string
-	ttl        int64
-	mu         sync.RWMutex
+	client     *clientv3.Client // etcd client for backend operations
+	leaseID    clientv3.LeaseID // Lease ID for the registered service
+	serviceKey string           // etcd key where this service is registered
+	ttl        int64            // Time-to-live for the service lease in seconds
+	mu         sync.RWMutex     // Mutex for thread-safe access
 }
 
-// NewServiceRegistry creates a new service registry
+// NewServiceRegistry creates a new service registry with the provided etcd client and TTL.
+// The TTL determines how long a service registration remains valid without heartbeat updates.
+//
+// Parameters:
+//   - client: An initialized etcd client for backend operations
+//   - ttl: Time-to-live for service registrations in seconds
+//
+// Returns:
+//   - *ServiceRegistry: A new service registry instance
 func NewServiceRegistry(client *clientv3.Client, ttl int64) *ServiceRegistry {
 	return &ServiceRegistry{
 		client: client,
@@ -40,7 +54,16 @@ func NewServiceRegistry(client *clientv3.Client, ttl int64) *ServiceRegistry {
 	}
 }
 
-// Register registers a service instance with heartbeat
+// Register registers a service instance with automatic heartbeat management.
+// It creates a lease, stores the service information in etcd, and starts a background
+// goroutine to maintain the lease through periodic heartbeats.
+//
+// Parameters:
+//   - ctx: Context for the registration operation
+//   - service: Service information to register
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (sr *ServiceRegistry) Register(ctx context.Context, service ServiceInfo) error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -91,7 +114,17 @@ func (sr *ServiceRegistry) Register(ctx context.Context, service ServiceInfo) er
 	return nil
 }
 
-// Discover finds all instances of a service type
+// Discover finds all registered instances of a specific service type.
+// It queries etcd for all services under the specified service type prefix
+// and returns their information.
+//
+// Parameters:
+//   - ctx: Context for the discovery operation
+//   - serviceType: The type of services to discover (e.g., "collector", "streamer")
+//
+// Returns:
+//   - []ServiceInfo: A slice of discovered service instances
+//   - error: nil on success, error describing the failure otherwise
 func (sr *ServiceRegistry) Discover(ctx context.Context, serviceType string) ([]ServiceInfo, error) {
 	resp, err := sr.client.Get(ctx, fmt.Sprintf("/services/%s/", serviceType),
 		clientv3.WithPrefix())
@@ -113,7 +146,16 @@ func (sr *ServiceRegistry) Discover(ctx context.Context, serviceType string) ([]
 	return services, nil
 }
 
-// WatchServices watches for changes in service instances
+// WatchServices watches for changes in service instances of a specific type.
+// It returns a channel that receives updated service lists whenever services
+// are registered, deregistered, or their information changes.
+//
+// Parameters:
+//   - ctx: Context for the watch operation
+//   - serviceType: The type of services to watch
+//
+// Returns:
+//   - <-chan []ServiceInfo: A receive-only channel for service updates
 func (sr *ServiceRegistry) WatchServices(ctx context.Context, serviceType string) <-chan []ServiceInfo {
 	servicesChan := make(chan []ServiceInfo, 10)
 
@@ -150,7 +192,15 @@ func (sr *ServiceRegistry) WatchServices(ctx context.Context, serviceType string
 	return servicesChan
 }
 
-// UpdateHealth updates the health status of the registered service
+// UpdateHealth updates the health status of the currently registered service.
+// The service must be registered before calling this method.
+//
+// Parameters:
+//   - ctx: Context for the update operation
+//   - health: New health status (e.g., "healthy", "unhealthy", "degraded")
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) error {
 	sr.mu.RLock()
 	serviceKey := sr.serviceKey
@@ -193,7 +243,15 @@ func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) erro
 	return nil
 }
 
-// Deregister removes the service from registry
+// Deregister removes the currently registered service from the registry.
+// It revokes the lease and explicitly deletes the service key from etcd.
+// This method is safe to call multiple times or on unregistered services.
+//
+// Parameters:
+//   - ctx: Context for the deregistration operation
+//
+// Returns:
+//   - error: Always returns nil (errors are logged but not returned)
 func (sr *ServiceRegistry) Deregister(ctx context.Context) error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -223,7 +281,18 @@ func (sr *ServiceRegistry) Deregister(ctx context.Context) error {
 	return nil
 }
 
-// GetServiceByID finds a specific service instance by ID
+// GetServiceByID finds a specific service instance by its ID and type.
+// This method is useful when you need to get detailed information about
+// a specific service instance.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - serviceType: The type of the service to find
+//   - serviceID: The unique ID of the service instance
+//
+// Returns:
+//   - *ServiceInfo: The service information if found, nil otherwise
+//   - error: nil on success, error describing the failure otherwise
 func (sr *ServiceRegistry) GetServiceByID(ctx context.Context, serviceType, serviceID string) (*ServiceInfo, error) {
 	serviceKey := fmt.Sprintf("/services/%s/%s", serviceType, serviceID)
 

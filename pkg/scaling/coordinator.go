@@ -1,3 +1,6 @@
+// Package scaling provides distributed auto-scaling functionality for microservices.
+// It includes metrics collection, scaling decision algorithms, and coordination
+// mechanisms to automatically scale services based on load and performance metrics.
 package scaling
 
 import (
@@ -11,53 +14,68 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// InstanceMetrics represents metrics for a service instance
+// InstanceMetrics represents performance and health metrics for a service instance.
+// These metrics are used by the scaling coordinator to make scaling decisions.
 type InstanceMetrics struct {
-	InstanceID     string    `json:"instance_id"`
-	ServiceType    string    `json:"service_type"`
-	CPUUsage       float64   `json:"cpu_usage"`
-	MemoryUsage    float64   `json:"memory_usage"`
-	QueueDepth     float64   `json:"queue_depth"`
-	ProcessingRate float64   `json:"processing_rate"`
-	ErrorRate      float64   `json:"error_rate"`
-	Timestamp      time.Time `json:"timestamp"`
-	Health         string    `json:"health"`
+	InstanceID     string    `json:"instance_id"`     // Unique identifier for the service instance
+	ServiceType    string    `json:"service_type"`    // Type of service (e.g., "collector", "streamer")
+	CPUUsage       float64   `json:"cpu_usage"`       // CPU utilization as a percentage (0.0-1.0)
+	MemoryUsage    float64   `json:"memory_usage"`    // Memory utilization as a percentage (0.0-1.0)
+	QueueDepth     float64   `json:"queue_depth"`     // Number of items in processing queue
+	ProcessingRate float64   `json:"processing_rate"` // Items processed per second
+	ErrorRate      float64   `json:"error_rate"`      // Error rate as a percentage (0.0-1.0)
+	Timestamp      time.Time `json:"timestamp"`       // When the metrics were collected
+	Health         string    `json:"health"`          // Health status ("healthy", "unhealthy", "degraded")
 }
 
-// ScalingDecision represents a scaling recommendation
+// ScalingDecision represents a scaling recommendation made by the coordinator.
+// It contains the decision details, rationale, and confidence level.
 type ScalingDecision struct {
-	ServiceType      string    `json:"service_type"`
-	Action           string    `json:"action"` // "scale_up", "scale_down", "no_action"
-	CurrentCount     int       `json:"current_count"`
-	RecommendedCount int       `json:"recommended_count"`
-	Reason           string    `json:"reason"`
-	Confidence       float64   `json:"confidence"`
-	Timestamp        time.Time `json:"timestamp"`
+	ServiceType      string    `json:"service_type"`      // Type of service this decision applies to
+	Action           string    `json:"action"`            // Scaling action: "scale_up", "scale_down", "no_action"
+	CurrentCount     int       `json:"current_count"`     // Current number of service instances
+	RecommendedCount int       `json:"recommended_count"` // Recommended number of instances
+	Reason           string    `json:"reason"`            // Human-readable reason for the decision
+	Confidence       float64   `json:"confidence"`        // Confidence level in the decision (0.0-1.0)
+	Timestamp        time.Time `json:"timestamp"`         // When the decision was made
 }
 
-// ScalingRules defines scaling behavior
+// ScalingRules defines the scaling behavior and thresholds for a service type.
+// These rules control when and how scaling decisions are made.
 type ScalingRules struct {
-	MinInstances       int                `json:"min_instances"`
-	MaxInstances       int                `json:"max_instances"`
-	ScaleUpThreshold   float64            `json:"scale_up_threshold"`
-	ScaleDownThreshold float64            `json:"scale_down_threshold"`
-	CooldownPeriod     time.Duration      `json:"cooldown_period"`
-	MetricWeights      map[string]float64 `json:"metric_weights"`
+	MinInstances       int                `json:"min_instances"`        // Minimum number of instances to maintain
+	MaxInstances       int                `json:"max_instances"`        // Maximum number of instances allowed
+	ScaleUpThreshold   float64            `json:"scale_up_threshold"`   // Load threshold to trigger scale-up (0.0-1.0)
+	ScaleDownThreshold float64            `json:"scale_down_threshold"` // Load threshold to trigger scale-down (0.0-1.0)
+	CooldownPeriod     time.Duration      `json:"cooldown_period"`      // Minimum time between scaling actions
+	MetricWeights      map[string]float64 `json:"metric_weights"`       // Weights for different metrics in load calculation
 }
 
-// ScalingCoordinator manages distributed scaling decisions
+// ScalingCoordinator manages distributed scaling decisions for a service type.
+// It collects metrics from service instances, analyzes load patterns, and makes
+// scaling recommendations while coordinating with other coordinators to avoid conflicts.
 type ScalingCoordinator struct {
-	client      *clientv3.Client
-	serviceType string
-	instanceID  string
-	rules       *ScalingRules
-	leaseID     clientv3.LeaseID
-	mu          sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
+	client      *clientv3.Client   // etcd client for coordination and data storage
+	serviceType string             // Type of service this coordinator manages
+	instanceID  string             // Unique ID of this coordinator instance
+	rules       *ScalingRules      // Scaling rules and thresholds
+	leaseID     clientv3.LeaseID   // etcd lease ID for this coordinator
+	mu          sync.RWMutex       // Mutex for thread-safe access
+	ctx         context.Context    // Context for cancellation
+	cancel      context.CancelFunc // Cancel function for graceful shutdown
 }
 
-// NewScalingCoordinator creates a new scaling coordinator
+// NewScalingCoordinator creates a new scaling coordinator for the specified service type.
+// If rules is nil, default scaling rules will be applied.
+//
+// Parameters:
+//   - client: etcd client for coordination and storage
+//   - serviceType: Type of service to manage (e.g., "collector", "streamer")
+//   - instanceID: Unique identifier for this coordinator instance
+//   - rules: Scaling rules, or nil to use defaults
+//
+// Returns:
+//   - *ScalingCoordinator: A new scaling coordinator instance
 func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID string, rules *ScalingRules) *ScalingCoordinator {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -86,7 +104,12 @@ func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID stri
 	}
 }
 
-// Start starts the scaling coordinator
+// Start starts the scaling coordinator and begins metrics reporting and decision making.
+// It creates an etcd lease, starts background goroutines for metrics reporting and
+// scaling decisions, and begins the keep-alive process for the lease.
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (sc *ScalingCoordinator) Start() error {
 	// Create lease for metrics reporting
 	lease, err := sc.client.Grant(sc.ctx, 60) // 60 second TTL
@@ -119,7 +142,14 @@ func (sc *ScalingCoordinator) Start() error {
 	return nil
 }
 
-// ReportMetrics reports instance metrics to etcd
+// ReportMetrics reports instance metrics to etcd for use in scaling decisions.
+// The metrics are stored with a lease to ensure they expire if the instance becomes unavailable.
+//
+// Parameters:
+//   - metrics: The instance metrics to report
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (sc *ScalingCoordinator) ReportMetrics(metrics InstanceMetrics) error {
 	metrics.InstanceID = sc.instanceID
 	metrics.ServiceType = sc.serviceType
@@ -145,7 +175,13 @@ func (sc *ScalingCoordinator) ReportMetrics(metrics InstanceMetrics) error {
 	return nil
 }
 
-// GetScalingDecision analyzes metrics and returns scaling recommendation
+// GetScalingDecision analyzes current metrics and returns a scaling recommendation.
+// It considers all active instances, calculates aggregate load, checks cooldown periods,
+// and applies scaling rules to determine the appropriate action.
+//
+// Returns:
+//   - *ScalingDecision: The scaling decision with action, counts, and rationale
+//   - error: nil on success, error describing the failure otherwise
 func (sc *ScalingCoordinator) GetScalingDecision() (*ScalingDecision, error) {
 	ctx, cancel := context.WithTimeout(sc.ctx, 10*time.Second)
 	defer cancel()
@@ -249,7 +285,15 @@ func (sc *ScalingCoordinator) GetScalingDecision() (*ScalingDecision, error) {
 	return decision, nil
 }
 
-// calculateAggregateLoad calculates the weighted average load across all instances
+// calculateAggregateLoad calculates the weighted average load across all instances.
+// It applies the configured metric weights to CPU, memory, and queue depth metrics
+// to produce a single load value between 0.0 and 1.0.
+//
+// Parameters:
+//   - metrics: Slice of instance metrics to analyze
+//
+// Returns:
+//   - float64: Aggregate load value (0.0-1.0)
 func (sc *ScalingCoordinator) calculateAggregateLoad(metrics []InstanceMetrics) float64 {
 	if len(metrics) == 0 {
 		return 0
@@ -266,7 +310,11 @@ func (sc *ScalingCoordinator) calculateAggregateLoad(metrics []InstanceMetrics) 
 	return totalLoad / float64(len(metrics))
 }
 
-// isInCooldownPeriod checks if we're in a cooldown period
+// isInCooldownPeriod checks if the service is currently in a cooldown period.
+// During cooldown, no scaling actions are taken to prevent oscillation.
+//
+// Returns:
+//   - bool: true if in cooldown period, false otherwise
 func (sc *ScalingCoordinator) isInCooldownPeriod() bool {
 	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
 	defer cancel()
@@ -295,7 +343,14 @@ func (sc *ScalingCoordinator) isInCooldownPeriod() bool {
 	return false
 }
 
-// PublishScalingDecision publishes a scaling decision to etcd
+// PublishScalingDecision publishes a scaling decision to etcd for other components to act upon.
+// The decision is stored in a well-known location where scaling executors can find it.
+//
+// Parameters:
+//   - decision: The scaling decision to publish
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (sc *ScalingCoordinator) PublishScalingDecision(decision *ScalingDecision) error {
 	data, err := json.Marshal(decision)
 	if err != nil {
@@ -398,7 +453,11 @@ func (sc *ScalingCoordinator) tryAcquireLeadership() bool {
 	return true
 }
 
-// Stop stops the scaling coordinator
+// Stop gracefully stops the scaling coordinator and cleans up resources.
+// It cancels the context, revokes the etcd lease, and stops all background operations.
+//
+// Returns:
+//   - error: Always returns nil (errors are logged but not returned)
 func (sc *ScalingCoordinator) Stop() error {
 	sc.cancel()
 
@@ -412,6 +471,7 @@ func (sc *ScalingCoordinator) Stop() error {
 	return nil
 }
 
+// minInt returns the smaller of two integers.
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -419,6 +479,7 @@ func minInt(a, b int) int {
 	return b
 }
 
+// maxInt returns the larger of two integers.
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -426,6 +487,7 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// minFloat returns the smaller of two float64 values.
 func minFloat(a, b float64) float64 {
 	if a < b {
 		return a

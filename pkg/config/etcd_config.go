@@ -1,3 +1,5 @@
+// Package config provides dynamic configuration management using etcd as the backend store.
+// It supports real-time configuration updates, caching, and watching for configuration changes.
 package config
 
 import (
@@ -11,25 +13,38 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// ConfigUpdate represents a configuration change
+// ConfigUpdate represents a configuration change event from etcd.
+// It contains information about what configuration key was changed,
+// its new value, the type of change (PUT/DELETE), and when it occurred.
 type ConfigUpdate struct {
-	Key       string      `json:"key"`
-	Value     interface{} `json:"value"`
-	Type      string      `json:"type"`
-	Timestamp time.Time   `json:"timestamp"`
+	Key       string      `json:"key"`       // The configuration key that was changed
+	Value     interface{} `json:"value"`     // The new value (nil for DELETE operations)
+	Type      string      `json:"type"`      // Type of change: "PUT" or "DELETE"
+	Timestamp time.Time   `json:"timestamp"` // When the change occurred
 }
 
-// ConfigManager manages dynamic configuration using etcd
+// ConfigManager manages dynamic configuration using etcd as the backend store.
+// It provides caching, real-time updates, and thread-safe access to configuration values.
+// The manager supports watching for configuration changes and maintains a local cache
+// for fast access to frequently used configuration values.
 type ConfigManager struct {
-	client      *clientv3.Client
-	configCache map[string]interface{}
-	watchers    map[string]chan ConfigUpdate
-	mu          sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
+	client      *clientv3.Client             // etcd client for backend operations
+	configCache map[string]interface{}       // Local cache of configuration values
+	watchers    map[string]chan ConfigUpdate // Active watchers for configuration keys
+	mu          sync.RWMutex                 // Mutex for thread-safe access
+	ctx         context.Context              // Context for cancellation
+	cancel      context.CancelFunc           // Cancel function for graceful shutdown
 }
 
-// NewConfigManager creates a new configuration manager
+// NewConfigManager creates a new configuration manager with the provided etcd client.
+// It initializes the internal cache, watchers map, and sets up a cancellable context
+// for managing the lifecycle of background operations.
+//
+// Parameters:
+//   - client: An initialized etcd client for backend operations
+//
+// Returns:
+//   - *ConfigManager: A new configuration manager instance ready for use
 func NewConfigManager(client *clientv3.Client) *ConfigManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -42,7 +57,15 @@ func NewConfigManager(client *clientv3.Client) *ConfigManager {
 	}
 }
 
-// Get retrieves a configuration value
+// Get retrieves a configuration value from the local cache.
+// This method is thread-safe and provides fast access to cached configuration values.
+//
+// Parameters:
+//   - key: The configuration key to retrieve
+//
+// Returns:
+//   - interface{}: The configuration value if found, nil otherwise
+//   - bool: true if the key exists, false otherwise
 func (cm *ConfigManager) Get(key string) (interface{}, bool) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -51,7 +74,15 @@ func (cm *ConfigManager) Get(key string) (interface{}, bool) {
 	return value, exists
 }
 
-// GetString retrieves a string configuration value
+// GetString retrieves a string configuration value with type safety.
+// If the key doesn't exist or the value is not a string, returns the default value.
+//
+// Parameters:
+//   - key: The configuration key to retrieve
+//   - defaultValue: The value to return if key doesn't exist or is not a string
+//
+// Returns:
+//   - string: The configuration value as a string, or defaultValue if not found/invalid
 func (cm *ConfigManager) GetString(key string, defaultValue string) string {
 	if value, exists := cm.Get(key); exists {
 		if str, ok := value.(string); ok {
@@ -61,7 +92,16 @@ func (cm *ConfigManager) GetString(key string, defaultValue string) string {
 	return defaultValue
 }
 
-// GetInt retrieves an integer configuration value
+// GetInt retrieves an integer configuration value with type safety.
+// Handles both int and float64 types (JSON unmarshaling converts numbers to float64).
+// If the key doesn't exist or the value is not numeric, returns the default value.
+//
+// Parameters:
+//   - key: The configuration key to retrieve
+//   - defaultValue: The value to return if key doesn't exist or is not numeric
+//
+// Returns:
+//   - int: The configuration value as an integer, or defaultValue if not found/invalid
 func (cm *ConfigManager) GetInt(key string, defaultValue int) int {
 	if value, exists := cm.Get(key); exists {
 		if num, ok := value.(float64); ok {
@@ -74,7 +114,15 @@ func (cm *ConfigManager) GetInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// GetFloat retrieves a float configuration value
+// GetFloat retrieves a float64 configuration value with type safety.
+// If the key doesn't exist or the value is not a float64, returns the default value.
+//
+// Parameters:
+//   - key: The configuration key to retrieve
+//   - defaultValue: The value to return if key doesn't exist or is not a float64
+//
+// Returns:
+//   - float64: The configuration value as a float64, or defaultValue if not found/invalid
 func (cm *ConfigManager) GetFloat(key string, defaultValue float64) float64 {
 	if value, exists := cm.Get(key); exists {
 		if num, ok := value.(float64); ok {
@@ -84,7 +132,15 @@ func (cm *ConfigManager) GetFloat(key string, defaultValue float64) float64 {
 	return defaultValue
 }
 
-// GetBool retrieves a boolean configuration value
+// GetBool retrieves a boolean configuration value with type safety.
+// If the key doesn't exist or the value is not a boolean, returns the default value.
+//
+// Parameters:
+//   - key: The configuration key to retrieve
+//   - defaultValue: The value to return if key doesn't exist or is not a boolean
+//
+// Returns:
+//   - bool: The configuration value as a boolean, or defaultValue if not found/invalid
 func (cm *ConfigManager) GetBool(key string, defaultValue bool) bool {
 	if value, exists := cm.Get(key); exists {
 		if b, ok := value.(bool); ok {
@@ -94,7 +150,16 @@ func (cm *ConfigManager) GetBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
-// Set stores a configuration value in etcd
+// Set stores a configuration value in etcd and updates the local cache.
+// The value is JSON-marshaled before storage and the operation includes a timeout.
+// On successful storage, the local cache is immediately updated.
+//
+// Parameters:
+//   - key: The configuration key to set
+//   - value: The value to store (must be JSON-marshalable)
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (cm *ConfigManager) Set(key string, value interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -119,7 +184,12 @@ func (cm *ConfigManager) Set(key string, value interface{}) error {
 	return nil
 }
 
-// LoadInitialConfig loads all existing configuration from etcd
+// LoadInitialConfig loads all existing configuration from etcd into the local cache.
+// This method should be called after creating a ConfigManager to populate the cache
+// with existing configuration values. It uses a prefix scan to load all keys under "/config/".
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (cm *ConfigManager) LoadInitialConfig() error {
 	ctx, cancel := context.WithTimeout(cm.ctx, 30*time.Second)
 	defer cancel()
@@ -149,7 +219,16 @@ func (cm *ConfigManager) LoadInitialConfig() error {
 	return nil
 }
 
-// WatchConfig watches for changes to a specific configuration key
+// WatchConfig watches for changes to a specific configuration key.
+// Returns a channel that receives ConfigUpdate events when the key changes.
+// The watcher automatically updates the local cache when changes occur.
+// Only one watcher per key is allowed; subsequent calls return the existing channel.
+//
+// Parameters:
+//   - key: The configuration key to watch
+//
+// Returns:
+//   - <-chan ConfigUpdate: A receive-only channel for configuration updates
 func (cm *ConfigManager) WatchConfig(key string) <-chan ConfigUpdate {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -220,7 +299,12 @@ func (cm *ConfigManager) WatchConfig(key string) <-chan ConfigUpdate {
 	return ch
 }
 
-// WatchAllConfig watches for changes to all configuration keys
+// WatchAllConfig watches for changes to all configuration keys under the "/config/" prefix.
+// Returns a channel that receives ConfigUpdate events for any configuration change.
+// The watcher automatically updates the local cache when changes occur.
+//
+// Returns:
+//   - <-chan ConfigUpdate: A receive-only channel for all configuration updates
 func (cm *ConfigManager) WatchAllConfig() <-chan ConfigUpdate {
 	updateChan := make(chan ConfigUpdate, 50)
 
@@ -275,7 +359,15 @@ func (cm *ConfigManager) WatchAllConfig() <-chan ConfigUpdate {
 	return updateChan
 }
 
-// SetDefaults sets default configuration values if they don't exist
+// SetDefaults sets default configuration values for keys that don't already exist.
+// This method is useful for initializing configuration with sensible defaults
+// without overwriting existing user-configured values.
+//
+// Parameters:
+//   - defaults: A map of key-value pairs to set as defaults
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (cm *ConfigManager) SetDefaults(defaults map[string]interface{}) error {
 	for key, value := range defaults {
 		if _, exists := cm.Get(key); !exists {
@@ -287,7 +379,12 @@ func (cm *ConfigManager) SetDefaults(defaults map[string]interface{}) error {
 	return nil
 }
 
-// GetAllConfig returns all configuration values
+// GetAllConfig returns a copy of all configuration values from the local cache.
+// This method is thread-safe and returns a new map to prevent external modifications
+// to the internal cache.
+//
+// Returns:
+//   - map[string]interface{}: A copy of all cached configuration values
 func (cm *ConfigManager) GetAllConfig() map[string]interface{} {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -299,7 +396,12 @@ func (cm *ConfigManager) GetAllConfig() map[string]interface{} {
 	return config
 }
 
-// Close closes the configuration manager
+// Close gracefully shuts down the configuration manager.
+// It cancels the internal context, closes all active watchers, and cleans up resources.
+// This method should be called when the configuration manager is no longer needed.
+//
+// Returns:
+//   - error: Always returns nil (kept for interface compatibility)
 func (cm *ConfigManager) Close() error {
 	cm.cancel()
 

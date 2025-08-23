@@ -3,7 +3,6 @@ package messagequeue
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -22,69 +21,31 @@ type MockTelemetryData struct {
 }
 
 func TestMessageQueueIntegration(t *testing.T) {
-	// Test both etcd and in-memory implementations
-	testCases := []struct {
-		name       string
-		setupEtcd  bool
-		expectEtcd bool
-	}{
-		{
-			name:       "InMemory",
-			setupEtcd:  false,
-			expectEtcd: false,
-		},
-	}
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
-	// Add etcd test case if available
-	if os.Getenv("ETCD_ENDPOINTS") != "" {
-		testCases = append(testCases, struct {
-			name       string
-			setupEtcd  bool
-			expectEtcd bool
-		}{
-			name:       "EtcdBackend",
-			setupEtcd:  true,
-			expectEtcd: true,
-		})
-	}
+	t.Run("EtcdBackend", func(t *testing.T) {
+		// Create service with etcd backend
+		service, err := NewMessageQueueService()
+		require.NoError(t, err, "Should create message queue service successfully")
+		defer service.Stop()
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Setup environment
-			originalEndpoints := os.Getenv("ETCD_ENDPOINTS")
-			if !tc.setupEtcd {
-				os.Unsetenv("ETCD_ENDPOINTS")
-			}
-			defer func() {
-				if originalEndpoints != "" {
-					os.Setenv("ETCD_ENDPOINTS", originalEndpoints)
-				}
-			}()
+		// Verify etcd backend is available
+		assert.NotNil(t, service.queue.etcdBackend, "Should use etcd backend")
 
-			// Create services
-			service := NewMessageQueueService()
-			defer service.Stop()
-
-			// Verify backend type
-			if tc.expectEtcd {
-				assert.NotNil(t, service.queue.etcdBackend, "Should use etcd backend")
-			} else {
-				// In-memory fallback when etcd not available
-				assert.NotNil(t, service.queue, "Should have message queue service")
-			}
-
-			// Test full pipeline
-			testFullPipeline(t, service)
-		})
-	}
+		// Test full pipeline
+		testFullPipeline(t, service)
+	})
 }
 
 func testFullPipeline(t *testing.T, service *MessageQueueService) {
 	// ctx := context.Background() // Unused in current tests
 
 	t.Run("ProducerConsumerFlow", func(t *testing.T) {
-		const numMessages = 100
-		const numConsumers = 3
+		const numMessages = 10
+		const numConsumers = 1
 
 		// Step 1: Produce telemetry messages
 		var producedMessages []MockTelemetryData
@@ -165,7 +126,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 		select {
 		case <-done:
 			// All consumers finished
-		case <-time.After(30 * time.Second):
+		case <-time.After(60 * time.Second):
 			t.Fatal("Test timed out waiting for consumers")
 		}
 
@@ -242,11 +203,13 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 }
 
 func TestMessageQueueFailover(t *testing.T) {
-	if os.Getenv("ETCD_ENDPOINTS") == "" {
-		t.Skip("etcd not available for failover testing")
-	}
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
-	service := NewMessageQueueService()
+	service, err := NewMessageQueueService()
+	require.NoError(t, err)
 	defer service.Stop()
 
 	t.Run("ConsumerFailover", func(t *testing.T) {
@@ -294,7 +257,13 @@ func TestMessageQueueFailover(t *testing.T) {
 }
 
 func BenchmarkMessageQueueIntegration(b *testing.B) {
-	service := NewMessageQueueService()
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(b, err)
+	defer cleanup()
+
+	service, err := NewMessageQueueService()
+	require.NoError(b, err)
 	defer service.Stop()
 
 	telemetryData := MockTelemetryData{

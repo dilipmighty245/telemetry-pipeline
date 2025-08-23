@@ -1,0 +1,42 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: telemetry-etcd-test
+    ports:
+      - "12379:2379"
+      - "12380:2380"
+    environment:
+      - ETCD_NAME=etcd-test
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://localhost:12379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://localhost:12380
+      - ETCD_INITIAL_CLUSTER=etcd-test=http://localhost:12380
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-test
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_AUTO_COMPACTION_RETENTION=1
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_HEARTBEAT_INTERVAL=250
+      - ETCD_ELECTION_TIMEOUT=1250
+    volumes:
+      - etcd-test-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - telemetry-test
+
+# Test services will be started programmatically by the test
+# This compose file is primarily for etcd infrastructure
+
+volumes:
+  etcd-test-data:
+    driver: local
+
+networks:
+  telemetry-test:
+    driver: bridge

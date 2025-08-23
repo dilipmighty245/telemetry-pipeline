@@ -36,12 +36,12 @@ func TestTelemetryPipelineIntegration(t *testing.T) {
 	defer os.Remove(tmpFile)
 
 	// Create message queue service
-	mqService := messagequeue.NewMessageQueueService()
+	mqService, err := messagequeue.NewMessageQueueService()
+	require.NoError(t, err)
 	defer mqService.Stop()
 
 	// Create in-memory database service (for testing)
-	dbService := createInMemoryDatabase(t)
-	defer dbService.Close()
+	_ = createInMemoryDatabase(t) // Not used anymore, etcd handles persistence
 
 	// Create and start streamer
 	streamerConfig := &streamer.StreamerConfig{
@@ -68,14 +68,6 @@ func TestTelemetryPipelineIntegration(t *testing.T) {
 		BatchSize:     2,
 		PollInterval:  100 * time.Millisecond,
 		BufferSize:    10,
-		DatabaseConfig: &collector.DatabaseConfig{
-			Host:     "localhost",
-			Port:     5432,
-			User:     "test",
-			Password: "test",
-			DBName:   "test",
-			SSLMode:  "disable",
-		},
 	}
 
 	collectorService, err := collector.NewCollectorService(collectorConfig, mqService)
@@ -108,7 +100,8 @@ func TestMessageQueueResilience(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	mqService := messagequeue.NewMessageQueueService()
+	mqService, err := messagequeue.NewMessageQueueService()
+	require.NoError(t, err)
 	defer mqService.Stop()
 
 	// Test publishing to non-existent topic (should create topic)
@@ -124,8 +117,7 @@ func TestMessageQueueResilience(t *testing.T) {
 	assert.Len(t, messages, 1)
 
 	// Test acknowledging messages
-	messageIDs := []string{messages[0].ID}
-	err = mqService.AcknowledgeMessages("consumer-1", messageIDs)
+	err = mqService.AcknowledgeMessages("consumer-1", messages[:1])
 	assert.NoError(t, err)
 
 	// Verify stats
@@ -193,7 +185,8 @@ func TestScaling(t *testing.T) {
 	tmpFile := createTempCSV(t, csvContent)
 	defer os.Remove(tmpFile)
 
-	mqService := messagequeue.NewMessageQueueService()
+	mqService, err := messagequeue.NewMessageQueueService()
+	require.NoError(t, err)
 	defer mqService.Stop()
 
 	// Start multiple streamers
@@ -267,22 +260,9 @@ func createTempCSV(t *testing.T, content string) string {
 	return tmpFile.Name()
 }
 
-func createInMemoryDatabase(t *testing.T) *collector.DatabaseService {
-	// For integration tests, you might want to use a real database
-	// This is a placeholder for the actual database setup
-	config := &collector.DatabaseConfig{
-		Host:     "localhost",
-		Port:     5432,
-		User:     "test",
-		Password: "test",
-		DBName:   "test_telemetry",
-		SSLMode:  "disable",
-	}
-
-	dbService, err := collector.NewDatabaseService(config)
-	if err != nil {
-		t.Skip("Database not available for integration test")
-	}
-
-	return dbService
+func createInMemoryDatabase(t *testing.T) interface{} {
+	// For integration tests, we don't need a real database
+	// The collector service now uses etcd for persistence
+	// This is a placeholder that returns nil since database is not used
+	return nil
 }

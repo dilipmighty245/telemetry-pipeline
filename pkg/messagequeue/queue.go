@@ -102,7 +102,7 @@ type TopicStats struct {
 }
 
 // NewMessageQueue creates a new message queue instance
-func NewMessageQueue() *MessageQueue {
+func NewMessageQueue() (*MessageQueue, error) {
 	mq := &MessageQueue{
 		topics: make(map[string]*Topic),
 		stats: &QueueStats{
@@ -110,56 +110,24 @@ func NewMessageQueue() *MessageQueue {
 		},
 	}
 
-	// Try to initialize etcd backend first (preferred for distributed systems)
-	logging.Infof("Attempting to initialize etcd backend...")
+	// Initialize etcd backend - required for distributed systems
+	logging.Infof("Initializing etcd backend...")
 	etcdBackend, err := NewEtcdBackend()
 	if err != nil {
-		logging.Infof("etcd backend not available, using in-memory queue: %v", err)
-	} else {
-		mq.etcdBackend = etcdBackend
-		logging.Infof("Successfully initialized etcd-backed message queue (distributed)")
+		logging.Errorf("Failed to initialize etcd backend: %v", err)
+		logging.Errorf("etcd backend is required - application cannot start without it")
+		return nil, fmt.Errorf("etcd backend initialization failed: %w", err)
 	}
 
-	return mq
+	mq.etcdBackend = etcdBackend
+	logging.Infof("Successfully initialized etcd-backed message queue")
+	return mq, nil
 }
 
 // CreateTopic creates a new topic
 func (mq *MessageQueue) CreateTopic(name string, config map[string]string) error {
-	// For etcd backend, topics are created implicitly when first message is published
-	if mq.etcdBackend != nil {
-		logging.Debugf("Topic %s will be created implicitly in etcd on first publish", name)
-		return nil
-	}
-
-	// In-memory implementation
-	mq.mu.Lock()
-	defer mq.mu.Unlock()
-
-	if _, exists := mq.topics[name]; exists {
-		return nil // Topic already exists
-	}
-
-	maxSize := 10000 // Default max size
-	if sizeStr, ok := config["max_size"]; ok {
-		// Parse maxSize from config if provided
-		_ = sizeStr // For now, use default
-	}
-
-	topic := &Topic{
-		Name:      name,
-		Messages:  make([]*Message, 0),
-		Consumers: make(map[string]*Consumer),
-		Config:    config,
-		CreatedAt: time.Now(),
-		maxSize:   maxSize,
-	}
-
-	mq.topics[name] = topic
-	mq.stats.TopicStats[name] = &TopicStats{
-		LastMessage: time.Now(),
-	}
-
-	logging.Infof("Created topic: %s", name)
+	// Topics are created implicitly in etcd when first message is published
+	logging.Debugf("Topic %s will be created implicitly in etcd on first publish", name)
 	return nil
 }
 
@@ -178,153 +146,47 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 		Retries:   0,
 	}
 
-	// Use etcd backend if available (preferred for distributed systems)
-	if mq.etcdBackend != nil {
-		err := mq.etcdBackend.PublishMessage(topic, msg)
-		if err != nil {
-			logging.Errorf("Failed to publish to etcd backend: %v", err)
-			return nil, err
-		}
-		return msg, nil
+	// Publish to etcd backend
+	err := mq.etcdBackend.PublishMessage(topic, msg)
+	if err != nil {
+		logging.Errorf("Failed to publish to etcd backend: %v", err)
+		return nil, err
 	}
-
-	// Fall back to in-memory implementation
-	mq.mu.RLock()
-	t, exists := mq.topics[topic]
-	mq.mu.RUnlock()
-
-	if !exists {
-		return nil, ErrTopicNotFound
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Check if topic is full
-	if len(t.Messages) >= t.maxSize {
-		return nil, ErrQueueFull
-	}
-
-	// Add to topic
-	t.Messages = append(t.Messages, msg)
-
-	// Update stats
-	mq.updateStats(topic, 1, 0, 0, 0)
-
-	logging.Debugf("Published message %s to topic %s", msg.ID, topic)
 	return msg, nil
 }
 
 // Consume consumes messages from a topic
 func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
-	// Use etcd backend if available (preferred for distributed systems)
-	if mq.etcdBackend != nil {
-		messages, err := mq.etcdBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
-		if err != nil {
-			logging.Errorf("Failed to consume from etcd backend: %v", err)
-			return nil, err
-		}
-		return messages, nil
+	// Consume from etcd backend
+	messages, err := mq.etcdBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
+	if err != nil {
+		logging.Errorf("Failed to consume from etcd backend: %v", err)
+		return nil, err
 	}
-
-	// Fall back to in-memory implementation
-	mq.mu.RLock()
-	t, exists := mq.topics[topic]
-	mq.mu.RUnlock()
-
-	if !exists {
-		return nil, ErrTopicNotFound
-	}
-
-	// Register consumer
-	consumer := mq.registerConsumer(t, consumerGroup, consumerID)
-
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	var messages []*Message
-	count := 0
-
-	// Find unprocessed messages
-	for _, msg := range t.Messages {
-		if count >= maxMessages {
-			break
-		}
-
-		// Skip expired messages
-		if time.Now().After(msg.ExpiresAt) {
-			continue
-		}
-
-		// Skip already processed messages by this consumer
-		if mq.isMessageProcessedByConsumer(consumer, msg.ID) {
-			continue
-		}
-
-		// Skip messages already being processed
-		if msg.Processed {
-			continue
-		}
-
-		messages = append(messages, msg)
-		count++
-	}
-
-	logging.Debugf("Consumer %s consumed %d messages from topic %s", consumerID, len(messages), topic)
 	return messages, nil
 }
 
 // Acknowledge acknowledges processed messages
 func (mq *MessageQueue) Acknowledge(consumerGroup string, messages []*Message) ([]string, []string, error) {
-	// Use etcd backend if available (preferred for distributed systems)
-	if mq.etcdBackend != nil {
-		return mq.etcdBackend.AcknowledgeMessagesByKeys(consumerGroup, messages)
-	}
-
-	// Fall back to in-memory implementation
-	var acked []string
-	var failed []string
-
-	mq.mu.RLock()
-	defer mq.mu.RUnlock()
-
-	for _, message := range messages {
-		found := false
-		for _, topic := range mq.topics {
-			topic.mu.Lock()
-			for _, msg := range topic.Messages {
-				if msg.ID == message.ID {
-					msg.Processed = true
-					found = true
-
-					acked = append(acked, message.ID)
-					mq.updateStats(topic.Name, 0, 1, 0, 0)
-					break
-				}
-			}
-			topic.mu.Unlock()
-			if found {
-				break
-			}
-		}
-
-		if !found {
-			failed = append(failed, message.ID)
-		}
-	}
-
-	logging.Debugf("Consumer group %s acknowledged %d messages, failed %d", consumerGroup, len(acked), len(failed))
-	return acked, failed, nil
+	// Acknowledge messages in etcd backend
+	return mq.etcdBackend.AcknowledgeMessagesByKeys(consumerGroup, messages)
 }
 
-// ListTopics returns all topics
+// ListTopics returns all topics from etcd
 func (mq *MessageQueue) ListTopics() map[string]*Topic {
-	mq.mu.RLock()
-	defer mq.mu.RUnlock()
+	topicNames, err := mq.etcdBackend.ListTopics()
+	if err != nil {
+		logging.Errorf("Failed to list topics from etcd: %v", err)
+		return make(map[string]*Topic)
+	}
 
 	topics := make(map[string]*Topic)
-	for name, topic := range mq.topics {
-		topics[name] = topic
+	for _, name := range topicNames {
+		// Create minimal topic info since etcd doesn't store topic metadata
+		topics[name] = &Topic{
+			Name:      name,
+			CreatedAt: time.Now(), // We don't have actual creation time from etcd
+		}
 	}
 	return topics
 }
@@ -357,96 +219,13 @@ func (mq *MessageQueue) GetStats() *QueueStats {
 	return stats
 }
 
-// CleanupExpiredMessages removes expired messages from all topics
+// CleanupExpiredMessages is handled automatically by etcd TTL
 func (mq *MessageQueue) CleanupExpiredMessages() {
-	mq.mu.RLock()
-	topics := make([]*Topic, 0, len(mq.topics))
-	for _, topic := range mq.topics {
-		topics = append(topics, topic)
-	}
-	mq.mu.RUnlock()
-
-	for _, topic := range topics {
-		topic.mu.Lock()
-		var validMessages []*Message
-		expiredCount := 0
-
-		for _, msg := range topic.Messages {
-			if time.Now().Before(msg.ExpiresAt) {
-				validMessages = append(validMessages, msg)
-			} else {
-				expiredCount++
-			}
-		}
-
-		topic.Messages = validMessages
-		topic.mu.Unlock()
-
-		if expiredCount > 0 {
-			logging.Infof("Cleaned up %d expired messages from topic %s", expiredCount, topic.Name)
-			mq.updateStats(topic.Name, 0, 0, 0, int64(expiredCount))
-		}
-	}
+	// No-op: etcd handles message expiration automatically via TTL
+	logging.Debugf("Message cleanup handled automatically by etcd TTL")
 }
 
 // Helper functions
-
-func (mq *MessageQueue) registerConsumer(topic *Topic, group, id string) *Consumer {
-	topic.mu.Lock()
-	defer topic.mu.Unlock()
-
-	consumer, exists := topic.Consumers[id]
-	if !exists {
-		consumer = &Consumer{
-			ID:           id,
-			Group:        group,
-			LastSeen:     time.Now(),
-			ProcessedIDs: make([]string, 0),
-		}
-		topic.Consumers[id] = consumer
-
-		// Update topic stats
-		if stats, exists := mq.stats.TopicStats[topic.Name]; exists {
-			stats.ConsumerCount = len(topic.Consumers)
-		}
-	} else {
-		consumer.LastSeen = time.Now()
-	}
-
-	return consumer
-}
-
-func (mq *MessageQueue) isMessageProcessedByConsumer(consumer *Consumer, messageID string) bool {
-	consumer.mu.RLock()
-	defer consumer.mu.RUnlock()
-
-	for _, id := range consumer.ProcessedIDs {
-		if id == messageID {
-			return true
-		}
-	}
-	return false
-}
-
-func (mq *MessageQueue) updateStats(topic string, total, processed, failed, expired int64) {
-	mq.stats.mu.Lock()
-	defer mq.stats.mu.Unlock()
-
-	mq.stats.TotalMessages += total
-	mq.stats.ProcessedMessages += processed
-	mq.stats.FailedMessages += failed
-	mq.stats.PendingMessages = mq.stats.TotalMessages - mq.stats.ProcessedMessages - mq.stats.FailedMessages
-	mq.stats.LastUpdated = time.Now()
-
-	if topicStats, exists := mq.stats.TopicStats[topic]; exists {
-		topicStats.MessageCount += total
-		topicStats.ProcessedCount += processed
-		topicStats.PendingCount = topicStats.MessageCount - topicStats.ProcessedCount
-		if total > 0 {
-			topicStats.LastMessage = time.Now()
-		}
-	}
-}
 
 func generateMessageID() string {
 	// Simple message ID generation using timestamp and random component
@@ -455,13 +234,10 @@ func generateMessageID() string {
 
 // Close closes the message queue and cleans up resources
 func (mq *MessageQueue) Close() error {
-	if mq.etcdBackend != nil {
-		if closeErr := mq.etcdBackend.Close(); closeErr != nil {
-			logging.Errorf("Failed to close etcd backend: %v", closeErr)
-			return closeErr
-		}
+	if closeErr := mq.etcdBackend.Close(); closeErr != nil {
+		logging.Errorf("Failed to close etcd backend: %v", closeErr)
+		return closeErr
 	}
-
 	return nil
 }
 
