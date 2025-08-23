@@ -65,6 +65,20 @@ nexusStreamer:
     CSV_FILE: "dcgm_metrics_20250718_134233.csv"
     BATCH_SIZE: "100"
     STREAM_INTERVAL: "1s"
+    # HTTP server configuration for CSV upload
+    ENABLE_HTTP: "true"
+    HTTP_PORT: "8081"
+    UPLOAD_DIR: "/tmp/telemetry-uploads"
+    MAX_UPLOAD_SIZE: "104857600"  # 100MB
+    MAX_MEMORY: "33554432"        # 32MB
+  
+  # Service configuration for CSV upload endpoint
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8081
+    targetPort: 8081
+    annotations: {}
   
   # CSV data configuration
   csvData:

@@ -2,7 +2,7 @@
 //
 // @title Nexus Telemetry API Gateway
 // @version 2.0
-// @description API Gateway component for Nexus-enhanced Telemetry Pipeline with GraphQL, REST, and WebSocket support
+// @description API Gateway component for Nexus-enhanced Telemetry Pipeline providing REST API endpoints for querying telemetry data, with GraphQL and WebSocket support
 // @termsOfService http://swagger.io/terms/
 //
 // @contact.name API Support
@@ -75,8 +75,6 @@ type NexusGateway struct {
 	messageQueue       *messagequeue.MessageQueueService
 	echo               *echo.Echo
 	upgrader           websocket.Upgrader
-	ctx                context.Context
-	cancel             context.CancelFunc
 	config             *GatewayConfig
 }
 
@@ -152,7 +150,7 @@ func run(args []string, stdout io.Writer) error {
 	log.Infof("GraphQL: %v, WebSocket: %v, CORS: %v", config.EnableGraphQL, config.EnableWebSocket, config.EnableCORS)
 
 	// Create and start the gateway
-	gateway, err := NewNexusGateway(config)
+	gateway, err := NewNexusGateway(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to create gateway: %w", err)
 	}
@@ -217,8 +215,7 @@ func parseConfig(args []string) (*GatewayConfig, error) {
 }
 
 // NewNexusGateway creates a new Nexus gateway
-func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewNexusGateway(ctx context.Context, config *GatewayConfig) (*NexusGateway, error) {
 
 	// Create etcd client
 	etcdClient, err := clientv3.New(clientv3.Config{
@@ -226,7 +223,6 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 
@@ -235,8 +231,9 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
-		etcdClient.Close()
-		cancel()
+		if etcdClient != nil {
+			etcdClient.Close()
+		}
 		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
 	}
 
@@ -247,16 +244,21 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 	}
 	nexusService, err := nexus.NewTelemetryService(nexusConfig)
 	if err != nil {
-		etcdClient.Close()
-		cancel()
+		if etcdClient != nil {
+			etcdClient.Close()
+		}
 		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 	}
 
 	// Create GraphQL service with Nexus integration
 	graphqlService, err := graphql.NewGraphQLService(nexusService)
 	if err != nil {
-		etcdClient.Close()
-		cancel()
+		if etcdClient != nil {
+			etcdClient.Close()
+		}
+		if nexusService != nil {
+			nexusService.Close()
+		}
 		return nil, fmt.Errorf("failed to create GraphQL service: %w", err)
 	}
 
@@ -291,8 +293,6 @@ func NewNexusGateway(config *GatewayConfig) (*NexusGateway, error) {
 		messageQueue:       messageQueue,
 		echo:               e,
 		upgrader:           upgrader,
-		ctx:                ctx,
-		cancel:             cancel,
 		config:             config,
 	}
 
@@ -312,8 +312,10 @@ func (ng *NexusGateway) Start(ctx context.Context) error {
 		log.Infof("Starting Nexus Gateway HTTP server on %s", addr)
 
 		server := &http.Server{
-			Addr:    addr,
-			Handler: ng.echo,
+			Addr:         addr,
+			Handler:      ng.echo,
+			ReadTimeout:  httpTimeout,
+			WriteTimeout: httpTimeout,
 		}
 
 		// Start server in goroutine
@@ -325,11 +327,17 @@ func (ng *NexusGateway) Start(ctx context.Context) error {
 
 		// Wait for context cancellation
 		<-gCtx.Done()
+		log.Info("Attempting graceful shutdown of HTTP server")
 
 		// Shutdown server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
+	})
+
+	// Start pprof server
+	g.Go(func() error {
+		return ng.pprofHandler(gCtx)
 	})
 
 	return g.Wait()
@@ -1229,7 +1237,7 @@ func (ng *NexusGateway) generateOpenAPISpec() map[string]interface{} {
 		"openapi": "3.0.0",
 		"info": map[string]interface{}{
 			"title":       "Nexus Telemetry Pipeline API",
-			"description": "REST API for GPU telemetry pipeline integrated with Nexus Graph Framework and etcd backend",
+			"description": "REST API Gateway for querying GPU telemetry data, integrated with Nexus Graph Framework and etcd backend. CSV upload functionality is handled by the Streamer component.",
 			"version":     "2.0.0",
 			"contact": map[string]interface{}{
 				"name": "Telemetry Pipeline Team",
@@ -1460,6 +1468,7 @@ func (ng *NexusGateway) generateOpenAPISpec() map[string]interface{} {
 					},
 				},
 			},
+
 			"/graphql": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "GraphQL endpoint",
@@ -1552,11 +1561,31 @@ func (ng *NexusGateway) generateOpenAPISpec() map[string]interface{} {
 	}
 }
 
+// pprofHandler launches a http server and serves pprof debug information under
+// http://<address>/debug/pprof
+func (ng *NexusGateway) pprofHandler(ctx context.Context) error {
+	srv := http.Server{
+		Addr:         httpDebugAddr,
+		ReadTimeout:  httpTimeout,
+		WriteTimeout: httpTimeout,
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Info("Attempting graceful shutdown of pprof server")
+		srv.SetKeepAlivesEnabled(false)
+		closeCtx, closeFn := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeFn()
+		_ = srv.Shutdown(closeCtx)
+	}()
+
+	log.Infof("Starting pprof server on %s", httpDebugAddr)
+	return srv.ListenAndServe()
+}
+
 // Close closes the gateway and cleans up resources
 func (ng *NexusGateway) Close() error {
 	log.Info("Closing Nexus gateway")
-
-	ng.cancel()
 
 	// MessageQueueService cleanup is handled by context cancellation
 

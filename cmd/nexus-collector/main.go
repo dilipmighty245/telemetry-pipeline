@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	log "github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.org/x/sync/errgroup"
 )
 
 // CollectorConfig holds configuration for the Nexus-enhanced collector
@@ -72,8 +74,6 @@ type NexusCollector struct {
 	config       *CollectorConfig
 	nexusService *nexus.TelemetryService
 	etcdClient   *clientv3.Client
-	ctx          context.Context
-	cancel       context.CancelFunc
 
 	// Enhanced etcd features
 	serviceRegistry *discovery.ServiceRegistry
@@ -90,12 +90,30 @@ type NexusCollector struct {
 }
 
 func main() {
-	config := parseFlags()
+	if err := run(os.Args, os.Stdout); err != nil {
+		switch err {
+		case context.Canceled:
+			// not considered error
+		default:
+			log.Fatalf("could not run Nexus Collector: %v", err)
+		}
+	}
+}
+
+// run accepts the program arguments and where to send output (default: stdout)
+func run(args []string, _ io.Writer) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	config, err := parseConfig(args)
+	if err != nil {
+		return fmt.Errorf("failed to parse configuration: %w", err)
+	}
 
 	// Set log level
 	level, err := log.ParseLevel(config.LogLevel)
 	if err != nil {
-		log.Fatalf("Invalid log level: %v", err)
+		return fmt.Errorf("invalid log level: %w", err)
 	}
 	log.SetLevel(level)
 
@@ -103,29 +121,29 @@ func main() {
 	log.Infof("Cluster ID: %s, Collector ID: %s", config.ClusterID, config.CollectorID)
 
 	// Create and start the collector
-	collector, err := NewNexusCollector(config)
+	collector, err := NewNexusCollector(ctx, config)
 	if err != nil {
-		log.Fatalf("Failed to create collector: %v", err)
+		return fmt.Errorf("failed to create collector: %w", err)
 	}
 	defer collector.Close()
 
 	// Start the collector
-	if err := collector.Start(); err != nil {
-		log.Fatalf("Failed to start collector: %v", err)
+	if err := collector.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start collector: %w", err)
 	}
 
-	// Wait for shutdown signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	log.Info("Nexus Collector started successfully")
+	<-ctx.Done()
+	log.Info("Shutting down Nexus Collector...")
 
-	log.Info("Collector started successfully. Press Ctrl+C to stop.")
-	<-sigChan
-
-	log.Info("Shutting down collector...")
+	return nil
 }
 
-// parseFlags parses command line flags and environment variables
-func parseFlags() *CollectorConfig {
+// parseConfig parses command line flags and environment variables
+func parseConfig(args []string) (*CollectorConfig, error) {
+	if err := flag.CommandLine.Parse(args[1:]); err != nil {
+		return nil, fmt.Errorf("failed to parse flags: %w", err)
+	}
 	config := &CollectorConfig{}
 
 	// Nexus configuration
@@ -155,21 +173,18 @@ func parseFlags() *CollectorConfig {
 	// Logging
 	flag.StringVar(&config.LogLevel, "log-level", getEnv("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 
-	flag.Parse()
-	return config
+	return config, nil
 }
 
 // NewNexusCollector creates a new Nexus-enhanced collector
-func NewNexusCollector(config *CollectorConfig) (*NexusCollector, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewNexusCollector(ctx context.Context, config *CollectorConfig) (*NexusCollector, error) {
 
 	collector := &NexusCollector{
 		config:         config,
-		ctx:            ctx,
-		cancel:         cancel,
 		hostRegistry:   make(map[string]bool),
 		gpuRegistry:    make(map[string]bool),
 		processingChan: make(chan *TelemetryRecord, config.BufferSize),
+		startTime:      time.Now(),
 	}
 
 	// Initialize Nexus service if enabled
@@ -186,7 +201,6 @@ func NewNexusCollector(config *CollectorConfig) (*NexusCollector, error) {
 
 		nexusService, err := nexus.NewTelemetryService(nexusConfig)
 		if err != nil {
-			cancel()
 			return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 		}
 		collector.nexusService = nexusService
@@ -200,7 +214,6 @@ func NewNexusCollector(config *CollectorConfig) (*NexusCollector, error) {
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		collector.Close()
 		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 	collector.etcdClient = etcdClient
@@ -210,7 +223,9 @@ func NewNexusCollector(config *CollectorConfig) (*NexusCollector, error) {
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
-		collector.Close()
+		if etcdClient != nil {
+			etcdClient.Close()
+		}
 		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
 	}
 
@@ -218,30 +233,37 @@ func NewNexusCollector(config *CollectorConfig) (*NexusCollector, error) {
 }
 
 // Start starts the collector processing
-func (nc *NexusCollector) Start() error {
+func (nc *NexusCollector) Start(ctx context.Context) error {
 	log.Info("Starting Nexus collector processing")
+
+	g, gCtx := errgroup.WithContext(ctx)
 
 	// Setup watch API if enabled
 	if nc.config.EnableNexus && nc.config.EnableWatchAPI {
-		if err := nc.setupWatchAPI(); err != nil {
+		if err := nc.setupWatchAPI(gCtx); err != nil {
 			log.Errorf("Failed to setup watch API: %v", err)
 		}
 	}
 
 	// Start worker goroutines for processing
 	for i := 0; i < nc.config.Workers; i++ {
-		go nc.processingWorker(i)
+		workerID := i
+		g.Go(func() error {
+			return nc.processingWorker(gCtx, workerID)
+		})
 	}
 
 	// Start etcd message consumer
-	go nc.etcdMessageConsumer()
+	g.Go(func() error {
+		return nc.etcdMessageConsumer(gCtx)
+	})
 
 	log.Infof("Collector started with %d workers", nc.config.Workers)
-	return nil
+	return g.Wait()
 }
 
 // setupWatchAPI sets up the Nexus Watch API for real-time notifications
-func (nc *NexusCollector) setupWatchAPI() error {
+func (nc *NexusCollector) setupWatchAPI(ctx context.Context) error {
 	return nc.nexusService.WatchTelemetryChanges(func(eventType string, data []byte, key string) {
 		log.Debugf("Received telemetry change event: %s for key %s", eventType, key)
 		// Handle real-time telemetry changes
@@ -250,26 +272,27 @@ func (nc *NexusCollector) setupWatchAPI() error {
 }
 
 // etcdMessageConsumer consumes messages from etcd message queue
-func (nc *NexusCollector) etcdMessageConsumer() {
+func (nc *NexusCollector) etcdMessageConsumer(ctx context.Context) error {
 	log.Info("Starting etcd message consumer")
 
 	queueKey := nc.config.MessageQueuePrefix + "/" + nc.config.ClusterID
 
 	for {
 		select {
-		case <-nc.ctx.Done():
-			return
+		case <-ctx.Done():
+			log.Info("Stopping etcd message consumer")
+			return ctx.Err()
 		default:
 			// Watch for new messages in the queue
-			nc.consumeFromQueue(queueKey)
+			nc.consumeFromQueue(ctx, queueKey)
 		}
 	}
 }
 
 // consumeFromQueue consumes messages from a specific etcd queue
-func (nc *NexusCollector) consumeFromQueue(queueKey string) {
+func (nc *NexusCollector) consumeFromQueue(ctx context.Context, queueKey string) {
 	// Get all pending messages
-	resp, err := nc.etcdClient.Get(nc.ctx, queueKey+"/", clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
+	resp, err := nc.etcdClient.Get(ctx, queueKey+"/", clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
 	if err != nil {
 		log.Errorf("Failed to get messages from queue: %v", err)
 		time.Sleep(nc.config.PollInterval)
@@ -283,7 +306,7 @@ func (nc *NexusCollector) consumeFromQueue(queueKey string) {
 		if err := json.Unmarshal(kv.Value, &record); err != nil {
 			log.Errorf("Failed to parse telemetry record from key %s: %v", kv.Key, err)
 			// Delete invalid message
-			nc.etcdClient.Delete(nc.ctx, string(kv.Key))
+			nc.etcdClient.Delete(ctx, string(kv.Key))
 			continue
 		}
 
@@ -291,12 +314,12 @@ func (nc *NexusCollector) consumeFromQueue(queueKey string) {
 		select {
 		case nc.processingChan <- &record:
 			// Successfully queued for processing, delete from etcd queue
-			if _, err := nc.etcdClient.Delete(nc.ctx, string(kv.Key)); err != nil {
+			if _, err := nc.etcdClient.Delete(ctx, string(kv.Key)); err != nil {
 				log.Errorf("Failed to delete processed message: %v", err)
 			} else {
 				log.Debugf("Consumed message from queue: %s", kv.Key)
 			}
-		case <-nc.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 			log.Warn("Processing channel full, will retry message later")
@@ -312,40 +335,40 @@ func (nc *NexusCollector) consumeFromQueue(queueKey string) {
 }
 
 // processingWorker runs a worker goroutine for processing telemetry data
-func (nc *NexusCollector) processingWorker(workerID int) {
+func (nc *NexusCollector) processingWorker(ctx context.Context, workerID int) error {
 	log.Infof("Starting processing worker %d", workerID)
 
 	for {
 		select {
 		case record := <-nc.processingChan:
-			if err := nc.processRecord(record); err != nil {
+			if err := nc.processRecord(ctx, record); err != nil {
 				log.Errorf("Worker %d failed to process record: %v", workerID, err)
 			}
-		case <-nc.ctx.Done():
+		case <-ctx.Done():
 			log.Infof("Stopping processing worker %d", workerID)
-			return
+			return ctx.Err()
 		}
 	}
 }
 
 // processRecord processes a single telemetry record
-func (nc *NexusCollector) processRecord(record *TelemetryRecord) error {
+func (nc *NexusCollector) processRecord(ctx context.Context, record *TelemetryRecord) error {
 	// Debug logging to check what collector receives
 	log.Debugf("Collector received: GPUID=%s, UUID=%s, Device=%s, ModelName=%s, Hostname=%s",
 		record.GPUID, record.UUID, record.Device, record.ModelName, record.Hostname)
 
 	// Register host and GPU if not already registered
-	if err := nc.ensureHostRegistered(record.Hostname); err != nil {
+	if err := nc.ensureHostRegistered(ctx, record.Hostname); err != nil {
 		log.Warnf("Failed to register host %s: %v", record.Hostname, err)
 	}
 
-	if err := nc.ensureGPURegistered(record.Hostname, record); err != nil {
+	if err := nc.ensureGPURegistered(ctx, record.Hostname, record); err != nil {
 		log.Warnf("Failed to register GPU %s: %v", record.GPUID, err)
 	}
 
 	// Store in Nexus if enabled
 	if nc.config.EnableNexus {
-		if err := nc.storeInNexus(record); err != nil {
+		if err := nc.storeInNexus(ctx, record); err != nil {
 			log.Errorf("Failed to store in Nexus: %v", err)
 			// Continue with database storage
 		}
@@ -355,7 +378,7 @@ func (nc *NexusCollector) processRecord(record *TelemetryRecord) error {
 }
 
 // ensureHostRegistered ensures a host is registered in Nexus
-func (nc *NexusCollector) ensureHostRegistered(hostname string) error {
+func (nc *NexusCollector) ensureHostRegistered(ctx context.Context, hostname string) error {
 	if !nc.config.EnableNexus {
 		return nil
 	}
@@ -392,7 +415,7 @@ func (nc *NexusCollector) ensureHostRegistered(hostname string) error {
 }
 
 // ensureGPURegistered ensures a GPU is registered in Nexus
-func (nc *NexusCollector) ensureGPURegistered(hostname string, record *TelemetryRecord) error {
+func (nc *NexusCollector) ensureGPURegistered(ctx context.Context, hostname string, record *TelemetryRecord) error {
 	if !nc.config.EnableNexus {
 		return nil
 	}
@@ -434,7 +457,7 @@ func (nc *NexusCollector) ensureGPURegistered(hostname string, record *Telemetry
 }
 
 // storeInNexus stores telemetry data in Nexus
-func (nc *NexusCollector) storeInNexus(record *TelemetryRecord) error {
+func (nc *NexusCollector) storeInNexus(ctx context.Context, record *TelemetryRecord) error {
 	timestamp, err := time.Parse(time.RFC3339, record.Timestamp)
 	if err != nil {
 		// Try alternative formats if RFC3339 fails
@@ -471,8 +494,6 @@ func (nc *NexusCollector) storeInNexus(record *TelemetryRecord) error {
 // Close closes the collector and cleans up resources
 func (nc *NexusCollector) Close() error {
 	log.Info("Closing Nexus collector")
-
-	nc.cancel()
 
 	if nc.etcdClient != nil {
 		nc.etcdClient.Close()

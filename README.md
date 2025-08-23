@@ -1,6 +1,26 @@
 # Elastic GPU Telemetry Pipeline
 
-A scalable, elastic telemetry pipeline for AI clusters built with the Nexus framework and etcd. This system streams GPU telemetry data through a custom message queue, processes it with distributed collectors, and serves it via a multi-protocol API (REST, GraphQL, WebSocket).
+A scalable, elastic telemetry pipeline for AI clusters built with the Nexus framework and etcd. This system ingests CSV telemetry data via the Streamer component, processes it through a custom message queue, stores it with distributed collectors, and serves it via a multi-protocol API Gateway (REST, GraphQL, WebSocket).
+
+## 🏗️ Architecture Overview
+
+### Component Separation
+- **Nexus Streamer** (Port 8081): CSV upload and data ingestion
+- **Nexus Gateway** (Port 8080): REST/GraphQL/WebSocket APIs for data queries  
+- **Nexus Collector**: Message queue processing and data storage
+- **etcd**: Custom message queue and data persistence
+
+### Data Flow
+```
+CSV Upload → Streamer:8081 → Message Queue → Collector → Storage
+                                                    ↓
+Query APIs ← Gateway:8080 ←─────────────────── Storage
+```
+
+### Key Benefits
+- **Separation of Concerns**: Ingestion vs Query workloads
+- **Independent Scaling**: Scale components based on load
+- **Production Ready**: Kubernetes-native with proper service boundaries
 
 ## 🚀 Quick Start
 
@@ -28,7 +48,11 @@ make setup-etcd
 # 4. Scale pipeline to 2 instances each
 INSTANCES=2 make scale-local
 
-# 5. Test the API
+# 5. Test CSV upload (Streamer)
+curl -X POST http://localhost:8081/api/v1/csv/upload \
+  -F "file=@dcgm_metrics_20250718_134233.csv"
+
+# 6. Test query APIs (Gateway)  
 curl http://localhost:8080/api/v1/gpus | jq .
 curl http://localhost:8080/health
 
@@ -281,6 +305,26 @@ The Nexus Gateway provides multiple API interfaces with comprehensive telemetry 
 
 ### 🌐 REST API Endpoints
 
+#### 📤 CSV Upload API (Streamlined)
+```bash
+# Upload and process CSV file immediately (single endpoint)
+POST /api/v1/csv/upload
+# Form data: file (required)
+# - Validates CSV format and required headers
+# - Processes data in memory (no file storage)
+# - Streams directly to telemetry pipeline
+# - Returns processing statistics
+
+# Example: Upload and process CSV file
+curl -X POST -F "file=@telemetry_data.csv" \
+  http://localhost:8080/api/v1/csv/upload
+
+# Response includes processing metrics:
+# - total_records, processed_records, skipped_records
+# - processing_time, records_per_second
+# - No file storage - memory efficient
+```
+
 #### Core Telemetry APIs (Required by Assignment)
 ```bash
 # 1. List All GPUs - Return all GPUs with telemetry data available
@@ -436,6 +480,11 @@ GET /swagger/swagger.yaml                      # OpenAPI 3.0 YAML spec
 ### 🧪 API Testing Examples
 
 ```bash
+# Test CSV Upload API (Streamlined)
+./scripts/demo-csv-upload.sh demo    # CSV upload and processing demonstration
+./scripts/demo-csv-upload.sh docs    # Show CSV API documentation
+./scripts/demo-csv-upload.sh cleanup # Clean up demo files
+
 # Test core APIs (assignment requirements)
 curl -s http://localhost:8080/api/v1/gpus | jq '.count'
 curl -s http://localhost:8080/api/v1/gpus | jq '.data[0]'

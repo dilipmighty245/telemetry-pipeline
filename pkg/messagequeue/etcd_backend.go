@@ -17,11 +17,11 @@ import (
 // EtcdBackend provides etcd-based message queue functionality with List & Watch patterns
 type EtcdBackend struct {
 	client      *clientv3.Client
-	ctx         context.Context
+	ctx         context.Context // TODO ctx should be passed as argument to all functions, shouldnt be part of the struct
 	queuePrefix string
 	watchers    map[string]clientv3.WatchChan
 	watchersMu  sync.RWMutex
-	leaseID     clientv3.LeaseID
+	leaseID     clientv3.LeaseID // TODO: fix this
 }
 
 // NewEtcdBackend creates a new etcd backend if ETCD_ENDPOINTS is set

@@ -43,6 +43,10 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.registry }}/{{ .Values.nexusStreamer.image.repository | default "nexus-streamer" }}:{{ .Values.nexusStreamer.image.tag | default .Values.image.tag }}"
           imagePullPolicy: {{ .Values.nexusStreamer.image.pullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.nexusStreamer.env.HTTP_PORT | default 8081 }}
+              protocol: TCP
           env:
             - name: CLUSTER_ID
               value: {{ .Values.global.clusterId | quote }}
@@ -60,6 +64,16 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: ENABLE_HTTP
+              value: {{ .Values.nexusStreamer.env.ENABLE_HTTP | quote }}
+            - name: HTTP_PORT
+              value: {{ .Values.nexusStreamer.env.HTTP_PORT | quote }}
+            - name: UPLOAD_DIR
+              value: {{ .Values.nexusStreamer.env.UPLOAD_DIR | quote }}
+            - name: MAX_UPLOAD_SIZE
+              value: {{ .Values.nexusStreamer.env.MAX_UPLOAD_SIZE | quote }}
+            - name: MAX_MEMORY
+              value: {{ .Values.nexusStreamer.env.MAX_MEMORY | quote }}
           resources:
             {{- if .Values.dev.enabled }}
             {{- toYaml .Values.dev.resources | nindent 12 }}
