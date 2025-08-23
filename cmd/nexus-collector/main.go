@@ -253,9 +253,9 @@ func (nc *NexusCollector) Start(ctx context.Context) error {
 		})
 	}
 
-	// Start etcd message consumer
+	// Start message queue consumer (only process records from streamer queue)
 	g.Go(func() error {
-		return nc.etcdMessageConsumer(gCtx)
+		return nc.messageQueueConsumer(gCtx)
 	})
 
 	log.Infof("Collector started with %d workers", nc.config.Workers)
@@ -271,67 +271,73 @@ func (nc *NexusCollector) setupWatchAPI(ctx context.Context) error {
 	})
 }
 
-// etcdMessageConsumer consumes messages from etcd message queue
-func (nc *NexusCollector) etcdMessageConsumer(ctx context.Context) error {
-	log.Info("Starting etcd message consumer")
+// messageQueueConsumer consumes messages directly from etcd and feeds them to processing workers
+func (nc *NexusCollector) messageQueueConsumer(ctx context.Context) error {
+	log.Info("Starting message queue consumer (direct etcd consumption)")
 
-	queueKey := nc.config.MessageQueuePrefix + "/" + nc.config.ClusterID
+	ticker := time.NewTicker(nc.config.PollInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("Stopping etcd message consumer")
+			log.Info("Stopping message queue consumer")
 			return ctx.Err()
-		default:
-			// Watch for new messages in the queue
-			nc.consumeFromQueue(ctx, queueKey)
+		case <-ticker.C:
+			if err := nc.consumeFromQueue(ctx); err != nil {
+				log.Errorf("Error consuming from queue: %v", err)
+			}
 		}
 	}
 }
 
-// consumeFromQueue consumes messages from a specific etcd queue
-func (nc *NexusCollector) consumeFromQueue(ctx context.Context, queueKey string) {
-	// Get all pending messages
-	resp, err := nc.etcdClient.Get(ctx, queueKey+"/", clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
+// consumeFromQueue consumes messages directly from etcd message queue
+func (nc *NexusCollector) consumeFromQueue(ctx context.Context) error {
+	queueKey := nc.config.MessageQueuePrefix + "/telemetry"
+
+	// Get messages from etcd, sorted by key (which includes timestamp)
+	resp, err := nc.etcdClient.Get(ctx, queueKey+"/",
+		clientv3.WithPrefix(),
+		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
+		clientv3.WithLimit(int64(nc.config.BatchSize)))
 	if err != nil {
-		log.Errorf("Failed to get messages from queue: %v", err)
-		time.Sleep(nc.config.PollInterval)
-		return
+		return fmt.Errorf("failed to get messages from etcd: %w", err)
 	}
+
+	if len(resp.Kvs) == 0 {
+		return nil // No messages to process
+	}
+
+	log.Debugf("Found %d messages to process", len(resp.Kvs))
 
 	// Process each message
 	for _, kv := range resp.Kvs {
-		// Parse the message
 		var record TelemetryRecord
 		if err := json.Unmarshal(kv.Value, &record); err != nil {
-			log.Errorf("Failed to parse telemetry record from key %s: %v", kv.Key, err)
-			// Delete invalid message
+			log.Warnf("Failed to unmarshal telemetry record: %v", err)
+			// Delete malformed message
 			nc.etcdClient.Delete(ctx, string(kv.Key))
 			continue
 		}
 
-		// Send to processing channel
+		// Send to processing channel (non-blocking)
 		select {
 		case nc.processingChan <- &record:
-			// Successfully queued for processing, delete from etcd queue
-			if _, err := nc.etcdClient.Delete(ctx, string(kv.Key)); err != nil {
-				log.Errorf("Failed to delete processed message: %v", err)
-			} else {
-				log.Debugf("Consumed message from queue: %s", kv.Key)
-			}
+			nc.messageCount++
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
-			log.Warn("Processing channel full, will retry message later")
-			// Don't delete the message, it will be retried
-			return
+			log.Warnf("Processing channel full, dropping message")
+		}
+
+		// Delete message after queuing for processing (acknowledgment)
+		if _, err := nc.etcdClient.Delete(ctx, string(kv.Key)); err != nil {
+			log.Warnf("Failed to delete processed message: %v", err)
 		}
 	}
 
-	// If no messages were found, wait before checking again
-	if len(resp.Kvs) == 0 {
-		time.Sleep(nc.config.PollInterval)
-	}
+	log.Debugf("Queued %d messages for processing", len(resp.Kvs))
+	return nil
 }
 
 // processingWorker runs a worker goroutine for processing telemetry data

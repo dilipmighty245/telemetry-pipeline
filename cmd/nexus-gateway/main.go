@@ -332,7 +332,14 @@ func (ng *NexusGateway) Start(ctx context.Context) error {
 		// Shutdown server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return server.Shutdown(shutdownCtx)
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Errorf("HTTP server shutdown error: %v", err)
+			return err
+		}
+
+		log.Info("HTTP server shutdown completed successfully")
+		return nil
 	})
 
 	// Start pprof server
@@ -1580,7 +1587,12 @@ func (ng *NexusGateway) pprofHandler(ctx context.Context) error {
 	}()
 
 	log.Infof("Starting pprof server on %s", httpDebugAddr)
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Errorf("pprof server error: %v", err)
+		return err
+	}
+	log.Info("pprof server shutdown completed successfully")
+	return nil
 }
 
 // Close closes the gateway and cleans up resources

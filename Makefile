@@ -463,13 +463,23 @@ generate-protos: ## Generate Go code from protobuf files
 		protos/telemetry/*.proto protos/messagequeue/*.proto
 
 # Clean up
-clean: ## Clean build artifacts
+clean: ## Clean build artifacts and etcd data
 	@echo "Cleaning up..."
+	@echo "Flushing etcd data..."
+	@if command -v etcdctl >/dev/null 2>&1; then \
+		etcdctl --endpoints=localhost:2379 del "" --from-key || echo "No etcd data to flush or etcd not running"; \
+	else \
+		echo "etcdctl not found, skipping etcd flush"; \
+	fi
+	@echo "Stopping etcd server..."
+	@pkill -f etcd || echo "No etcd process found"
+	@rm -rf /tmp/etcd-data || true
 	rm -rf $(BINARY_DIR)	
 	rm -f coverage.out coverage.html
 	rm -f kubernetes-manifests.yaml
 	go clean -cache
 	go clean -testcache
+	@echo "✅ Cleanup complete (including etcd)"
 
 # Release
 release: clean deps lint test generate-swagger build ## Prepare for release

@@ -1,89 +1,66 @@
-# Documentation Index
+# Documentation
 
 This directory contains comprehensive documentation for the Elastic GPU Telemetry Pipeline.
 
-## 📚 Available Documentation
+## Core Documentation
 
-### Core Documentation
+### [Architecture](ARCHITECTURE.md)
+Detailed system architecture, component design, and data flow diagrams.
 
-- **[Architecture Guide](ARCHITECTURE.md)** - Complete system architecture, components, data flow, and design patterns
-- **[API Specification](API_SPECIFICATION.md)** - Detailed REST API documentation with examples and data models
-- **[Scaling & Kubernetes](SCALING_AND_KUBERNETES.md)** - Local scaling and Kubernetes deployment guide
-- **[Debugging Guide](DEBUGGING.md)** - Comprehensive troubleshooting and debugging instructions
+### [API Specification](API_SPECIFICATION.md)
+Complete REST API documentation with required endpoints and examples.
 
-### Integration Documentation
+### [etcd Message Queue](ETCD_MESSAGE_QUEUE.md)
+Custom message queue implementation using etcd for pub/sub messaging.
 
-- **[Nexus Integration Guide](NEXUS_INTEGRATION_GUIDE.md)** - Nexus framework integration details and patterns
+### [Nexus Integration](NEXUS_INTEGRATION_GUIDE.md)
+Integration guide for Nexus framework components and features.
 
-### API Specifications
+### [Scaling and Kubernetes](SCALING_AND_KUBERNETES.md)
+Kubernetes deployment, scaling strategies, and production considerations.
 
-- **[swagger.json](swagger.json)** - OpenAPI 3.0 specification in JSON format
-- **[swagger.yaml](swagger.yaml)** - OpenAPI 3.0 specification in YAML format
+### [Debugging Guide](DEBUGGING.md)
+Troubleshooting guide for common issues and debugging techniques.
 
-## 🚀 Quick Navigation
+## Quick Reference
 
-### For Developers
-1. Start with **[Architecture Guide](ARCHITECTURE.md)** to understand the system
-2. Follow **[Main README](../README.md)** for local development setup
-3. Use **[Debugging Guide](DEBUGGING.md)** when troubleshooting issues
+### API Endpoints (Required)
+- `GET /api/v1/gpus` - List all GPUs
+- `GET /api/v1/gpus/{id}/telemetry` - Query telemetry by GPU with time filters
 
-### For Operators  
-1. Review **[Scaling & Kubernetes](SCALING_AND_KUBERNETES.md)** for deployment
-2. Reference **[API Specification](API_SPECIFICATION.md)** for API usage
-3. Use **[Debugging Guide](DEBUGGING.md)** for operational issues
+### Component Ports
+- **Streamer**: 8081 (CSV upload and streaming)
+- **Gateway**: 8080 (REST API queries)
+- **Collector**: N/A (internal message processing)
 
-### For API Users
-1. Check **[API Specification](API_SPECIFICATION.md)** for complete API reference
-2. Test APIs using examples in **[Main README](../README.md)**
-3. Use **[swagger.json](swagger.json)** for API client generation
+### Key Configuration
+- **Max Instances**: 10 streamers, 10 collectors (per requirements)
+- **Message Queue**: etcd-based custom implementation
+- **Data Format**: CSV with GPU telemetry metrics
 
-## 📖 Documentation Overview
+## Auto-Generated Documentation
 
-### What Each Document Covers
+### OpenAPI Specification
+The REST API specification is auto-generated and available at:
+- **Swagger UI**: `http://localhost:8080/swagger/`
+- **OpenAPI JSON**: `http://localhost:8080/swagger/spec.json`
 
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| [Architecture](ARCHITECTURE.md) | System design, components, data flow | Developers, Architects |
-| [API Specification](API_SPECIFICATION.md) | REST API reference, examples | API Users, Frontend Devs |
-| [Scaling & Kubernetes](SCALING_AND_KUBERNETES.md) | Deployment, scaling, operations | DevOps, SRE |
-| [Debugging](DEBUGGING.md) | Troubleshooting, monitoring | Developers, Operators |
-| [Nexus Integration](NEXUS_INTEGRATION_GUIDE.md) | Framework integration details | Nexus Developers |
+Generate updated docs:
+```bash
+make generate-openapi
+```
 
-### Key Features Documented
+## Development Workflow
 
-- ✅ **Local Development**: Complete setup and testing instructions
-- ✅ **Kubernetes Deployment**: Production-ready Helm charts and configurations
-- ✅ **Scaling**: Both local and Kubernetes horizontal scaling
-- ✅ **API Reference**: All 20+ REST endpoints, GraphQL, and WebSocket APIs
-- ✅ **Debugging**: Comprehensive troubleshooting for all components
-- ✅ **Architecture**: System design patterns and data flow
-- ✅ **Monitoring**: Health checks, logging, and performance monitoring
+1. **Architecture Review**: Start with [ARCHITECTURE.md](ARCHITECTURE.md)
+2. **API Design**: Review [API_SPECIFICATION.md](API_SPECIFICATION.md)
+3. **Deployment**: Follow [SCALING_AND_KUBERNETES.md](SCALING_AND_KUBERNETES.md)
+4. **Troubleshooting**: Use [DEBUGGING.md](DEBUGGING.md) for issues
 
-## 🔗 External References
-
-- **[Main README](../README.md)** - Project overview and quick start
-- **[Makefile](../Makefile)** - All available commands and targets
-- **[Helm Charts](../deployments/helm/)** - Kubernetes deployment configurations
-- **[Docker Files](../deployments/docker/)** - Container build configurations
-
-## 📝 Contributing to Documentation
+## Contributing to Documentation
 
 When updating documentation:
-
-1. **Keep it current** - Update docs when making code changes
-2. **Be comprehensive** - Include examples and use cases
-3. **Cross-reference** - Link between related documents
-4. **Test examples** - Verify all code examples work
-5. **Update this index** - Add new documents to the table above
-
-### Documentation Standards
-
-- Use clear headings and structure
-- Include practical examples
-- Provide troubleshooting steps
-- Link to related sections
-- Keep examples up-to-date with current API
-
----
-
-**Need help?** Start with the [Main README](../README.md) or check the [Debugging Guide](DEBUGGING.md) for troubleshooting.
+1. Keep it aligned with project requirements
+2. Update auto-generated specs with `make generate-openapi`
+3. Verify examples and code snippets work
+4. Update this README if adding new documents

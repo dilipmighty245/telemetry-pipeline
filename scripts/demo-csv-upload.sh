@@ -6,8 +6,10 @@
 set -e
 
 # Configuration
-GATEWAY_URL="http://localhost:8080"
-API_BASE="${GATEWAY_URL}/api/v1"
+STREAMER_URL="http://localhost:8081"  # CSV upload endpoint
+GATEWAY_URL="http://localhost:8080"   # Query API endpoint
+UPLOAD_API="${STREAMER_URL}/api/v1"
+QUERY_API="${GATEWAY_URL}/api/v1"
 DEMO_CSV_FILE="demo_telemetry.csv"
 
 # Colors for output
@@ -68,7 +70,7 @@ upload_and_process_csv() {
     
     UPLOAD_RESPONSE=$(curl -s -X POST \
         -F "file=@${DEMO_CSV_FILE}" \
-        "${API_BASE}/csv/upload")
+        "${UPLOAD_API}/csv/upload")
     
     if echo "${UPLOAD_RESPONSE}" | jq -e '.success' > /dev/null 2>&1; then
         TOTAL_RECORDS=$(echo "${UPLOAD_RESPONSE}" | jq -r '.total_records')
@@ -107,7 +109,7 @@ test_error_cases() {
     
     INVALID_RESPONSE=$(curl -s -X POST \
         -F "file=@invalid.csv" \
-        "${API_BASE}/csv/upload")
+        "${UPLOAD_API}/csv/upload")
     
     if echo "${INVALID_RESPONSE}" | jq -e '.success == false' > /dev/null 2>&1; then
         print_success "✓ Correctly rejected invalid CSV file"
@@ -135,13 +137,13 @@ show_api_docs() {
     print_status "Streamlined CSV Upload API:"
     echo ""
     echo "📤 Upload and Process CSV File (Single Endpoint):"
-    echo "  POST ${API_BASE}/csv/upload"
+    echo "  POST ${UPLOAD_API}/csv/upload"
     echo "  - Form data: file (required)"
     echo "  - Immediately processes and streams data to telemetry pipeline"
     echo "  - No file storage - memory efficient"
     echo ""
     echo "Example usage:"
-    echo "  curl -X POST -F \"file=@data.csv\" ${API_BASE}/csv/upload"
+    echo "  curl -X POST -F \"file=@data.csv\" ${UPLOAD_API}/csv/upload"
     echo ""
     echo "📚 API Documentation:"
     echo "  ${GATEWAY_URL}/swagger/"

@@ -62,11 +62,9 @@ nexusStreamer:
   # Environment variables
   env:
     LOG_LEVEL: "info"
-    CSV_FILE: "dcgm_metrics_20250718_134233.csv"
     BATCH_SIZE: "100"
     STREAM_INTERVAL: "1s"
-    # HTTP server configuration for CSV upload
-    ENABLE_HTTP: "true"
+    # HTTP server configuration for CSV upload (API-only mode)
     HTTP_PORT: "8081"
     UPLOAD_DIR: "/tmp/telemetry-uploads"
     MAX_UPLOAD_SIZE: "104857600"  # 100MB
@@ -80,24 +78,8 @@ nexusStreamer:
     targetPort: 8081
     annotations: {}
   
-  # CSV data configuration
-  csvData:
-    # Option 1: ConfigMap (for small files)
-    configMap:
-      enabled: false
-      name: "telemetry-csv-data"
-    
-    # Option 2: PVC (for large files)
-    persistentVolume:
-      enabled: true
-      storageClass: ""
-      size: 1Gi
-      accessMode: ReadOnlyMany
-    
-    # Option 3: URL download (for remote files)
-    url:
-      enabled: false
-      downloadUrl: ""
+  # Note: CSV data configuration removed in API-only mode
+  # CSV files are now uploaded via the HTTP API endpoint
   
   # Node selector for GPU nodes (if needed)
   nodeSelector: {}

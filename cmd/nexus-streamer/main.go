@@ -38,11 +38,9 @@ type StreamerConfig struct {
 	// Message queue configuration
 	MessageQueuePrefix string
 
-	// CSV configuration
-	CSVFile        string
+	// Processing configuration
 	BatchSize      int
 	StreamInterval time.Duration
-	LoopMode       bool
 
 	// HTTP server configuration for CSV upload
 	HTTPPort      int
@@ -143,9 +141,9 @@ func run(args []string, _ io.Writer) error {
 	}
 	log.SetLevel(level)
 
-	log.Infof("Starting Nexus telemetry streamer")
+	log.Infof("Starting Nexus telemetry streamer (API-only mode)")
 	log.Infof("Cluster ID: %s, Streamer ID: %s", cfg.ClusterID, cfg.StreamerID)
-	log.Infof("CSV File: %s, Batch Size: %d, Interval: %v", cfg.CSVFile, cfg.BatchSize, cfg.StreamInterval)
+	log.Infof("HTTP Port: %d, Batch Size: %d, Interval: %v", cfg.HTTPPort, cfg.BatchSize, cfg.StreamInterval)
 
 	// Create and start the streamer
 	streamer, err := NewNexusStreamer(ctx, cfg)
@@ -169,9 +167,6 @@ func run(args []string, _ io.Writer) error {
 
 // parseConfig parses command line flags and environment variables
 func parseConfig(args []string) (*StreamerConfig, error) {
-	if err := flag.CommandLine.Parse(args[1:]); err != nil {
-		return nil, fmt.Errorf("failed to parse flags: %w", err)
-	}
 	cfg := &StreamerConfig{}
 
 	// etcd configuration
@@ -184,21 +179,24 @@ func parseConfig(args []string) (*StreamerConfig, error) {
 	// Message queue configuration
 	flag.StringVar(&cfg.MessageQueuePrefix, "message-queue-prefix", getEnv("MESSAGE_QUEUE_PREFIX", "/telemetry/queue"), "etcd message queue prefix")
 
-	// CSV configuration
-	flag.StringVar(&cfg.CSVFile, "csv", getEnv("CSV_FILE", "dcgm_metrics_20250718_134233.csv"), "CSV file to stream")
+	// Processing configuration
 	flag.IntVar(&cfg.BatchSize, "batch-size", getEnvInt("BATCH_SIZE", 100), "Batch size for streaming")
 	flag.DurationVar(&cfg.StreamInterval, "stream-interval", getEnvDuration("STREAM_INTERVAL", 3*time.Second), "Interval between batches")
-	flag.BoolVar(&cfg.LoopMode, "loop", getEnvBool("LOOP_MODE", false), "Loop through CSV file continuously (default: false for production)")
 
 	// HTTP server configuration for CSV upload
 	flag.IntVar(&cfg.HTTPPort, "http-port", getEnvInt("HTTP_PORT", 8081), "HTTP server port for CSV upload")
-	flag.BoolVar(&cfg.EnableHTTP, "enable-http", getEnvBool("ENABLE_HTTP", true), "Enable HTTP server for CSV upload")
+	cfg.EnableHTTP = true // Always enable HTTP server in API-only mode
 	flag.StringVar(&cfg.UploadDir, "upload-dir", getEnv("UPLOAD_DIR", "/tmp/telemetry-uploads"), "Directory for uploaded CSV files")
 	cfg.MaxUploadSize = int64(getEnvInt("MAX_UPLOAD_SIZE", 100*1024*1024)) // 100MB
 	cfg.MaxMemory = int64(getEnvInt("MAX_MEMORY", 32*1024*1024))           // 32MB
 
 	// Logging
 	flag.StringVar(&cfg.LogLevel, "log-level", getEnv("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
+
+	// Parse flags after defining them
+	if err := flag.CommandLine.Parse(args[1:]); err != nil {
+		return nil, fmt.Errorf("failed to parse flags: %w", err)
+	}
 
 	return cfg, nil
 }
@@ -243,12 +241,9 @@ func NewNexusStreamer(ctx context.Context, config *StreamerConfig) (*NexusStream
 	}
 	scalingCoord := scaling.NewScalingCoordinator(etcdClient, "nexus-streamer", config.StreamerID, scalingRules)
 
-	// Create HTTP server if enabled
-	var echoServer *echo.Echo
-	if config.EnableHTTP {
-		echoServer = echo.New()
-		echoServer.HideBanner = true
-	}
+	// Create HTTP server (always enabled in API-only mode)
+	echoServer := echo.New()
+	echoServer.HideBanner = true
 
 	streamer := &NexusStreamer{
 		config:          config,
@@ -260,10 +255,8 @@ func NewNexusStreamer(ctx context.Context, config *StreamerConfig) (*NexusStream
 		startTime:       time.Now(),
 	}
 
-	// Setup HTTP routes if enabled
-	if config.EnableHTTP {
-		streamer.setupHTTPRoutes()
-	}
+	// Setup HTTP routes (always enabled in API-only mode)
+	streamer.setupHTTPRoutes()
 
 	return streamer, nil
 }
@@ -298,7 +291,7 @@ func (ns *NexusStreamer) Start(ctx context.Context) error {
 		Port:    8080,
 		Metadata: map[string]string{
 			"cluster_id": ns.config.ClusterID,
-			"csv_file":   ns.config.CSVFile,
+			"mode":       "api-only",
 			"version":    "2.0.0",
 		},
 		Health:  "healthy",
@@ -321,128 +314,19 @@ func (ns *NexusStreamer) Start(ctx context.Context) error {
 		return ns.watchConfiguration(gCtx)
 	})
 
-	// Start HTTP server if enabled
-	if ns.config.EnableHTTP {
-		g.Go(func() error {
-			return ns.startHTTPServer(gCtx)
-		})
-	}
+	// Start HTTP server (always enabled in API-only mode)
+	g.Go(func() error {
+		return ns.startHTTPServer(gCtx)
+	})
 
-	// Start streaming
-	// g.Go(func() error {
-	// 	return ns.streamingLoop(gCtx)
-	// })
+	// In API-only mode, we don't run the streaming loop
+	// CSV processing happens only when files are uploaded via the API
 
 	return g.Wait()
 }
 
-// streamingLoop runs the main streaming loop
-func (ns *NexusStreamer) streamingLoop(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info("Stopping streaming loop")
-			return ctx.Err()
-		default:
-			if err := ns.streamCSVFile(ctx); err != nil {
-				log.Errorf("Error streaming CSV file: %v", err)
-				time.Sleep(ns.config.StreamInterval)
-				continue
-			}
-
-			if !ns.config.LoopMode {
-				log.Info("Single-pass mode completed, stopping streamer")
-				return nil
-			}
-
-			log.Infof("Completed CSV file streaming, waiting %v before next iteration", ns.config.StreamInterval)
-			time.Sleep(ns.config.StreamInterval)
-		}
-	}
-}
-
-// streamCSVFile reads and streams a CSV file to etcd message queue
-func (ns *NexusStreamer) streamCSVFile(ctx context.Context) error {
-	file, err := os.Open(ns.config.CSVFile)
-	if err != nil {
-		return fmt.Errorf("failed to open CSV file: %w", err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-
-	// Read header
-	header, err := reader.Read()
-	if err != nil {
-		return fmt.Errorf("failed to read CSV header: %w", err)
-	}
-
-	log.Debugf("CSV header: %v", header)
-
-	// Create column mapping
-	columnMap := make(map[string]int)
-	for i, col := range header {
-		columnMap[strings.ToLower(strings.TrimSpace(col))] = i
-	}
-
-	batch := make([]*TelemetryRecord, 0, ns.config.BatchSize)
-	recordCount := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			record, err := reader.Read()
-			if err == io.EOF {
-				// Process remaining batch
-				if len(batch) > 0 {
-					if err := ns.publishBatch(ctx, batch); err != nil {
-						log.Errorf("Failed to publish final batch: %v", err)
-					}
-				}
-				log.Infof("✅ Finished streaming CSV file, processed %d records total", recordCount)
-				log.Infof("📊 Processing Summary:")
-				log.Infof("   - Total records processed: %d", recordCount)
-				log.Infof("   - Batch size: %d", ns.config.BatchSize)
-				log.Infof("   - Stream interval: %v", ns.config.StreamInterval)
-				return nil
-			}
-			if err != nil {
-				log.Errorf("Error reading CSV record: %v", err)
-				continue
-			}
-
-			// Parse record
-			telemetryRecord, err := ns.parseCSVRecord(record, columnMap)
-			if err != nil {
-				log.Errorf("Failed to parse CSV record: %v", err)
-				continue
-			}
-
-			batch = append(batch, telemetryRecord)
-			recordCount++
-
-			// Publish batch when it's full
-			if len(batch) >= ns.config.BatchSize {
-				if err := ns.publishBatch(ctx, batch); err != nil {
-					log.Errorf("Failed to publish batch: %v", err)
-				} else {
-					log.Infof("📤 Published batch of %d records (total processed: %d)", len(batch), recordCount)
-				}
-				batch = batch[:0] // Reset batch
-
-				// Wait between batches
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(ns.config.StreamInterval):
-					// Continue
-				}
-			}
-		}
-	}
-}
+// Note: streamingLoop and streamCSVFile functions removed in API-only mode
+// CSV processing now happens only through the upload API endpoint
 
 // parseCSVRecord parses a CSV record into a TelemetryRecord
 func (ns *NexusStreamer) parseCSVRecord(record []string, columnMap map[string]int) (*TelemetryRecord, error) {
@@ -527,7 +411,7 @@ func (ns *NexusStreamer) publishBatch(ctx context.Context, batch []*TelemetryRec
 		return nil
 	}
 
-	queueKey := ns.config.MessageQueuePrefix + "/" + ns.config.ClusterID
+	queueKey := ns.config.MessageQueuePrefix + "/telemetry"
 
 	// Use etcd transaction for atomic batch publishing
 	ops := make([]clientv3.Op, 0, len(batch))
@@ -751,7 +635,14 @@ func (ns *NexusStreamer) startHTTPServer(ctx context.Context) error {
 	// Shutdown server
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return server.Shutdown(shutdownCtx)
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Errorf("HTTP server shutdown error: %v", err)
+		return err
+	}
+
+	log.Info("HTTP server shutdown completed successfully")
+	return nil
 }
 
 // healthHandler handles health check requests
@@ -777,8 +668,7 @@ func (ns *NexusStreamer) statusHandler(c echo.Context) error {
 		"config": map[string]interface{}{
 			"batch_size":      ns.config.BatchSize,
 			"stream_interval": ns.config.StreamInterval.String(),
-			"loop_mode":       ns.config.LoopMode,
-			"http_enabled":    ns.config.EnableHTTP,
+			"mode":            "api-only",
 			"http_port":       ns.config.HTTPPort,
 		},
 	})

@@ -164,8 +164,12 @@ func (cm *ConfigManager) WatchConfig(key string) <-chan ConfigUpdate {
 	go func() {
 		defer func() {
 			cm.mu.Lock()
-			delete(cm.watchers, key)
-			close(ch)
+			// Only close if the channel is still in the watchers map
+			// This prevents double-close when Close() is called
+			if _, exists := cm.watchers[key]; exists {
+				delete(cm.watchers, key)
+				close(ch)
+			}
 			cm.mu.Unlock()
 		}()
 
