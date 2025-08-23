@@ -1,4 +1,4 @@
-.PHONY: help build test clean run-streamer run-collector run-api-gateway run-all-optimized run-streamer-prod run-collector-prod run-api-gateway-prod docker-build docker-push helm-install helm-uninstall generate-swagger deps lint \
+.PHONY: help build test test-unit test-integration test-e2e test-comprehensive test-coverage test-watch test-specific test-package test-race test-clean clean run-streamer run-collector run-api-gateway run-all-optimized run-streamer-prod run-collector-prod run-api-gateway-prod docker-build docker-push helm-install helm-uninstall generate-swagger deps lint \
 	helm-install-same-cluster helm-install-cross-cluster-edge helm-install-cross-cluster-central helm-install-cross-cluster-all \
 	helm-uninstall-cross-cluster helm-template-edge helm-template-central docker-build-local docker-build-all \
 	kind-setup kind-cleanup kind-status kind-load-images \
@@ -86,19 +86,136 @@ generate-swagger: ## Generate OpenAPI/Swagger specification
 	@echo "OpenAPI specification generated in ./docs/generated/"
 
 # Testing
-test: ## Run unit tests
-	@echo "Running tests..."
-	go test -v -race -coverprofile=coverage.out ./...
+test: test-comprehensive ## Run comprehensive tests with full coverage (default target)
 
-test-coverage: test ## Run tests and show coverage report
-	@echo "Coverage report:"
-	go tool cover -func=coverage.out
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report saved to coverage.html"
+test-unit: ## Run unit tests only
+	@echo "Running unit tests..."
+	go test -v -race -coverprofile=unit-coverage.out ./...
 
-test-integration: ## Run integration tests
+test-integration: ## Run integration tests only
 	@echo "Running integration tests..."
-	go test -v -tags=integration ./test/integration/...
+	go test -v -tags=integration -coverprofile=integration-coverage.out -coverpkg=./... ./test/integration/...
+
+test-e2e: ## Run end-to-end tests only
+	@echo "Running E2E tests..."
+	go test -v -coverprofile=e2e-coverage.out -coverpkg=./... ./test/e2e/...
+
+test-comprehensive: ## Run all tests with comprehensive coverage analysis
+	@echo "🚀 Running comprehensive test suite with full coverage analysis..."
+	@echo ""
+	@echo "Step 1: Cleaning previous coverage data..."
+	@rm -f *.out coverage.html coverage-*.html
+	@mkdir -p coverage-reports
+	@echo ""
+	@echo "Step 2: Running unit tests with coverage..."
+	go test -v -race -coverprofile=unit-coverage.out -coverpkg=./... ./...
+	@echo ""
+	@echo "Step 3: Running integration tests with coverage..."
+	@if command -v docker >/dev/null 2>&1; then \
+		go test -v -tags=integration -coverprofile=integration-coverage.out -coverpkg=./... -timeout=15m ./test/integration/...; \
+	else \
+		echo "⚠️  Docker not available, skipping integration tests"; \
+	fi
+	@echo ""
+	@echo "Step 4: Running E2E tests with coverage..."
+	@if command -v etcd >/dev/null 2>&1; then \
+		go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...; \
+	else \
+		echo "⚠️  etcd not available, skipping E2E tests"; \
+	fi
+	@echo ""
+	@echo "Step 5: Running benchmark tests..."
+	@go test -bench=. -benchmem -run=^$$ ./... > benchmark-results.txt 2>&1 || echo "⚠️  Some benchmarks may not exist yet"
+	@echo ""
+	@echo "Step 6: Merging coverage profiles..."
+	@$(MAKE) _merge-coverage-profiles
+	@echo ""
+	@echo "Step 7: Generating coverage reports..."
+	@$(MAKE) _generate-coverage-reports
+	@echo ""
+	@echo "Step 8: Analyzing coverage thresholds..."
+	@$(MAKE) _analyze-coverage-thresholds
+	@echo ""
+	@echo "✅ Comprehensive test suite completed!"
+	@echo ""
+	@echo "📊 Coverage Reports Generated:"
+	@echo "  - HTML Report: coverage.html"
+	@echo "  - Unit Tests: coverage-reports/unit-coverage.html"
+	@echo "  - Integration Tests: coverage-reports/integration-coverage.html"
+	@echo "  - E2E Tests: coverage-reports/e2e-coverage.html"
+	@echo "  - Benchmark Results: benchmark-results.txt"
+	@echo ""
+	@echo "📈 Coverage Summary:"
+	@go tool cover -func=coverage.out | tail -1
+	@echo ""
+
+test-coverage: test-comprehensive ## Alias for comprehensive test coverage (legacy compatibility)
+
+_merge-coverage-profiles:
+	@echo "Merging coverage profiles..."
+	@echo "mode: set" > coverage.out
+	@for file in unit-coverage.out integration-coverage.out e2e-coverage.out; do \
+		if [ -f "$$file" ]; then \
+			tail -n +2 "$$file" >> coverage.out; \
+		fi; \
+	done
+	@echo "Coverage profiles merged into coverage.out"
+
+_generate-coverage-reports:
+	@echo "Generating HTML coverage reports..."
+	@go tool cover -html=coverage.out -o coverage.html
+	@if [ -f "unit-coverage.out" ]; then \
+		go tool cover -html=unit-coverage.out -o coverage-reports/unit-coverage.html; \
+	fi
+	@if [ -f "integration-coverage.out" ]; then \
+		go tool cover -html=integration-coverage.out -o coverage-reports/integration-coverage.html; \
+	fi
+	@if [ -f "e2e-coverage.out" ]; then \
+		go tool cover -html=e2e-coverage.out -o coverage-reports/e2e-coverage.html; \
+	fi
+
+_analyze-coverage-thresholds:
+	@echo "Analyzing coverage thresholds..."
+	@go tool cover -func=coverage.out > coverage-summary.txt
+	@COVERAGE=$$(go tool cover -func=coverage.out | tail -1 | awk '{print $$3}' | sed 's/%//'); \
+	echo "Overall coverage: $$COVERAGE%"; \
+	if [ "$$(echo "$$COVERAGE >= 80" | bc -l 2>/dev/null || echo "0")" = "1" ]; then \
+		echo "✅ Coverage threshold met (≥80%)"; \
+	else \
+		echo "❌ Coverage below threshold (target: ≥80%, actual: $$COVERAGE%)"; \
+		echo "Consider adding more tests to improve coverage"; \
+	fi
+
+test-watch: ## Run tests in watch mode (requires entr)
+	@echo "Running tests in watch mode (Ctrl+C to stop)..."
+	@if command -v entr >/dev/null 2>&1; then \
+		find . -name "*.go" | entr -c make test-unit; \
+	else \
+		echo "❌ 'entr' not found. Install with: brew install entr (macOS) or apt-get install entr (Linux)"; \
+	fi
+
+test-specific: ## Run specific test (usage: make test-specific TEST=TestName)
+	@if [ -z "$(TEST)" ]; then echo "Usage: make test-specific TEST=TestName"; exit 1; fi
+	@echo "Running specific test: $(TEST)"
+	go test -v -run $(TEST) ./...
+
+test-package: ## Run tests for specific package (usage: make test-package PKG=./pkg/messagequeue)
+	@if [ -z "$(PKG)" ]; then echo "Usage: make test-package PKG=./pkg/messagequeue"; exit 1; fi
+	@echo "Running tests for package: $(PKG)"
+	go test -v -coverprofile=package-coverage.out $(PKG)
+	@go tool cover -html=package-coverage.out -o package-coverage.html
+	@echo "Package coverage report: package-coverage.html"
+
+test-race: ## Run tests with race detection
+	@echo "Running tests with race detection..."
+	go test -race -short ./...
+
+test-clean: ## Clean test artifacts and coverage reports
+	@echo "Cleaning test artifacts..."
+	@rm -f *.out *.html benchmark-results.txt coverage-summary.txt
+	@rm -rf coverage-reports
+	@go clean -testcache
+	@echo "Test artifacts cleaned"
 
 # Linting
 lint: ## Run linter
@@ -476,11 +593,12 @@ clean: ## Clean build artifacts and etcd data
 	@pkill -f etcd || echo "No etcd process found"
 	@rm -rf /tmp/etcd-data || true
 	rm -rf $(BINARY_DIR)	
-	rm -f coverage.out coverage.html
-	rm -f kubernetes-manifests.yaml
+	rm -f *.out *.html benchmark-results.txt coverage-summary.txt
+	rm -rf coverage-reports
+	rm -f kubernetes-manifests*.yaml
 	go clean -cache
 	go clean -testcache
-	@echo "✅ Cleanup complete (including etcd)"
+	@echo "✅ Cleanup complete (including etcd and test artifacts)"
 
 # Release
 release: clean deps lint test generate-swagger build ## Prepare for release

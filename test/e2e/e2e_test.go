@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	etcdPort     = "2379"
 	gatewayPort  = "8080"
 	streamerPort = "8081"
 	testTimeout  = 30 * time.Second
@@ -29,12 +30,14 @@ func TestE2EServices(t *testing.T) {
 		t.Skip("Skipping E2E tests in short mode")
 	}
 
-	// Start etcd for testing
-	etcdCmd := startEtcd(t)
-	defer stopService(etcdCmd)
+	// Start embedded etcd server for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
 	// Wait for etcd to be ready
-	waitForService(t, "http://localhost:2379/health", 10*time.Second)
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
 
 	// Start services
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
@@ -67,28 +70,30 @@ func TestE2EServicesWithCoverage(t *testing.T) {
 	}
 
 	// Build services with coverage
-	buildServiceWithCoverage(t, "nexus-collector")
-	buildServiceWithCoverage(t, "nexus-gateway")
-	buildServiceWithCoverage(t, "nexus-streamer")
+	buildServiceWithCoverage(t, "collector")
+	buildServiceWithCoverage(t, "gateway")
+	buildServiceWithCoverage(t, "streamer")
 
-	// Start etcd for testing
-	etcdCmd := startEtcd(t)
-	defer stopService(etcdCmd)
+	// Start embedded etcd server for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
 	// Wait for etcd to be ready
-	waitForService(t, "http://localhost:2379/health", 10*time.Second)
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
 
 	// Start services with coverage
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	gatewayCmd := startServiceWithCoverage(t, ctx, "nexus-gateway", []string{})
+	gatewayCmd := startServiceWithCoverage(t, ctx, "gateway", []string{})
 	defer stopService(gatewayCmd)
 
-	streamerCmd := startServiceWithCoverage(t, ctx, "nexus-streamer", []string{})
+	streamerCmd := startServiceWithCoverage(t, ctx, "streamer", []string{})
 	defer stopService(streamerCmd)
 
-	collectorCmd := startServiceWithCoverage(t, ctx, "nexus-collector", []string{})
+	collectorCmd := startServiceWithCoverage(t, ctx, "collector", []string{})
 	defer stopService(collectorCmd)
 
 	// Wait for services to be ready
@@ -298,27 +303,6 @@ func testLoadTesting(t *testing.T) {
 
 // Helper functions
 
-func startEtcd(t *testing.T) *exec.Cmd {
-	// Check if etcd is available
-	if _, err := exec.LookPath("etcd"); err != nil {
-		t.Skip("etcd not available, skipping E2E tests")
-	}
-
-	cmd := exec.Command("etcd",
-		"--data-dir", "/tmp/etcd-test",
-		"--listen-client-urls", "http://localhost:2379",
-		"--advertise-client-urls", "http://localhost:2379",
-		"--listen-peer-urls", "http://localhost:2380",
-		"--initial-advertise-peer-urls", "http://localhost:2380",
-		"--initial-cluster", "default=http://localhost:2380",
-	)
-
-	err := cmd.Start()
-	require.NoError(t, err)
-
-	return cmd
-}
-
 func startGateway(t *testing.T, ctx context.Context) *exec.Cmd {
 	return startServiceInBackground(t, ctx, "gateway", []string{})
 }
@@ -333,11 +317,14 @@ func startCollector(t *testing.T, ctx context.Context) *exec.Cmd {
 
 func startServiceInBackground(t *testing.T, ctx context.Context, service string, args []string) *exec.Cmd {
 	// Build and start the service as external process
-	binaryPath := fmt.Sprintf("./cmd/nexus-%s/nexus-%s", service, service)
+	binaryPath := fmt.Sprintf("../../cmd/nexus-%s/nexus-%s", service, service)
 
 	// Build the service first
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, fmt.Sprintf("./cmd/nexus-%s", service))
-	err := buildCmd.Run()
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, fmt.Sprintf("../../cmd/nexus-%s", service))
+	output, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Build failed for service %s: %s", service, string(output))
+	}
 	require.NoError(t, err)
 
 	// Start the service
@@ -351,8 +338,11 @@ func startServiceInBackground(t *testing.T, ctx context.Context, service string,
 }
 
 func buildServiceWithCoverage(t *testing.T, service string) {
-	cmd := exec.Command("go", "build", "-cover", "-o", service+"-coverage", "./cmd/nexus-"+service)
-	err := cmd.Run()
+	cmd := exec.Command("go", "build", "-cover", "-o", service+"-coverage", "../../cmd/nexus-"+service)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Coverage build failed for service %s: %s", service, string(output))
+	}
 	require.NoError(t, err)
 }
 
