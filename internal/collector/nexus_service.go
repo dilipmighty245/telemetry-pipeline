@@ -43,9 +43,8 @@ type NexusCollectorConfig struct {
 	Workers      int
 
 	// Feature flags
-	EnableNexus     bool
-	EnableWatchAPI  bool
-	EnableStreaming bool
+	EnableNexus    bool
+	EnableWatchAPI bool
 
 	// Enhanced streaming features
 	StreamingConfig      *streaming.StreamAdapterConfig `json:"streaming_config"`
@@ -156,7 +155,7 @@ type NexusCollectorService struct {
 // NewNexusCollectorService creates a new Nexus-enhanced collector service
 func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig) (*NexusCollectorService, error) {
 	// Set defaults for enhanced features
-	if config.StreamingConfig == nil && config.EnableStreaming {
+	if config.StreamingConfig == nil {
 		config.StreamingConfig = &streaming.StreamAdapterConfig{
 			ChannelSize:   1000,
 			BatchSize:     500,
@@ -194,10 +193,8 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		isEnhanced:     true,
 	}
 
-	// Initialize streaming adapter if enabled
-	if config.EnableStreaming {
-		collector.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
-	}
+	// Initialize streaming adapter (always enabled for performance)
+	collector.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
 
 	// Initialize circuit breaker if enabled
 	if config.EnableCircuitBreaker {
@@ -254,8 +251,8 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		log.Info("Nexus integration enabled")
 	}
 
-	logging.Infof("Created enhanced collector service with streaming=%v, circuit_breaker=%v, adaptive_batching=%v, load_balancing=%v",
-		config.EnableStreaming, config.EnableCircuitBreaker, config.EnableAdaptiveBatch, config.EnableLoadBalancing)
+	logging.Infof("Created enhanced collector service with streaming=true, circuit_breaker=%v, adaptive_batching=%v, load_balancing=%v",
+		config.EnableCircuitBreaker, config.EnableAdaptiveBatch, config.EnableLoadBalancing)
 
 	// Initialize etcd client for message queue
 	etcdClient, err := clientv3.New(clientv3.Config{
@@ -713,7 +710,6 @@ func (nc *NexusCollectorService) parseConfig(args []string) (*NexusCollectorConf
 	// Feature flags
 	config.EnableNexus = getEnvBool("ENABLE_NEXUS", true)
 	config.EnableWatchAPI = getEnvBool("ENABLE_WATCH_API", true)
-	config.EnableStreaming = getEnvBool("ENABLE_STREAMING", true)
 
 	// Logging
 	config.LogLevel = getEnv("LOG_LEVEL", "info")

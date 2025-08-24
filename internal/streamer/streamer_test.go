@@ -9,6 +9,7 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockMessageQueueService for testing
@@ -172,21 +173,29 @@ func TestStreamerService_UpdateConfig(t *testing.T) {
 // Tests for NexusStreamerService with enhanced features
 
 func TestNewNexusStreamerService(t *testing.T) {
+	// Setup embedded etcd for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
+
+	// Wait for etcd to be ready
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
+
 	config := &NexusStreamerConfig{
-		ClusterID:               "test-cluster",
-		StreamerID:              "test-streamer",
-		BatchSize:               100,
-		EnableStreaming:         true,
-		EnableParallelStreaming: true,
-		EnableRateLimit:         true,
-		EnableBackPressure:      true,
-		ParallelWorkers:         0, // Set to 0 to test default assignment
-		EtcdEndpoints:           []string{"localhost:2379"},
+		ClusterID:       "test-cluster",
+		StreamerID:      "test-streamer",
+		BatchSize:       100,
+		ParallelWorkers: 0, // Set to 0 to test default assignment
+		EtcdEndpoints:   etcdServer.Endpoints,
 	}
 
-	// This will fail due to etcd not being available, but we can test the config setup
-	_, err := NewNexusStreamerService(context.Background(), config)
-	assert.Error(t, err) // Expected due to etcd connection failure
+	// Now this should succeed with embedded etcd
+	service, err := NewNexusStreamerService(context.Background(), config)
+	assert.NoError(t, err, "Should create streamer service with embedded etcd")
+	if service != nil {
+		defer service.Close()
+	}
 
 	// Test that defaults were set
 	assert.Equal(t, 5, config.ParallelWorkers) // Should be set to default
@@ -197,21 +206,29 @@ func TestNewNexusStreamerService(t *testing.T) {
 }
 
 func TestNexusStreamerService_DefaultConfigs(t *testing.T) {
+	// Setup embedded etcd for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
+
+	// Wait for etcd to be ready
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
+
 	config := &NexusStreamerConfig{
-		ClusterID:               "test-cluster",
-		StreamerID:              "test-streamer",
-		BatchSize:               100,
-		EnableStreaming:         true,
-		EnableParallelStreaming: true,
-		EnableRateLimit:         true,
-		EnableBackPressure:      true,
-		EtcdEndpoints:           []string{"localhost:2379"},
+		ClusterID:     "test-cluster",
+		StreamerID:    "test-streamer",
+		BatchSize:     100,
+		EtcdEndpoints: etcdServer.Endpoints,
 		// Leave other fields empty to test defaults
 	}
 
-	// This will fail due to etcd not being available, but we can test the config setup
-	_, err := NewNexusStreamerService(context.Background(), config)
-	assert.Error(t, err) // Expected due to etcd connection failure
+	// Now this should succeed with embedded etcd
+	service, err := NewNexusStreamerService(context.Background(), config)
+	assert.NoError(t, err, "Should create streamer service with embedded etcd")
+	if service != nil {
+		defer service.Close()
+	}
 
 	// Test default values were set
 	assert.Equal(t, 5, config.ParallelWorkers)
@@ -310,24 +327,31 @@ func TestStreamerWorker_Lifecycle(t *testing.T) {
 }
 
 func TestNexusStreamerService_GetMetrics(t *testing.T) {
+	// Setup embedded etcd for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
+
+	// Wait for etcd to be ready
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
+
 	config := &NexusStreamerConfig{
-		ClusterID:               "test-cluster",
-		StreamerID:              "test-streamer",
-		BatchSize:               100,
-		EnableStreaming:         true,
-		EnableParallelStreaming: true,
-		EnableRateLimit:         true,
-		ParallelWorkers:         3,
-		EtcdEndpoints:           []string{"localhost:2379"},
+		ClusterID:       "test-cluster",
+		StreamerID:      "test-streamer",
+		BatchSize:       100,
+		ParallelWorkers: 3,
+		EtcdEndpoints:   etcdServer.Endpoints,
 	}
 
-	// Create a mock service for testing metrics
-	service := &NexusStreamerService{
-		config:       config,
-		isEnhanced:   true,
-		messageCount: 100,
-		startTime:    time.Now().Add(-1 * time.Hour),
-	}
+	// Create a real service with embedded etcd
+	service, err := NewNexusStreamerService(context.Background(), config)
+	require.NoError(t, err, "Should create streamer service")
+	defer service.Close()
+
+	// Set some test values
+	service.messageCount = 100
+	service.startTime = time.Now().Add(-1 * time.Hour)
 
 	metrics := service.GetEnhancedMetrics()
 
@@ -339,19 +363,26 @@ func TestNexusStreamerService_GetMetrics(t *testing.T) {
 }
 
 func TestNexusStreamerService_StreamDirectly(t *testing.T) {
+	// Setup embedded etcd for testing
+	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
+
+	// Wait for etcd to be ready
+	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	require.NoError(t, err, "etcd should be ready")
+
 	config := &NexusStreamerConfig{
-		ClusterID:       "test-cluster",
-		StreamerID:      "test-streamer",
-		BatchSize:       100,
-		EnableStreaming: false, // Disable streaming for error test
-		EtcdEndpoints:   []string{"localhost:2379"},
+		ClusterID:     "test-cluster",
+		StreamerID:    "test-streamer",
+		BatchSize:     100,
+		EtcdEndpoints: etcdServer.Endpoints,
 	}
 
-	// Create a mock service for testing
-	service := &NexusStreamerService{
-		config:     config,
-		isEnhanced: true,
-	}
+	// Create a service with streaming enabled (always enabled now)
+	service, err := NewNexusStreamerService(context.Background(), config)
+	require.NoError(t, err, "Should create streamer service")
+	defer service.Close()
 
 	// Create test data using TelemetryRecord (the type used by NexusStreamerService)
 	testData := []*TelemetryRecord{
@@ -371,10 +402,9 @@ func TestNexusStreamerService_StreamDirectly(t *testing.T) {
 		},
 	}
 
-	// Test streaming without adapter (should fail)
-	err := service.StreamDirectly(testData)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "streaming adapter not available")
+	// Test streaming with adapter (should work now)
+	err = service.StreamDirectly(testData)
+	assert.NoError(t, err, "Should stream data successfully")
 }
 
 func TestRateLimiter_TokenReplenishment(t *testing.T) {
@@ -461,33 +491,25 @@ func TestStreamerConfig_Validation(t *testing.T) {
 
 func TestNexusStreamerConfig_Validation(t *testing.T) {
 	config := &NexusStreamerConfig{
-		ClusterID:               "test-cluster",
-		StreamerID:              "test-streamer",
-		BatchSize:               100,
-		EnableStreaming:         true,
-		StreamDestination:       "kafka://localhost:9092",
-		EnableParallelStreaming: true,
-		ParallelWorkers:         5,
-		EnableRateLimit:         true,
-		RateLimit:               2000.0,
-		BurstSize:               200,
-		EnableBackPressure:      true,
-		BackPressureThreshold:   85.0,
-		BackPressureDelay:       150 * time.Millisecond,
-		EtcdEndpoints:           []string{"localhost:2379"},
+		ClusterID:             "test-cluster",
+		StreamerID:            "test-streamer",
+		BatchSize:             100,
+		StreamDestination:     "kafka://localhost:9092",
+		ParallelWorkers:       5,
+		RateLimit:             2000.0,
+		BurstSize:             200,
+		BackPressureThreshold: 85.0,
+		BackPressureDelay:     150 * time.Millisecond,
+		EtcdEndpoints:         []string{"localhost:2379"},
 	}
 
 	assert.Equal(t, "test-cluster", config.ClusterID)
 	assert.Equal(t, "test-streamer", config.StreamerID)
 	assert.Equal(t, 100, config.BatchSize)
-	assert.True(t, config.EnableStreaming)
 	assert.Equal(t, "kafka://localhost:9092", config.StreamDestination)
-	assert.True(t, config.EnableParallelStreaming)
 	assert.Equal(t, 5, config.ParallelWorkers)
-	assert.True(t, config.EnableRateLimit)
 	assert.Equal(t, 2000.0, config.RateLimit)
 	assert.Equal(t, 200, config.BurstSize)
-	assert.True(t, config.EnableBackPressure)
 	assert.Equal(t, 85.0, config.BackPressureThreshold)
 	assert.Equal(t, 150*time.Millisecond, config.BackPressureDelay)
 	assert.Equal(t, []string{"localhost:2379"}, config.EtcdEndpoints)
