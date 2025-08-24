@@ -55,6 +55,9 @@ func TestE2EServices(t *testing.T) {
 	streamerPort, err := getAvailablePort()
 	require.NoError(t, err, "Should get available port for streamer")
 
+	pprofPort, err := getAvailablePort()
+	require.NoError(t, err, "Should get available port for pprof")
+
 	// Start embedded etcd server for testing
 	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
@@ -73,6 +76,8 @@ func TestE2EServices(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// Set environment variable for pprof port
+		os.Setenv("PPROF_PORT", strconv.Itoa(pprofPort))
 		gatewayService := &gateway.NexusGatewayService{}
 		if err := gatewayService.Run([]string{"--port=" + strconv.Itoa(gatewayPort)}, os.Stdout); err != nil && err != context.Canceled {
 			t.Logf("Gateway service error: %v", err)
@@ -126,83 +131,6 @@ func TestE2EServices(t *testing.T) {
 	t.Run("TelemetryQuery", func(t *testing.T) { testTelemetryQuery(t, gatewayPort) })
 	t.Run("ServiceIntegration", func(t *testing.T) { testServiceIntegration(t, gatewayPort, streamerPort) })
 }
-
-// func TestE2EServicesWithCoverage(t *testing.T) {
-// 	if testing.Short() {
-// 		t.Skip("Skipping E2E coverage tests in short mode")
-// 	}
-
-// 	// Start embedded etcd server for testing
-// 	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
-// 	require.NoError(t, err, "Should start embedded etcd server")
-// 	defer cleanup()
-
-// 	// Wait for etcd to be ready
-// 	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
-// 	require.NoError(t, err, "etcd should be ready")
-
-// 	// Start services in background using goroutines
-// 	var wg sync.WaitGroup
-// 	serviceCancel := make(chan struct{})
-// 	defer close(serviceCancel)
-
-// 	// Start gateway service
-// 	wg.Add(1)
-// 	go func() {
-// 		defer wg.Done()
-// 		gatewayService := &gateway.NexusGatewayService{}
-// 		if err := gatewayService.Run([]string{"--port=8080"}, os.Stdout); err != nil && err != context.Canceled {
-// 			t.Logf("Gateway service error: %v", err)
-// 		}
-// 	}()
-
-// 	// Start streamer service
-// 	wg.Add(1)
-// 	go func() {
-// 		defer wg.Done()
-// 		streamerService := &streamer.NexusStreamerService{}
-// 		if err := streamerService.Run([]string{"--port=8081"}, os.Stdout); err != nil && err != context.Canceled {
-// 			t.Logf("Streamer service error: %v", err)
-// 		}
-// 	}()
-
-// 	// Start collector service
-// 	wg.Add(1)
-// 	go func() {
-// 		defer wg.Done()
-// 		collectorService := &collector.NexusCollectorService{}
-// 		if err := collectorService.Run([]string{}, os.Stdout); err != nil && err != context.Canceled {
-// 			t.Logf("Collector service error: %v", err)
-// 		}
-// 	}()
-
-// 	// Ensure services are stopped when test completes
-// 	defer func() {
-// 		// Give services a moment to shut down gracefully
-// 		done := make(chan struct{})
-// 		go func() {
-// 			wg.Wait()
-// 			close(done)
-// 		}()
-// 		select {
-// 		case <-done:
-// 		case <-time.After(5 * time.Second):
-// 			t.Log("Services did not shut down within 5 seconds")
-// 		}
-// 	}()
-
-// 	// Wait for services to be ready
-// 	waitForService(t, "http://localhost:8080/health", 10*time.Second)
-// 	waitForService(t, "http://localhost:8081/health", 10*time.Second)
-
-// 	// Run comprehensive tests
-// 	t.Run("HealthChecks", testHealthChecks)
-// 	t.Run("CSVUpload", testCSVUpload)
-// 	t.Run("TelemetryQuery", testTelemetryQuery)
-// 	t.Run("ServiceIntegration", testServiceIntegration)
-// 	t.Run("ErrorHandling", testErrorHandling)
-// 	t.Run("LoadTesting", testLoadTesting)
-// }
 
 func testHealthChecks(t *testing.T, gatewayPort, streamerPort int) {
 	// Test gateway health

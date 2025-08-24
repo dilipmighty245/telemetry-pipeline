@@ -28,8 +28,7 @@ import (
 )
 
 const (
-	httpDebugAddr = ":8082"         // pprof bind address
-	httpTimeout   = 3 * time.Second // timeouts used to protect the server
+	httpTimeout = 3 * time.Second // timeouts used to protect the server
 )
 
 // NexusGatewayService represents the API Gateway component of the telemetry pipeline
@@ -47,6 +46,7 @@ type NexusGatewayService struct {
 // GatewayConfig holds configuration for the Nexus gateway
 type GatewayConfig struct {
 	Port            int
+	PprofPort       int
 	ClusterID       string
 	EtcdEndpoints   []string
 	EnableWebSocket bool
@@ -108,6 +108,7 @@ func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
 func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error) {
 	config := &GatewayConfig{
 		Port:            8080,
+		PprofPort:       8082,
 		ClusterID:       "default-cluster",
 		EnableWebSocket: true,
 		EnableCORS:      true,
@@ -120,6 +121,11 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 			portStr := strings.TrimPrefix(arg, "--port=")
 			if p, err := strconv.Atoi(portStr); err == nil {
 				config.Port = p
+			}
+		} else if strings.HasPrefix(arg, "--pprof-port=") {
+			pprofPortStr := strings.TrimPrefix(arg, "--pprof-port=")
+			if p, err := strconv.Atoi(pprofPortStr); err == nil {
+				config.PprofPort = p
 			}
 		} else if strings.HasPrefix(arg, "--cluster-id=") {
 			config.ClusterID = strings.TrimPrefix(arg, "--cluster-id=")
@@ -143,6 +149,11 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			config.Port = p
+		}
+	}
+	if envPprofPort := os.Getenv("PPROF_PORT"); envPprofPort != "" {
+		if p, err := strconv.Atoi(envPprofPort); err == nil {
+			config.PprofPort = p
 		}
 	}
 	if envCluster := os.Getenv("CLUSTER_ID"); envCluster != "" {
@@ -685,12 +696,11 @@ func (ng *NexusGatewayService) websocketHandler(c echo.Context) error {
 	return c.String(http.StatusOK, "WebSocket endpoint")
 }
 
-
-
 // pprofHandler launches a http server and serves pprof debug information
 func (ng *NexusGatewayService) pprofHandler(ctx context.Context) error {
+	pprofAddr := fmt.Sprintf(":%d", ng.config.PprofPort)
 	srv := http.Server{
-		Addr:         httpDebugAddr,
+		Addr:         pprofAddr,
 		ReadTimeout:  httpTimeout,
 		WriteTimeout: httpTimeout,
 	}
@@ -704,7 +714,7 @@ func (ng *NexusGatewayService) pprofHandler(ctx context.Context) error {
 		_ = srv.Shutdown(closeCtx)
 	}()
 
-	logging.Infof("Starting pprof server on %s", httpDebugAddr)
+	logging.Infof("Starting pprof server on %s", pprofAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logging.Errorf("pprof server error: %v", err)
 		return err

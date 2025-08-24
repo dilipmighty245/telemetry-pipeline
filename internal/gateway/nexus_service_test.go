@@ -29,6 +29,7 @@ func TestGatewayConfig_Validation(t *testing.T) {
 			name: "valid config",
 			config: &GatewayConfig{
 				Port:          8080,
+				PprofPort:     8082,
 				ClusterID:     "test-cluster",
 				EtcdEndpoints: etcdServer.Endpoints,
 
@@ -42,6 +43,7 @@ func TestGatewayConfig_Validation(t *testing.T) {
 			name: "minimal config",
 			config: &GatewayConfig{
 				Port:          8080,
+				PprofPort:     8082,
 				ClusterID:     "test-cluster",
 				EtcdEndpoints: etcdServer.Endpoints,
 			},
@@ -250,7 +252,6 @@ func TestNexusGatewayService_PlaceholderHandlers(t *testing.T) {
 		{"listGPUsByHost", service.listGPUsByHostHandler, "/hosts/test/gpus"},
 
 		{"websocket", service.websocketHandler, "/ws"},
-		{"swagger", service.swaggerHandler, "/swagger"},
 	}
 
 	for _, h := range handlers {
@@ -285,6 +286,7 @@ func BenchmarkGatewayConfig_Creation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		config := &GatewayConfig{
 			Port:            8080,
+			PprofPort:       8082,
 			ClusterID:       "test-cluster",
 			EtcdEndpoints:   []string{"localhost:2379"},
 			EnableWebSocket: true,

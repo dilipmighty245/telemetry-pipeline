@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -17,12 +19,43 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 )
 
+// getFreePort returns a free port by binding to :0 and then closing the connection
+func getFreePort() (int, error) {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	return addr.Port, nil
+}
+
 func TestNexusGatewayService_ComprehensiveAPITests(t *testing.T) {
+	// Get free ports for etcd
+	clientPort, err := getFreePort()
+	require.NoError(t, err)
+	peerPort, err := getFreePort()
+	require.NoError(t, err)
+
 	// Setup embedded etcd for testing
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 	cfg.LogLevel = "error" // Reduce log noise
 	cfg.Logger = "zap"
+
+	// Use dynamic ports to avoid conflicts
+	clientURL, _ := url.Parse(fmt.Sprintf("http://localhost:%d", clientPort))
+	peerURL, _ := url.Parse(fmt.Sprintf("http://localhost:%d", peerPort))
+
+	cfg.ListenClientUrls = []url.URL{*clientURL}
+	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
+	cfg.ListenPeerUrls = []url.URL{*peerURL}
+	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
+
+	// Set initial cluster to match the peer URL
+	cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
+	cfg.ClusterState = embed.ClusterStateFlagNew
 
 	e, err := embed.StartEtcd(cfg)
 	require.NoError(t, err)
@@ -47,9 +80,16 @@ func TestNexusGatewayService_ComprehensiveAPITests(t *testing.T) {
 	etcdEndpoint := e.Clients[0].Addr().String()
 	t.Setenv("ETCD_ENDPOINTS", etcdEndpoint)
 
+	// Get free ports for gateway
+	gatewayPort, err := getFreePort()
+	require.NoError(t, err)
+	pprofPort, err := getFreePort()
+	require.NoError(t, err)
+
 	// Create gateway config
 	config := &GatewayConfig{
-		Port:            8080,
+		Port:            gatewayPort,
+		PprofPort:       pprofPort,
 		ClusterID:       "test-cluster",
 		EtcdEndpoints:   []string{etcdEndpoint},
 		EnableWebSocket: true,
@@ -315,15 +355,8 @@ func TestNexusGatewayService_ComprehensiveAPITests(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("SwaggerEndpoint", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/swagger/", nil)
-		rec := httptest.NewRecorder()
-		c := gateway.echo.NewContext(req, rec)
-
-		err := gateway.swaggerHandler(c)
-		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, rec.Code)
-	})
+	// Note: Swagger functionality is handled by echoSwagger.WrapHandler middleware
+	// and doesn't have a custom handler method to test directly
 }
 
 func TestNexusGatewayService_ConfigurationAndSetup(t *testing.T) {
@@ -362,6 +395,7 @@ func TestNexusGatewayService_ConfigurationAndSetup(t *testing.T) {
 	t.Run("NewNexusGatewayService_InvalidEtcdEndpoint", func(t *testing.T) {
 		config := &GatewayConfig{
 			Port:          8080,
+			PprofPort:     8082,
 			ClusterID:     "test-cluster",
 			EtcdEndpoints: []string{"invalid-endpoint:2379"},
 			LogLevel:      "error",

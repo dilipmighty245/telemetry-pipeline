@@ -222,20 +222,8 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("SwaggerHandler", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/swagger/", nil)
-		rec := httptest.NewRecorder()
-		c := gateway.echo.NewContext(req, rec)
-
-		err := gateway.swaggerHandler(c)
-		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, rec.Code)
-
-		var response map[string]interface{}
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Contains(t, response, "swagger")
-	})
+	// Note: Swagger functionality is handled by echoSwagger.WrapHandler middleware
+	// and doesn't have a custom handler method to test directly
 }
 
 func TestTelemetryDataStruct_Coverage(t *testing.T) {
@@ -299,6 +287,7 @@ func TestGatewayConfig_Coverage(t *testing.T) {
 	t.Run("GatewayConfig_DefaultValues", func(t *testing.T) {
 		config := &GatewayConfig{
 			Port:            8080,
+			PprofPort:       8082,
 			ClusterID:       "test-cluster",
 			EtcdEndpoints:   []string{"localhost:2379"},
 			EnableWebSocket: true,
@@ -318,6 +307,7 @@ func TestGatewayConfig_Coverage(t *testing.T) {
 		// Test valid config
 		validConfig := &GatewayConfig{
 			Port:            8080,
+			PprofPort:       8082,
 			ClusterID:       "test-cluster",
 			EtcdEndpoints:   []string{"localhost:2379"},
 			EnableWebSocket: true,
