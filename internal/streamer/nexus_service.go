@@ -164,7 +164,7 @@ func (ns *NexusStreamerService) Run(args []string, _ io.Writer) error {
 	// Set log level
 	logging.SetLogLevel(cfg.LogLevel, "")
 
-	logging.Infof("Starting Nexus telemetry streamer (API-only mode)")
+	logging.Infof("Starting Nexus telemetry streamer")
 	logging.Infof("Cluster ID: %s, Streamer ID: %s", cfg.ClusterID, cfg.StreamerID)
 	logging.Infof("HTTP Port: %d, Batch Size: %d, Interval: %v", cfg.HTTPPort, cfg.BatchSize, cfg.StreamInterval)
 
@@ -371,7 +371,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 	logging.Infof("Created enhanced streamer service with parallel=true, rate_limit=true, back_pressure=true")
 
 	// Setup HTTP routes
-	streamer.setupHTTPRoutes()
+	streamer.setupHTTPRoutes(ctx)
 
 	return streamer, nil
 }
@@ -558,6 +558,9 @@ func (ns *NexusStreamerService) publishBatchWithWorkers(ctx context.Context, bat
 				ns.workerPool <- worker // Return worker to pool
 			}()
 
+			// Use background context for worker operations to avoid cancellation
+			// when the original request context is canceled
+
 			err := worker.publishBatch(ctx, batch)
 			if err != nil {
 				logging.Errorf("Worker %d publishing failed: %v", worker.id, err)
@@ -566,7 +569,8 @@ func (ns *NexusStreamerService) publishBatchWithWorkers(ctx context.Context, bat
 		return nil
 	default:
 		// No workers available, fallback to direct processing
-		return ns.publishBatchEnhanced(ctx, batch)
+		// Use background context to avoid cancellation issues
+		return ns.publishBatchEnhanced(context.Background(), batch)
 	}
 }
 
@@ -709,22 +713,6 @@ func (ns *NexusStreamerService) watchConfiguration(ctx context.Context) error {
 			logging.Infof("Stopping configuration watcher")
 			return ctx.Err()
 		}
-	}
-}
-
-// reportMetrics reports instance metrics for scaling decisions
-func (ns *NexusStreamerService) reportMetrics() {
-	metrics := scaling.InstanceMetrics{
-		CPUUsage:       0.5,                            // This would be real CPU usage
-		MemoryUsage:    0.4,                            // This would be real memory usage
-		QueueDepth:     float64(ns.messageCount % 100), // Simulated queue depth
-		ProcessingRate: float64(ns.messageCount) / time.Since(ns.startTime).Seconds(),
-		ErrorRate:      0.01, // 1% error rate
-		Health:         "healthy",
-	}
-
-	if err := ns.scalingCoord.ReportMetrics(metrics); err != nil {
-		logging.Debugf("Failed to report metrics: %v", err)
 	}
 }
 
@@ -927,7 +915,7 @@ func (ns *NexusStreamerService) StreamDirectly(data []*TelemetryRecord) error {
 }
 
 // setupHTTPRoutes configures HTTP routes for CSV upload
-func (ns *NexusStreamerService) setupHTTPRoutes() {
+func (ns *NexusStreamerService) setupHTTPRoutes(ctx context.Context) {
 	// Middleware
 	ns.echo.Use(middleware.Logger())
 	ns.echo.Use(middleware.Recover())
@@ -937,7 +925,7 @@ func (ns *NexusStreamerService) setupHTTPRoutes() {
 	ns.echo.GET("/health", ns.healthHandler)
 
 	// CSV upload endpoint
-	ns.echo.POST("/api/v1/csv/upload", ns.uploadCSVHandler)
+	ns.echo.POST("/api/v1/csv/upload", ns.uploadCSVHandlerWithContext(ctx))
 
 	// Status endpoint
 	ns.echo.GET("/api/v1/status", ns.statusHandler)
@@ -967,7 +955,7 @@ func (ns *NexusStreamerService) startHTTPServer(ctx context.Context) error {
 	logging.Infof("Attempting graceful shutdown of HTTP server")
 
 	// Shutdown server
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -1008,8 +996,15 @@ func (ns *NexusStreamerService) statusHandler(c echo.Context) error {
 	})
 }
 
+// uploadCSVHandlerWithContext returns a handler function with the provided context
+func (ns *NexusStreamerService) uploadCSVHandlerWithContext(ctx context.Context) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		return ns.uploadCSVHandler(ctx, c)
+	}
+}
+
 // uploadCSVHandler handles CSV file upload and immediate processing
-func (ns *NexusStreamerService) uploadCSVHandler(c echo.Context) error {
+func (ns *NexusStreamerService) uploadCSVHandler(ctx context.Context, c echo.Context) error {
 	startTime := time.Now()
 
 	// Parse multipart form with size limit
@@ -1083,7 +1078,8 @@ func (ns *NexusStreamerService) uploadCSVHandler(c echo.Context) error {
 	md5Hash := fmt.Sprintf("%x", hasher.Sum(nil))
 
 	// Process CSV file immediately
-	processedRecords, totalRecords, headers, err := ns.processUploadedCSV(c.Request().Context(), filePath)
+	// Use the provided context for CSV processing
+	processedRecords, totalRecords, headers, err := ns.processUploadedCSV(ctx, filePath)
 	if err != nil {
 		os.Remove(filePath) // Clean up on error
 		logging.Errorf("CSV processing failed: %v", err)
