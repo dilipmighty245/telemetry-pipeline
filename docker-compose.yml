@@ -61,13 +61,6 @@ services:
       dockerfile: deployments/docker/Dockerfile.collector
     container_name: telemetry-collector
     environment:
-
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - DB_SSLMODE=disable
       - LOG_LEVEL=info
     command: [
       "-batch-size=100",
@@ -76,7 +69,7 @@ services:
     ]
     restart: unless-stopped
     depends_on:
-      postgres:
+      etcd:
         condition: service_healthy
 
   # API Gateway
@@ -86,12 +79,6 @@ services:
       dockerfile: deployments/docker/Dockerfile.api-gateway
     container_name: telemetry-api-gateway
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - DB_SSLMODE=disable
       - LOG_LEVEL=info
       - PORT=8080
     ports:
@@ -102,7 +89,7 @@ services:
     ]
     restart: unless-stopped
     depends_on:
-      postgres:
+      etcd:
         condition: service_healthy
 
 

@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"io"
+	"net/http"
 	"os"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
-	log "github.com/sirupsen/logrus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 )
 
 func main() {
@@ -14,8 +15,10 @@ func main() {
 		switch err {
 		case context.Canceled:
 			// not considered error
+		case http.ErrServerClosed:
+			// not considered error
 		default:
-			log.Fatalf("could not run Nexus Streamer: %v", err)
+			logging.Fatalf("could not run Streamer: %v", err)
 		}
 	}
 }

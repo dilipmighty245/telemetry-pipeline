@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -26,7 +26,7 @@ type ServiceConfig struct {
 	ServiceID      string
 	UpdateInterval time.Duration
 	BatchSize      int
-	EnableWatchAPI bool
+	// WatchAPI is now enabled by default
 }
 
 // TelemetryCluster represents the root telemetry cluster
@@ -157,7 +157,7 @@ func NewTelemetryService(config *ServiceConfig) (*TelemetryService, error) {
 		return nil, fmt.Errorf("failed to initialize cluster: %w", err)
 	}
 
-	log.Infof("Nexus-style telemetry service initialized for cluster: %s", config.ClusterID)
+	logging.Infof("Nexus-style telemetry service initialized for cluster: %s", config.ClusterID)
 	return service, nil
 }
 
@@ -183,7 +183,7 @@ func (ts *TelemetryService) initializeCluster() error {
 			Configuration: map[string]string{
 				"batch_size":      fmt.Sprintf("%d", ts.config.BatchSize),
 				"update_interval": ts.config.UpdateInterval.String(),
-				"watch_api":       fmt.Sprintf("%t", ts.config.EnableWatchAPI),
+				"watch_api":       "true",
 			},
 		},
 	}
@@ -200,7 +200,7 @@ func (ts *TelemetryService) initializeCluster() error {
 		return fmt.Errorf("failed to store cluster data: %w", err)
 	}
 
-	log.Infof("Cluster initialized in etcd: %s", ts.config.ClusterID)
+	logging.Infof("Cluster initialized in etcd: %s", ts.config.ClusterID)
 	return nil
 }
 
@@ -233,10 +233,10 @@ func (ts *TelemetryService) RegisterHost(hostInfo *TelemetryHost) error {
 
 	// Update cluster metadata
 	if err := ts.updateClusterMetadata(); err != nil {
-		log.Warnf("Failed to update cluster metadata: %v", err)
+		logging.Warnf("Failed to update cluster metadata: %v", err)
 	}
 
-	log.Infof("Host registered: %s (%s)", hostInfo.HostID, hostInfo.Hostname)
+	logging.Infof("Host registered: %s (%s)", hostInfo.HostID, hostInfo.Hostname)
 	return nil
 }
 
@@ -270,10 +270,10 @@ func (ts *TelemetryService) RegisterGPU(hostID string, gpuInfo *TelemetryGPU) er
 
 	// Update cluster metadata
 	if err := ts.updateClusterMetadata(); err != nil {
-		log.Warnf("Failed to update cluster metadata: %v", err)
+		logging.Warnf("Failed to update cluster metadata: %v", err)
 	}
 
-	log.Infof("GPU registered: %s (%s) for host %s", gpuInfo.GPUID, gpuInfo.DeviceName, hostID)
+	logging.Infof("GPU registered: %s (%s) for host %s", gpuInfo.GPUID, gpuInfo.DeviceName, hostID)
 	return nil
 }
 
@@ -298,7 +298,7 @@ func (ts *TelemetryService) StoreTelemetryData(hostID, gpuID string, telemetryDa
 
 	// Update GPU status
 	if err := ts.updateGPUStatus(hostID, gpuID, telemetryData); err != nil {
-		log.Warnf("Failed to update GPU status: %v", err)
+		logging.Warnf("Failed to update GPU status: %v", err)
 	}
 
 	return nil
@@ -433,7 +433,7 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 		Configuration: map[string]string{
 			"batch_size":      fmt.Sprintf("%d", ts.config.BatchSize),
 			"update_interval": ts.config.UpdateInterval.String(),
-			"watch_api":       fmt.Sprintf("%t", ts.config.EnableWatchAPI),
+			"watch_api":       "true",
 		},
 	}
 	cluster.UpdatedAt = time.Now()
@@ -513,7 +513,7 @@ func (ts *TelemetryService) GetGPUTelemetryData(hostID, gpuID string, startTime,
 
 		var data TelemetryData
 		if err := json.Unmarshal(kv.Value, &data); err != nil {
-			log.Warnf("Failed to unmarshal telemetry data: %v", err)
+			logging.Warnf("Failed to unmarshal telemetry data: %v", err)
 			continue
 		}
 
@@ -534,9 +534,6 @@ func (ts *TelemetryService) GetGPUTelemetryData(hostID, gpuID string, startTime,
 
 // WatchTelemetryChanges sets up a watch for telemetry data changes using etcd watch
 func (ts *TelemetryService) WatchTelemetryChanges(callback func(string, []byte, string)) error {
-	if !ts.config.EnableWatchAPI {
-		return fmt.Errorf("watch API is disabled")
-	}
 
 	watchKey := fmt.Sprintf("/telemetry/clusters/%s/", ts.config.ClusterID)
 
@@ -564,13 +561,13 @@ func (ts *TelemetryService) WatchTelemetryChanges(callback func(string, []byte, 
 		}
 	}()
 
-	log.Infof("Watch API enabled for cluster: %s", ts.config.ClusterID)
+	logging.Infof("Watch API enabled for cluster: %s", ts.config.ClusterID)
 	return nil
 }
 
 // Start starts the telemetry service
 func (ts *TelemetryService) Start() error {
-	log.Info("Nexus-style telemetry service started")
+	logging.Infof("Nexus-style telemetry service started")
 	return nil
 }
 
@@ -587,7 +584,7 @@ func (ts *TelemetryService) Close() error {
 		ts.etcdClient.Close()
 	}
 
-	log.Info("Nexus-style telemetry service closed")
+	logging.Infof("Nexus-style telemetry service closed")
 	return nil
 }
 

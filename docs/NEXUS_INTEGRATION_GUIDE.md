@@ -44,7 +44,7 @@ graph TB
         
         subgraph "Processing Layer"
             NSTREAMER[Nexus Streamer<br/>CSV → etcd Queue]
-            NCOLLECTOR[Nexus Collector<br/>etcd Queue → etcd + PostgreSQL]
+            NCOLLECTOR[Nexus Collector<br/>etcd Queue → etcd Storage]
         end
         
         subgraph "API Layer"
@@ -53,7 +53,7 @@ graph TB
         end
         
         subgraph "Storage Layer"
-            POSTGRES[PostgreSQL + TimescaleDB<br/>Time-series Analytics<br/>Long-term Storage]
+            ETCDSTORAGE[etcd Distributed Storage<br/>Hierarchical Data<br/>Real-time Access]
         end
         
         subgraph "Monitoring"
@@ -66,11 +66,9 @@ graph TB
     STREAM --> NSTREAMER
     NSTREAMER --> ETCD
     ETCD --> NCOLLECTOR
-    NCOLLECTOR --> ETCD
-    NCOLLECTOR --> POSTGRES
+    NCOLLECTOR --> ETCDSTORAGE
+    ETCDSTORAGE --> NAPI
     ETCD --> NAPI
-    POSTGRES --> NAPI
-    POSTGRES --> TAPI
     
     style ETCD fill:#ffebee,stroke:#c62828,stroke-width:2px
     style NAPI fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
@@ -135,7 +133,6 @@ Enhanced collector that integrates with etcd for distributed coordination and me
 **Key Features:**
 - Consumes from etcd message queue
 - Stores hierarchical data in etcd
-- Stores data in PostgreSQL + TimescaleDB for analytics
 - Real-time status updates
 - Automatic host/GPU registration
 
@@ -145,8 +142,6 @@ Enhanced collector that integrates with etcd for distributed coordination and me
 CLUSTER_ID=my-cluster
 ETCD_ENDPOINTS=localhost:2379
 REDIS_URL=redis://localhost:6379
-ENABLE_NEXUS=true
-ENABLE_WATCH_API=true
 ```
 
 ### **2. Nexus API Server** (`cmd/nexus-api`)
@@ -285,17 +280,9 @@ ETCD_ENDPOINTS=localhost:2379           # etcd endpoints (comma-separated)
 REDIS_URL=redis://localhost:6379       # Redis connection URL
 REDIS_TOPICS=telemetry                  # Topics to consume (comma-separated)
 
-# Database
-DB_HOST=localhost
-DB_PORT=5433
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=telemetry
+
 
 # Features
-ENABLE_NEXUS=true                       # Enable Nexus integration
-ENABLE_WATCH_API=true                   # Enable real-time events
-ENABLE_GRAPHQL=true                     # Enable GraphQL support
 
 # Performance
 BATCH_SIZE=100                          # Processing batch size
@@ -330,13 +317,11 @@ LOG_LEVEL=info                          # Log level
 
 The `docker-compose.nexus.yml` file provides a complete environment with:
 
-- **etcd**: Distributed coordination
+- **etcd**: Distributed coordination and data storage
 - **Redis**: Message queue (backward compatibility)
-- **PostgreSQL + TimescaleDB**: Time-series analytics and persistent storage
 - **Nexus Collector**: Enhanced data collection
 - **Nexus API**: Multi-protocol API server
 - **Traditional Components**: Streamer and API (for comparison)
-- **Adminer**: Database management UI
 
 ## 🚀 **Deployment**
 

@@ -128,28 +128,7 @@ else
     print_warning "etcd container not running, skipping etcd cleanup"
 fi
 
-# 4. Optional: Reset PostgreSQL database
-if [[ "$QUICK_MODE" == "true" ]]; then
-    print_status "Skipping PostgreSQL database reset (quick mode)"
-else
-    read -p "Do you want to reset the PostgreSQL database? (y/N): " -n 1 -r
-    echo
-fi
-
-if [[ "$QUICK_MODE" == "true" ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
-    print_status "Resetting PostgreSQL database..."
-    
-    if docker ps --format "table {{.Names}}" | grep -q "telemetry-postgres"; then
-        # Drop and recreate database
-        docker exec telemetry-postgres psql -U postgres -c "DROP DATABASE IF EXISTS telemetry;" 2>/dev/null || true
-        docker exec telemetry-postgres psql -U postgres -c "CREATE DATABASE telemetry;" 2>/dev/null || true
-        print_success "PostgreSQL database reset"
-    else
-        print_warning "PostgreSQL container not running, skipping database reset"
-    fi
-else
-    print_status "Skipping PostgreSQL database reset"
-fi
+# 4. PostgreSQL database is no longer used - skipping database reset
 
 # 5. etcd cleanup completed above - no additional cleanup needed
 
@@ -182,7 +161,7 @@ echo "----------------------------------------"
 
 # Show running containers
 print_status "Running containers:"
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(telemetry-|etcd|postgres)" || print_status "No telemetry containers running"
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(telemetry-|etcd)" || print_status "No telemetry containers running"
 
 echo
 print_success "🎉 Cleanup and reset completed!"

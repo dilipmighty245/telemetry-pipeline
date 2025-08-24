@@ -29,7 +29,7 @@ import (
 	"os"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/gateway"
-	log "github.com/sirupsen/logrus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 )
 
 func main() {
@@ -40,7 +40,7 @@ func main() {
 		case http.ErrServerClosed:
 			// not considered error
 		default:
-			log.Fatalf("could not run Nexus Gateway Service: %v", err)
+			logging.Fatalf("could not run Gateway Service: %v", err)
 		}
 	}
 }

@@ -46,16 +46,90 @@ The Elastic GPU Telemetry Pipeline is designed as a distributed system with four
 - Horizontal scaling support
 - High availability with etcd clustering
 
+## System Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "Data Sources"
+        CSV["📄 CSV Files<br/>GPU Telemetry Data"]
+    end
+    
+    subgraph "Telemetry Pipeline"
+        subgraph "Nexus Streamer"
+            NS["🔄 Nexus Streamer<br/>Port: 8081<br/>• CSV Upload API<br/>• Data Validation<br/>• Batch Processing"]
+        end
+        
+        subgraph "etcd Message Queue + Storage"
+            ETCD["🗄️ etcd Cluster<br/>• Message Queue<br/>• Data Storage<br/>• High Availability"]
+            
+            subgraph "Message Flow"
+                MQ["📨 Message Queue<br/>/messagequeue/telemetry/"]
+                DS["💾 Data Storage<br/>/telemetry/clusters/"]
+            end
+        end
+        
+        subgraph "Nexus Collector"
+            NC["⚙️ Nexus Collector<br/>• Message Processing<br/>• Data Persistence<br/>• GPU Registration"]
+        end
+        
+        subgraph "Nexus Gateway"
+            NG["🌐 Nexus Gateway<br/>Port: 8080<br/>• REST API<br/>• GraphQL<br/>• WebSocket"]
+        end
+    end
+    
+    subgraph "Client Applications"
+        API["🔌 REST Clients"]
+        GQL["📊 GraphQL Clients"]
+        WS["⚡ WebSocket Clients"]
+        SWAGGER["📚 Swagger UI<br/>/swagger/"]
+    end
+    
+    %% Data Flow
+    CSV --> NS
+    NS --> MQ
+    MQ --> NC
+    NC --> DS
+    DS --> NG
+    
+    %% API Connections
+    NG --> API
+    NG --> GQL
+    NG --> WS
+    NG --> SWAGGER
+    
+    %% etcd Internal
+    MQ -.-> ETCD
+    DS -.-> ETCD
+    
+    %% Scaling Indicators
+    NS -.- NS1["📈 Up to 10 instances"]
+    NC -.- NC1["📈 Up to 10 instances"]
+    NG -.- NG1["📈 Load balanced"]
+    
+    %% Styling
+    classDef streamer fill:#e1f5fe
+    classDef collector fill:#f3e5f5
+    classDef gateway fill:#e8f5e8
+    classDef etcd fill:#fff3e0
+    classDef client fill:#fce4ec
+    
+    class NS,NS1 streamer
+    class NC,NC1 collector
+    class NG,NG1 gateway
+    class ETCD,MQ,DS etcd
+    class API,GQL,WS,SWAGGER client
+```
+
 ## Data Flow
 
 ### 1. Data Ingestion Flow
 ```
-CSV Files → Streamer → Validation → Batching → Message Queue → Collector → Storage
+CSV Files → Nexus Streamer → etcd Message Queue → Nexus Collector → etcd Storage
 ```
 
 ### 2. Query Flow
 ```
-Client Request → API Gateway → Data Query → Response Formatting → Client Response
+Client Request → Nexus Gateway → etcd Data Query → Response Formatting → Client Response
 ```
 
 ## Message Queue Design

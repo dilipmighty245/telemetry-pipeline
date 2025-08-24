@@ -132,7 +132,7 @@ top -p $(pgrep nexus-collector)
 
 ```bash
 # Enable debug logging
-LOG_LEVEL=debug ENABLE_NEXUS=true make run-nexus-collector
+LOG_LEVEL=debug make run-nexus-collector
 
 # Monitor message consumption
 etcdctl --endpoints=localhost:2379 watch --prefix "/messagequeue/" --print-value-only

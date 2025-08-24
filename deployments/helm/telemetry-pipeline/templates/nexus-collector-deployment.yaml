@@ -50,8 +50,6 @@ spec:
               value: {{ .Values.config.etcd.endpoints | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.nexusCollector.env.LOG_LEVEL | default (.Values.dev.enabled | ternary .Values.dev.logLevel "info") | quote }}
-            - name: ENABLE_NEXUS
-              value: {{ .Values.nexusCollector.env.ENABLE_NEXUS | quote }}
             - name: BATCH_SIZE
               value: {{ .Values.nexusCollector.env.BATCH_SIZE | quote }}
             - name: PROCESSING_INTERVAL

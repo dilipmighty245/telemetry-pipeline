@@ -16,7 +16,6 @@ func TestServiceConfig_Struct(t *testing.T) {
 		ServiceID:      "service-1",
 		UpdateInterval: 30 * time.Second,
 		BatchSize:      100,
-		EnableWatchAPI: true,
 	}
 
 	assert.Equal(t, []string{"localhost:2379"}, config.EtcdEndpoints)
@@ -24,7 +23,6 @@ func TestServiceConfig_Struct(t *testing.T) {
 	assert.Equal(t, "service-1", config.ServiceID)
 	assert.Equal(t, 30*time.Second, config.UpdateInterval)
 	assert.Equal(t, 100, config.BatchSize)
-	assert.True(t, config.EnableWatchAPI)
 }
 
 func TestTelemetryCluster_Struct(t *testing.T) {
@@ -400,7 +398,6 @@ func TestNewTelemetryService(t *testing.T) {
 		ServiceID:      "test-service",
 		UpdateInterval: 30 * time.Second,
 		BatchSize:      100,
-		EnableWatchAPI: true,
 	}
 
 	service, err := NewTelemetryService(config)

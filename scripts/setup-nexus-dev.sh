@@ -126,58 +126,8 @@ else
     print_success "Redis is running and healthy"
 fi
 
-# Check if PostgreSQL is already running
-if docker ps | grep -q "telemetry-postgres"; then
-    print_warning "PostgreSQL container already running"
-else
-    print_status "Starting PostgreSQL..."
-    docker run -d \
-        --name telemetry-postgres \
-        -p 5433:5432 \
-        -e POSTGRES_DB=telemetry \
-        -e POSTGRES_USER=postgres \
-        -e POSTGRES_PASSWORD=postgres \
-        postgres:15-alpine
-    
-    # Wait for PostgreSQL to be ready
-    print_status "Waiting for PostgreSQL to be ready..."
-    for i in {1..60}; do
-        if docker exec telemetry-postgres pg_isready -U postgres &>/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-    print_success "PostgreSQL is running and healthy"
-fi
-
-# Step 4: Initialize database schema
-print_status "Initializing database schema..."
-if command -v psql &> /dev/null; then
-    # Create tables if they don't exist
-    PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d telemetry -c "
-    CREATE TABLE IF NOT EXISTS gpu_telemetry (
-        id SERIAL PRIMARY KEY,
-        timestamp TIMESTAMP NOT NULL,
-        gpu_id VARCHAR(255) NOT NULL,
-        hostname VARCHAR(255) NOT NULL,
-        gpu_utilization FLOAT,
-        memory_utilization FLOAT,
-        memory_used_mb FLOAT,
-        memory_free_mb FLOAT,
-        temperature FLOAT,
-        power_draw FLOAT,
-        sm_clock_mhz FLOAT,
-        memory_clock_mhz FLOAT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_gpu_telemetry_timestamp ON gpu_telemetry(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_gpu_telemetry_gpu_id ON gpu_telemetry(gpu_id);
-    CREATE INDEX IF NOT EXISTS idx_gpu_telemetry_hostname ON gpu_telemetry(hostname);
-    " &>/dev/null
-    print_success "Database schema initialized"
-else
-    print_warning "psql not found. Database schema will be created automatically by the application."
-fi
+# PostgreSQL is no longer used - data is stored in etcd only
+print_status "PostgreSQL database not needed - using etcd for data storage"
 
 # Step 5: Verify everything is working
 print_status "Verifying setup..."
@@ -196,12 +146,8 @@ else
     print_error "✗ Redis is not healthy"
 fi
 
-# Test PostgreSQL
-if docker exec telemetry-postgres pg_isready -U postgres &>/dev/null; then
-    print_success "✓ PostgreSQL is healthy"
-else
-    print_error "✗ PostgreSQL is not healthy"
-fi
+# PostgreSQL is no longer used
+print_status "✓ PostgreSQL not needed (using etcd for storage)"
 
 # Test binaries
 if [[ -f "bin/nexus-collector" ]]; then
@@ -223,7 +169,6 @@ echo ""
 echo "📊 Infrastructure Status:"
 echo "  • etcd:       http://localhost:2379"
 echo "  • Redis:      redis://localhost:6379"
-echo "  • PostgreSQL: postgresql://postgres:postgres@localhost:5433/telemetry"
 echo ""
 echo "🚀 Quick Start Commands:"
 echo "  # Start Nexus collector (in terminal 1)"
@@ -245,10 +190,9 @@ echo "🔧 Management Commands:"
 echo "  make help                    # Show all available commands"
 echo "  docker logs telemetry-etcd   # View etcd logs"
 echo "  docker logs telemetry-redis  # View Redis logs"
-echo "  docker logs telemetry-postgres # View PostgreSQL logs"
 echo ""
 echo "🧹 Cleanup:"
-echo "  docker stop telemetry-etcd telemetry-redis telemetry-postgres"
-echo "  docker rm telemetry-etcd telemetry-redis telemetry-postgres"
+echo "  docker stop telemetry-etcd telemetry-redis"
+echo "  docker rm telemetry-etcd telemetry-redis"
 echo ""
 echo "Happy coding! 🎯"

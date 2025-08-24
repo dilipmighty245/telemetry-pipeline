@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/gorilla/websocket"
 	nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	log "github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sync/errgroup"
 )
@@ -78,15 +78,11 @@ func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
 	}
 
 	// Set log level
-	level, err := log.ParseLevel(config.LogLevel)
-	if err != nil {
-		return fmt.Errorf("invalid log level: %w", err)
-	}
-	log.SetLevel(level)
+	logging.SetLogLevel(config.LogLevel, "")
 
-	log.Infof("Starting Nexus Gateway Service")
-	log.Infof("Cluster ID: %s, Port: %d", config.ClusterID, config.Port)
-	log.Infof("WebSocket: %v, CORS: %v", config.EnableWebSocket, config.EnableCORS)
+	logging.Infof("Starting Nexus Gateway Service")
+	logging.Infof("Cluster ID: %s, Port: %d", config.ClusterID, config.Port)
+	logging.Infof("WebSocket: %v, CORS: %v", config.EnableWebSocket, config.EnableCORS)
 
 	// Create and start the gateway
 	gateway, err := NewNexusGatewayService(ctx, config)
@@ -100,9 +96,9 @@ func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
 		return fmt.Errorf("failed to start gateway: %w", err)
 	}
 
-	log.Info("Nexus Gateway Service started successfully")
+	logging.Infof("Nexus Gateway Service started successfully")
 	<-ctx.Done()
-	log.Info("Shutting down Nexus Gateway Service...")
+	logging.Infof("Shutting down Nexus Gateway Service...")
 
 	return nil
 }
@@ -243,7 +239,7 @@ func (ng *NexusGatewayService) Start(ctx context.Context) error {
 	// Start HTTP server
 	g.Go(func() error {
 		addr := fmt.Sprintf(":%d", ng.port)
-		log.Infof("Starting Nexus Gateway HTTP server on %s", addr)
+		logging.Infof("Starting Nexus Gateway HTTP server on %s", addr)
 
 		server := &http.Server{
 			Addr:         addr,
@@ -255,24 +251,24 @@ func (ng *NexusGatewayService) Start(ctx context.Context) error {
 		// Start server in goroutine
 		go func() {
 			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Errorf("HTTP server error: %v", err)
+				logging.Errorf("HTTP server error: %v", err)
 			}
 		}()
 
 		// Wait for context cancellation
 		<-gCtx.Done()
-		log.Info("Attempting graceful shutdown of HTTP server")
+		logging.Infof("Attempting graceful shutdown of HTTP server")
 
 		// Shutdown server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Errorf("HTTP server shutdown error: %v", err)
+			logging.Errorf("HTTP server shutdown error: %v", err)
 			return err
 		}
 
-		log.Info("HTTP server shutdown completed successfully")
+		logging.Infof("HTTP server shutdown completed successfully")
 		return nil
 	})
 
@@ -535,7 +531,7 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 
 	resp, err := ng.etcdClient.Get(ctx, keyPattern, clientv3.WithPrefix())
 	if err != nil {
-		log.Errorf("Failed to query telemetry data from etcd: %v", err)
+		logging.Errorf("Failed to query telemetry data from etcd: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
 			"success": false,
 			"error":   "Failed to query telemetry data",
@@ -666,25 +662,25 @@ func (ng *NexusGatewayService) pprofHandler(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		log.Info("Attempting graceful shutdown of pprof server")
+		logging.Infof("Attempting graceful shutdown of pprof server")
 		srv.SetKeepAlivesEnabled(false)
 		closeCtx, closeFn := context.WithTimeout(context.Background(), 3*time.Second)
 		defer closeFn()
 		_ = srv.Shutdown(closeCtx)
 	}()
 
-	log.Infof("Starting pprof server on %s", httpDebugAddr)
+	logging.Infof("Starting pprof server on %s", httpDebugAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Errorf("pprof server error: %v", err)
+		logging.Errorf("pprof server error: %v", err)
 		return err
 	}
-	log.Info("pprof server shutdown completed successfully")
+	logging.Infof("pprof server shutdown completed successfully")
 	return nil
 }
 
 // Close closes the gateway and cleans up resources
 func (ng *NexusGatewayService) Close() error {
-	log.Info("Closing Nexus gateway")
+	logging.Infof("Closing Nexus gateway")
 
 	if ng.nexusService != nil {
 		ng.nexusService.Close()

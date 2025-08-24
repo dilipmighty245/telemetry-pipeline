@@ -11,7 +11,7 @@ In our telemetry pipeline, **etcd serves as both a message queue and data storag
 graph LR
     P[Producer] --> MQ[Message Queue<br/>Redis/RabbitMQ/Kafka]
     MQ --> C[Consumer]
-    C --> DB[(Database<br/>PostgreSQL + TimescaleDB)]
+    C --> ETCD[(etcd Storage<br/>Hierarchical Data)]
 ```
 
 ### Our etcd-Based Pattern

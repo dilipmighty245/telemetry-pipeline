@@ -191,55 +191,7 @@ apiGateway:
   podLabels:
     deployment-type: "same-cluster"
 
-# PostgreSQL Configuration - ENABLED for same cluster
-postgresql:
-  enabled: true
-  auth:
-    postgresPassword: "postgres"
-    username: "telemetry"
-    password: "telemetry"
-    database: "telemetry"
-  
-  primary:
-    persistence:
-      enabled: true
-      size: 20Gi
-      storageClass: ""
-    
-    resources:
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-      requests:
-        cpu: 250m
-        memory: 256Mi
-    
-    # Basic PostgreSQL configuration for same cluster
-    extendedConfiguration: |
-      # Performance tuning for single cluster deployment
-      max_connections = 100
-      shared_buffers = 256MB
-      effective_cache_size = 1GB
-      maintenance_work_mem = 64MB
-      checkpoint_completion_target = 0.9
-      wal_buffers = 16MB
-      default_statistics_target = 100
-      random_page_cost = 1.1
-      effective_io_concurrency = 200
-      work_mem = 4MB
-      min_wal_size = 1GB
-      max_wal_size = 4GB
 
-# External Database Configuration (disabled for same cluster)
-externalDatabase:
-  host: ""
-  port: 5432
-  username: "telemetry"
-  password: ""
-  database: "telemetry"
-  sslMode: "disable"
-  existingSecret: ""
-  existingSecretPasswordKey: "password"
 
 # External Redis Configuration - DISABLED for same cluster (using embedded Redis)
 externalRedis:

@@ -30,26 +30,6 @@ services:
       retries: 3
 
 
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: telemetry-postgres
-    environment:
-      - POSTGRES_DB=telemetry
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - telemetry-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # Nexus-enhanced Collector
   nexus-collector:
@@ -61,22 +41,12 @@ services:
       - CLUSTER_ID=docker-cluster
       - COLLECTOR_ID=nexus-collector-1
       - ETCD_ENDPOINTS=etcd:2379
-
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - ENABLE_NEXUS=true
-      - ENABLE_WATCH_API=true
       - ENABLE_GRAPHQL=true
       - BATCH_SIZE=100
       - WORKERS=4
       - LOG_LEVEL=info
     depends_on:
       etcd:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
     networks:
       - telemetry-network
@@ -131,47 +101,12 @@ services:
 
 
 
-  # Traditional API Gateway (for comparison)
-  api-gateway:
-    build:
-      context: ../..
-      dockerfile: deployments/docker/Dockerfile.api-gateway
-    container_name: telemetry-api-gateway
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - PORT=8081
-      - LOG_LEVEL=info
-    ports:
-      - "8081:8081"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - telemetry-network
-    restart: unless-stopped
 
-  # Adminer for database management
-  adminer:
-    image: adminer:4.8.1
-    container_name: telemetry-adminer
-    ports:
-      - "8082:8080"
-    environment:
-      - ADMINER_DEFAULT_SERVER=postgres
-    depends_on:
-      - postgres
-    networks:
-      - telemetry-network
+
+
 
 volumes:
   etcd_data:
-    driver: local
-
-  postgres_data:
     driver: local
 
 networks:

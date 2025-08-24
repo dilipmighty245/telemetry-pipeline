@@ -54,6 +54,6 @@ data:
   {{- if .Values.streamer.enabled }}{{ $components = append $components "streamer" }}{{- end }}
   {{- if .Values.collector.enabled }}{{ $components = append $components "collector" }}{{- end }}
   {{- if .Values.apiGateway.enabled }}{{ $components = append $components "api-gateway" }}{{- end }}
-  {{- if .Values.postgresql.enabled }}{{ $components = append $components "postgresql" }}{{- end }}
+
   {{- if and .Values.redis.enabled (not .Values.externalRedis.enabled) }}{{ $components = append $components "redis" }}{{- end }}
   components-enabled: {{ join "," $components | quote }}

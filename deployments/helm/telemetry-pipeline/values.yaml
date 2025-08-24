@@ -169,39 +169,7 @@ apiGateway:
   podAnnotations: {}
   podLabels: {}
 
-# PostgreSQL Configuration (using Bitnami chart)
-postgresql:
-  enabled: true
-  auth:
-    postgresPassword: "postgres"
-    username: "telemetry"
-    password: "telemetry"
-    database: "telemetry"
-  
-  primary:
-    persistence:
-      enabled: true
-      size: 10Gi
-      storageClass: ""
-    
-    resources:
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-      requests:
-        cpu: 250m
-        memory: 256Mi
 
-# External Database Configuration (if postgresql.enabled = false)
-externalDatabase:
-  host: ""
-  port: 5432
-  username: "postgres"
-  password: "postgres"
-  database: "telemetry"
-  sslMode: "disable"
-  existingSecret: ""
-  existingSecretPasswordKey: "password"
 
 # Monitoring
 monitoring:

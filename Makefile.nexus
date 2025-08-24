@@ -75,8 +75,6 @@ run-nexus-collector: build-nexus-collector ## Run Nexus collector locally
 	REDIS_URL=redis://localhost:6379 \
 	DB_HOST=localhost \
 	DB_PORT=5433 \
-	ENABLE_NEXUS=true \
-	ENABLE_WATCH_API=true \
 	LOG_LEVEL=info \
 	./bin/nexus-collector
 

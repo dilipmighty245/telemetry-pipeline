@@ -117,27 +117,47 @@ helm upgrade --install telemetry-pipeline deployments/helm/telemetry-pipeline \
 - **Persistent Volumes** - CSV data storage
 - **Ingress** - External access configuration
 
-## 📊 Architecture Components
+## 📊 Architecture Components & Scaling Strategies
 
 ### Nexus Streamer
 - **Purpose**: Reads CSV data and streams to etcd message queue
-- **Scaling**: Multiple instances process data in parallel
-- **Configuration**: Batch size, streaming interval, CSV source
+- **Scaling Strategy**: 
+  - **Horizontal**: 1-10 instances (per requirements)
+  - **Load Distribution**: Each instance processes different CSV files or file segments
+  - **Resource Pattern**: CPU-intensive during CSV parsing, memory for file buffering
+  - **Bottlenecks**: File I/O, CSV parsing, network to etcd
+- **Configuration**: Batch size (100-1000), streaming interval (1-5s), CSV source
+- **Scaling Metrics**: CPU usage >70%, memory >80%, message queue depth
 
 ### Nexus Collector  
 - **Purpose**: Consumes from message queue and persists data
-- **Scaling**: Multiple instances for parallel processing
-- **Configuration**: Processing interval, batch size, Nexus integration
+- **Scaling Strategy**:
+  - **Horizontal**: 1-10 instances (per requirements)
+  - **Work Distribution**: Shared message queue with atomic operations
+  - **Resource Pattern**: Memory-intensive for message buffering, CPU for processing
+  - **Bottlenecks**: Message processing rate, etcd write throughput
+- **Configuration**: Processing interval (1-10s), batch size (50-200), worker count (4-16)
+- **Scaling Metrics**: Message queue depth, processing latency, memory usage
 
 ### Nexus Gateway
 - **Purpose**: Multi-protocol API (REST, GraphQL, WebSocket)
-- **Scaling**: Load-balanced instances for high availability
-- **Configuration**: Port, protocol enablement, health checks
+- **Scaling Strategy**:
+  - **Horizontal**: 2-5 instances (stateless, load-balanced)
+  - **Load Balancing**: Round-robin or least-connections
+  - **Resource Pattern**: CPU for query processing, memory for response caching
+  - **Bottlenecks**: etcd read throughput, complex query processing
+- **Configuration**: Port (8080), protocol enablement, cache settings
+- **Scaling Metrics**: Request rate, response time >100ms, CPU >60%
 
-### etcd
+### etcd Cluster
 - **Purpose**: Message queue and data storage backend
-- **Scaling**: 3-node cluster for high availability
-- **Configuration**: Persistence, resources, authentication
+- **Scaling Strategy**:
+  - **Vertical**: Increase CPU/memory per node
+  - **Horizontal**: 3-5 node cluster (odd numbers for consensus)
+  - **Resource Pattern**: Memory for data, CPU for consensus, disk I/O
+  - **Bottlenecks**: Disk I/O, network latency between nodes
+- **Configuration**: Persistence, compaction, authentication, TLS
+- **Scaling Metrics**: Disk usage >80%, memory >85%, consensus latency
 
 ## 🔧 Configuration Options
 
@@ -162,7 +182,6 @@ STREAM_INTERVAL=1s              # Streaming frequency
 
 **Collector:**
 ```bash
-ENABLE_NEXUS=true              # Enable Nexus integration
 PROCESSING_INTERVAL=5s         # Processing frequency
 BATCH_SIZE=50                  # Processing batch size
 ```
@@ -213,13 +232,96 @@ docker build -f deployments/docker/Dockerfile.nexus-gateway -t nexus-gateway .
 - **Storage**: Persistent volumes for CSV data
 - **Networking**: Service mesh compatible
 
-### Scaling Guidelines
+### Scaling Decision Matrix
 
-| Component | Min Instances | Max Instances | Resource/Instance |
-|-----------|---------------|---------------|-------------------|
-| Streamer  | 1             | 10            | 100m CPU, 128Mi RAM |
-| Collector | 1             | 10            | 200m CPU, 256Mi RAM |
-| Gateway   | 2             | 5             | 200m CPU, 256Mi RAM |
+| Component | Min Instances | Max Instances | Resource/Instance | When to Scale Up | When to Scale Down |
+|-----------|---------------|---------------|-------------------|------------------|-------------------|
+| **Streamer** | 1 | 10 | 100m CPU, 128Mi RAM | • CPU >70% sustained<br/>• Message queue depth growing<br/>• CSV processing backlog | • CPU <30% sustained<br/>• Message queue empty<br/>• No CSV processing |
+| **Collector** | 1 | 10 | 200m CPU, 256Mi RAM | • Message queue depth >1000<br/>• Processing latency >5s<br/>• Memory >80% | • Message queue depth <100<br/>• Processing latency <1s<br/>• Memory <40% |
+| **Gateway** | 2 | 5 | 200m CPU, 256Mi RAM | • Response time >100ms<br/>• Request rate increasing<br/>• CPU >60% | • Response time <50ms<br/>• Low request rate<br/>• CPU <30% |
+| **etcd** | 3 | 5 | 1 CPU, 2Gi RAM | • Disk usage >80%<br/>• Memory >85%<br/>• High query latency | • Vertical scaling only<br/>• Monitor and optimize |
+
+### Auto-Scaling Configuration
+
+#### Horizontal Pod Autoscaler (HPA) Settings
+
+**Nexus Streamer HPA:**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nexus-streamer-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nexus-streamer
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+**Nexus Collector HPA:**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nexus-collector-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nexus-collector
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+**Nexus Gateway HPA:**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nexus-gateway-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nexus-gateway
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+```
 
 ## 🔍 Monitoring and Troubleshooting
 

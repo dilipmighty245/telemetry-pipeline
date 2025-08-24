@@ -58,7 +58,6 @@ EXPOSE 9091
 # Set default environment variables
 ENV LOG_LEVEL=info
 ENV CLUSTER_ID=k8s-cluster
-ENV ENABLE_NEXUS=true
 ENV BATCH_SIZE=50
 ENV PROCESSING_INTERVAL=5s
 
