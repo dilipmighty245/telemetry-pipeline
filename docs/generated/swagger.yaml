@@ -16,7 +16,87 @@ info:
   termsOfService: http://swagger.io/terms/
   title: Nexus Telemetry API Gateway
   version: "2.0"
-paths: {}
+paths:
+  /api/v1/gpus:
+    get:
+      description: Return a list of all GPUs for which telemetry data is available
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of GPUs
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List all GPUs
+      tags:
+      - gpus
+  /api/v1/gpus/{id}/telemetry:
+    get:
+      description: Return all telemetry entries for a specific GPU, ordered by time
+      parameters:
+      - description: GPU ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Start time (RFC3339 format)
+        in: query
+        name: start_time
+        type: string
+      - description: End time (RFC3339 format)
+        in: query
+        name: end_time
+        type: string
+      - description: Maximum number of records to return
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Telemetry data for the GPU
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Query telemetry by GPU
+      tags:
+      - telemetry
+  /health:
+    get:
+      description: Get the health status of the Nexus Gateway service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service is healthy
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service is unhealthy
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check endpoint
+      tags:
+      - health
 schemes:
 - http
 - https

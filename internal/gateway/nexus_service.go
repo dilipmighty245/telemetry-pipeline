@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/docs/generated"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
@@ -21,6 +22,7 @@ import (
 	nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	echoSwagger "github.com/swaggo/echo-swagger"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sync/errgroup"
 )
@@ -229,6 +231,9 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	// Setup routes
 	gateway.setupRoutes()
 
+	// Initialize Swagger documentation
+	generated.SwaggerInfo.Host = fmt.Sprintf("localhost:%d", config.Port)
+
 	return gateway, nil
 }
 
@@ -332,9 +337,12 @@ func (ng *NexusGatewayService) setupRoutes() {
 		ng.echo.GET("/ws", ng.websocketHandler)
 	}
 
-	// Swagger UI endpoint
-	ng.echo.GET("/swagger/*", ng.swaggerHandler)
+	// Swagger UI endpoints
+	ng.echo.GET("/swagger/*", echoSwagger.WrapHandler)
 	ng.echo.GET("/docs", func(c echo.Context) error {
+		return c.Redirect(http.StatusMovedPermanently, "/swagger/")
+	})
+	ng.echo.GET("/docs/", func(c echo.Context) error {
 		return c.Redirect(http.StatusMovedPermanently, "/swagger/")
 	})
 
@@ -344,6 +352,14 @@ func (ng *NexusGatewayService) setupRoutes() {
 
 // HTTP Handlers (simplified versions - full implementations would be moved from main.go)
 
+// healthHandler godoc
+// @Summary Health check endpoint
+// @Description Get the health status of the Nexus Gateway service
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Service is healthy"
+// @Failure 503 {object} map[string]interface{} "Service is unhealthy"
+// @Router /health [get]
 func (ng *NexusGatewayService) healthHandler(c echo.Context) error {
 	// Check if etcd client is available
 	if ng.etcdClient == nil || ng.config == nil || len(ng.config.EtcdEndpoints) == 0 {
@@ -372,6 +388,14 @@ func (ng *NexusGatewayService) healthHandler(c echo.Context) error {
 	})
 }
 
+// listAllGPUsHandler godoc
+// @Summary List all GPUs
+// @Description Return a list of all GPUs for which telemetry data is available
+// @Tags gpus
+// @Produce json
+// @Success 200 {object} map[string]interface{} "List of GPUs"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/gpus [get]
 func (ng *NexusGatewayService) listAllGPUsHandler(c echo.Context) error {
 	// Check if etcd client is available
 	if ng.etcdClient == nil || ng.config == nil {
@@ -455,6 +479,19 @@ func (ng *NexusGatewayService) listAllGPUsHandler(c echo.Context) error {
 	})
 }
 
+// queryTelemetryByGPUHandler godoc
+// @Summary Query telemetry by GPU
+// @Description Return all telemetry entries for a specific GPU, ordered by time
+// @Tags telemetry
+// @Produce json
+// @Param id path string true "GPU ID"
+// @Param start_time query string false "Start time (RFC3339 format)"
+// @Param end_time query string false "End time (RFC3339 format)"
+// @Param limit query int false "Maximum number of records to return"
+// @Success 200 {object} map[string]interface{} "Telemetry data for the GPU"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/gpus/{id}/telemetry [get]
 func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error {
 	gpuID := c.Param("id")
 	if gpuID == "" {
@@ -648,9 +685,7 @@ func (ng *NexusGatewayService) websocketHandler(c echo.Context) error {
 	return c.String(http.StatusOK, "WebSocket endpoint")
 }
 
-func (ng *NexusGatewayService) swaggerHandler(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]interface{}{"swagger": "placeholder"})
-}
+
 
 // pprofHandler launches a http server and serves pprof debug information
 func (ng *NexusGatewayService) pprofHandler(ctx context.Context) error {
