@@ -1,0 +1,321 @@
+# Nexus-based Telemetry Pipeline Configuration
+# This is a YAML-formatted file for the Nexus architecture with etcd
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  clusterId: "k8s-cluster"
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: telemetry-pipeline
+  tag: "0.2.0"
+  pullPolicy: IfNotPresent
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 65534
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false  # Nexus components need to write logs/temp files
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Nexus Streamer Configuration
+nexusStreamer:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: nexus-streamer
+    tag: ""
+    pullPolicy: ""
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Environment variables
+  env:
+    LOG_LEVEL: "info"
+    BATCH_SIZE: "100"
+    STREAM_INTERVAL: "1s"
+    # HTTP server configuration for CSV upload (API-only mode)
+    HTTP_PORT: "8081"
+    UPLOAD_DIR: "/tmp/telemetry-uploads"
+    MAX_UPLOAD_SIZE: "104857600"  # 100MB
+    MAX_MEMORY: "33554432"        # 32MB
+  
+  # Service configuration for CSV upload endpoint
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8081
+    targetPort: 8081
+    annotations: {}
+  
+  # Note: CSV data configuration removed in API-only mode
+  # CSV files are now uploaded via the HTTP API endpoint
+  
+  # Node selector for GPU nodes (if needed)
+  nodeSelector: {}
+  
+  # Tolerations for GPU nodes
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# Nexus Collector Configuration  
+nexusCollector:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: nexus-collector
+    tag: ""
+    pullPolicy: ""
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Environment variables
+  env:
+    LOG_LEVEL: "info"
+    BATCH_SIZE: "50"
+    PROCESSING_INTERVAL: "5s"
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# Nexus Gateway Configuration
+nexusGateway:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: nexus-gateway
+    tag: ""
+    pullPolicy: ""
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    annotations: {}
+  
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+    hosts:
+      - host: telemetry-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    #  - secretName: telemetry-api-tls
+    #    hosts:
+    #      - telemetry-api.local
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Environment variables
+  env:
+    LOG_LEVEL: "info"
+    ENABLE_GRAPHQL: "true"
+    ENABLE_WEBSOCKET: "true"
+    ENABLE_CORS: "true"
+    PORT: "8080"
+  
+  # Health checks
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# etcd Configuration (external dependency)
+etcd:
+  enabled: true
+  replicaCount: 3
+  auth:
+    rbac:
+      create: false
+  persistence:
+    enabled: true
+    size: 8Gi
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget (global)
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network Policy
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+
+# Monitoring and Observability
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+
+# ConfigMap for application configuration
+config:
+  # Cluster configuration
+  cluster:
+    id: "k8s-cluster"
+    region: "us-west-2"
+    environment: "production"
+  
+  # etcd connection configuration
+  etcd:
+    endpoints: "telemetry-pipeline-etcd:2379"
+    dialTimeout: "5s"
+    requestTimeout: "10s"
+  
+  # Telemetry configuration
+  telemetry:
+    retentionDays: 7
+    batchSize: 100
+    processingInterval: "5s"
+    streamingInterval: "1s"
+
+# Secrets (if needed)
+secrets:
+  # etcd authentication (if enabled)
+  etcd:
+    enabled: false
+    username: ""
+    password: ""
+
+# Additional labels and annotations
+commonLabels: {}
+commonAnnotations: {}
+
+# Development/Testing overrides
+dev:
+  enabled: false
+  # Override image tags for development
+  images:
+    nexusStreamer: "dev"
+    nexusCollector: "dev" 
+    nexusGateway: "dev"
+  # Enable debug logging
+  logLevel: "debug"
+  # Reduce resource requirements
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi

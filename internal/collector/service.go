@@ -13,22 +13,21 @@ import (
 
 // CollectorConfig represents configuration for the collector service
 type CollectorConfig struct {
-	CollectorID    string          `json:"collector_id"`
-	ConsumerGroup  string          `json:"consumer_group"`
-	BatchSize      int             `json:"batch_size"`
-	PollInterval   time.Duration   `json:"poll_interval"`
-	MaxRetries     int             `json:"max_retries"`
-	RetryDelay     time.Duration   `json:"retry_delay"`
-	BufferSize     int             `json:"buffer_size"`
-	EnableMetrics  bool            `json:"enable_metrics"`
-	DatabaseConfig *DatabaseConfig `json:"database_config"`
+	CollectorID   string        `json:"collector_id"`
+	ConsumerGroup string        `json:"consumer_group"`
+	BatchSize     int           `json:"batch_size"`
+	PollInterval  time.Duration `json:"poll_interval"`
+	MaxRetries    int           `json:"max_retries"`
+	RetryDelay    time.Duration `json:"retry_delay"`
+	BufferSize    int           `json:"buffer_size"`
+	EnableMetrics bool          `json:"enable_metrics"`
 }
 
 // CollectorService handles collecting telemetry data from message queue and persisting to database
 type CollectorService struct {
-	config         *CollectorConfig
-	messageQueue   *messagequeue.MessageQueueService
-	database       *DatabaseService
+	config       *CollectorConfig
+	messageQueue *messagequeue.MessageQueueService
+
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
@@ -79,22 +78,11 @@ func NewCollectorService(config *CollectorConfig, mqService *messagequeue.Messag
 		config.BufferSize = 1000
 	}
 
-	// Create database service
-	var dbService *DatabaseService
-	var err error
-	if config.DatabaseConfig != nil {
-		dbService, err = NewDatabaseService(config.DatabaseConfig)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	service := &CollectorService{
 		config:       config,
 		messageQueue: mqService,
-		database:     dbService,
 		ctx:          ctx,
 		cancel:       cancel,
 		metrics: &CollectorMetrics{
@@ -144,10 +132,8 @@ func (cs *CollectorService) Stop() error {
 	// Flush remaining buffer
 	cs.flushBuffer()
 
-	// Close database connection
-	if cs.database != nil {
-		cs.database.Close()
-	}
+	// Database connections are handled by individual components
+	// No database cleanup needed in this service
 
 	logging.Infof("Stopped collector service %s", cs.config.CollectorID)
 	return nil
@@ -194,11 +180,6 @@ func (cs *CollectorService) GetLastError() error {
 // GetTotalCollected returns total number of records collected
 func (cs *CollectorService) GetTotalCollected() int64 {
 	return cs.totalCollected
-}
-
-// GetDatabaseService returns the database service instance
-func (cs *CollectorService) GetDatabaseService() *DatabaseService {
-	return cs.database
 }
 
 // collectionLoop is the main collection loop
@@ -367,26 +348,10 @@ func (cs *CollectorService) flushBuffer() {
 	cs.buffer = cs.buffer[:0] // Clear buffer
 	cs.bufferMu.Unlock()
 
-	// Persist to database if database service is available
-	if cs.database != nil {
-		err := cs.database.SaveTelemetryDataBatch(dataToFlush)
-		if err != nil {
-			logging.Errorf("Failed to persist telemetry data batch: %v", err)
-			cs.updateMetrics(0, 0, 0, 1)
-
-			// Return data to buffer on failure
-			cs.bufferMu.Lock()
-			cs.buffer = append(dataToFlush, cs.buffer...)
-			cs.bufferMu.Unlock()
-			return
-		}
-
-		// Update metrics
-		cs.updateMetrics(0, 0, int64(len(dataToFlush)), 0)
-		logging.Debugf("Persisted %d telemetry records to database", len(dataToFlush))
-	} else {
-		logging.Warnf("No database service configured, dropping %d telemetry records", len(dataToFlush))
-	}
+	// Data is already persisted in etcd by the enhanced nexus collector
+	// This legacy collector service is no longer used for persistence
+	cs.updateMetrics(0, 0, int64(len(dataToFlush)), 0)
+	logging.Debugf("Processed %d telemetry records (stored in etcd)", len(dataToFlush))
 }
 
 // updateMetrics updates collection metrics
@@ -412,12 +377,8 @@ func (cs *CollectorService) Health() bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
-	// Service is healthy if it's running and database is healthy
+	// Service is healthy if it's running
 	if !cs.isRunning {
-		return false
-	}
-
-	if cs.database != nil && !cs.database.Health() {
 		return false
 	}
 

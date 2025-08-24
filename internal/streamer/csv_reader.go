@@ -168,12 +168,7 @@ func (cr *CSVReader) parseRecord(record []string) (*models.TelemetryData, error)
 	}
 
 	// Parse timestamp
-	timestampStr := fieldMap["timestamp"]
-	if timestampStr == "" {
-		// Use current time if timestamp is missing
-		timestampStr = time.Now().Format(time.RFC3339)
-	}
-
+	timestampStr := time.Now().Format(time.RFC3339)
 	// Remove quotes if present
 	timestampStr = strings.Trim(timestampStr, "\"")
 

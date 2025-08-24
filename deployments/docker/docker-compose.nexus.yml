@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  # etcd for distributed coordination and message queue
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: telemetry-etcd
+    environment:
+      - ETCD_NAME=telemetry-etcd
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=telemetry-etcd=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=telemetry-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ALLOW_NONE_AUTHENTICATION=yes
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - telemetry-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+
+  # Nexus-enhanced Collector
+  nexus-collector:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-collector
+    container_name: telemetry-nexus-collector
+    environment:
+      - CLUSTER_ID=docker-cluster
+      - COLLECTOR_ID=nexus-collector-1
+      - ETCD_ENDPOINTS=etcd:2379
+      - ENABLE_GRAPHQL=true
+      - BATCH_SIZE=100
+      - WORKERS=4
+      - LOG_LEVEL=info
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Nexus API Server
+  nexus-api:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-api
+    container_name: telemetry-nexus-api
+    environment:
+      - CLUSTER_ID=docker-cluster
+      - SERVICE_ID=nexus-api-1
+      - ETCD_ENDPOINTS=etcd:2379
+      - PORT=8080
+      - HOST=0.0.0.0
+      - ENABLE_GRAPHQL=true
+      - ENABLE_WEBSOCKET=true
+      - ENABLE_CORS=true
+      - LOG_LEVEL=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+  # Nexus GraphQL Service
+  nexus-graphql:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.nexus-graphql
+    container_name: telemetry-nexus-graphql
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - PORT=9090
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+    ports:
+      - "9090:9090"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - telemetry-network
+    restart: unless-stopped
+
+
+
+
+
+
+
+
+
+volumes:
+  etcd_data:
+    driver: local
+
+networks:
+  telemetry-network:
+    driver: bridge

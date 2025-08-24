@@ -1,0 +1,113 @@
+{{- if .Values.nexusGateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-gateway
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-gateway
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.nexusGateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "telemetry-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nexus-gateway
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "telemetry-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nexus-gateway
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "telemetry-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: nexus-gateway
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.registry }}/{{ .Values.nexusGateway.image.repository | default "nexus-gateway" }}:{{ .Values.nexusGateway.image.tag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.nexusGateway.image.pullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.nexusGateway.env.PORT | default 8080 }}
+              protocol: TCP
+          env:
+            - name: CLUSTER_ID
+              value: {{ .Values.global.clusterId | quote }}
+            - name: ETCD_ENDPOINTS
+              value: {{ .Values.config.etcd.endpoints | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.nexusGateway.env.LOG_LEVEL | default (.Values.dev.enabled | ternary .Values.dev.logLevel "info") | quote }}
+            - name: ENABLE_GRAPHQL
+              value: {{ .Values.nexusGateway.env.ENABLE_GRAPHQL | quote }}
+            - name: ENABLE_WEBSOCKET
+              value: {{ .Values.nexusGateway.env.ENABLE_WEBSOCKET | quote }}
+            - name: ENABLE_CORS
+              value: {{ .Values.nexusGateway.env.ENABLE_CORS | quote }}
+            - name: PORT
+              value: {{ .Values.nexusGateway.env.PORT | quote }}
+          {{- if .Values.nexusGateway.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.nexusGateway.livenessProbe.httpGet.path }}
+              port: {{ .Values.nexusGateway.livenessProbe.httpGet.port }}
+            initialDelaySeconds: {{ .Values.nexusGateway.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexusGateway.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexusGateway.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexusGateway.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.nexusGateway.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.nexusGateway.readinessProbe.httpGet.path }}
+              port: {{ .Values.nexusGateway.readinessProbe.httpGet.port }}
+            initialDelaySeconds: {{ .Values.nexusGateway.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexusGateway.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexusGateway.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexusGateway.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- if .Values.dev.enabled }}
+            {{- toYaml .Values.dev.resources | nindent 12 }}
+            {{- else }}
+            {{- toYaml .Values.nexusGateway.resources | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+      {{- with .Values.nexusGateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusGateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexusGateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

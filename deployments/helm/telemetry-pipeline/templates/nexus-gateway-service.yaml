@@ -1,0 +1,23 @@
+{{- if .Values.nexusGateway.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-gateway
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-gateway
+  {{- with .Values.nexusGateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.nexusGateway.service.type }}
+  ports:
+    - port: {{ .Values.nexusGateway.service.port }}
+      targetPort: {{ .Values.nexusGateway.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "telemetry-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-gateway
+{{- end }}

@@ -2,6 +2,7 @@ package messagequeue
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
@@ -16,11 +17,17 @@ type MessageQueueService struct {
 }
 
 // NewMessageQueueService creates a new message queue service
-func NewMessageQueueService() *MessageQueueService {
+func NewMessageQueueService() (*MessageQueueService, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	queue, err := NewMessageQueue()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create message queue: %w", err)
+	}
+
 	service := &MessageQueueService{
-		queue:  NewMessageQueue(),
+		queue:  queue,
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -28,7 +35,7 @@ func NewMessageQueueService() *MessageQueueService {
 	// Start cleanup routine
 	service.startCleanupRoutine()
 
-	return service
+	return service, nil
 }
 
 // PublishTelemetry publishes telemetry data to the queue

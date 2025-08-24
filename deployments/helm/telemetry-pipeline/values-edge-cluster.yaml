@@ -97,20 +97,7 @@ collector:
 apiGateway:
   enabled: false
 
-# PostgreSQL Configuration - DISABLED for edge cluster
-postgresql:
-  enabled: false
 
-# External Database Configuration (not used in edge)
-externalDatabase:
-  host: ""
-  port: 5432
-  username: ""
-  password: ""
-  database: ""
-  sslMode: "disable"
-  existingSecret: ""
-  existingSecretPasswordKey: "password"
 
 # External Redis Configuration - REQUIRED for cross-cluster
 externalRedis:

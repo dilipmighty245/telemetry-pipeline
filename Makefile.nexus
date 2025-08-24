@@ -1,0 +1,234 @@
+# Makefile for Nexus-Enhanced Telemetry Pipeline
+
+# Variables
+DOCKER_REGISTRY ?= localhost:5000
+IMAGE_TAG ?= latest
+CLUSTER_ID ?= default-cluster
+
+# Nexus component versions
+NEXUS_COLLECTOR_IMAGE = $(DOCKER_REGISTRY)/telemetry-nexus-collector:$(IMAGE_TAG)
+NEXUS_API_IMAGE = $(DOCKER_REGISTRY)/telemetry-nexus-api:$(IMAGE_TAG)
+
+# etcd configuration
+ETCD_ENDPOINTS ?= localhost:2379
+ETCD_IMAGE = quay.io/coreos/etcd:v3.5.10
+
+.PHONY: help build-nexus run-nexus clean-nexus test-nexus
+
+help: ## Show this help message
+	@echo "Nexus-Enhanced Telemetry Pipeline"
+	@echo "=================================="
+	@echo "Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# Build commands
+build-nexus: build-nexus-collector build-nexus-api ## Build all Nexus components
+
+build-nexus-collector: ## Build Nexus collector
+	@echo "Building Nexus collector..."
+	go build -o bin/nexus-collector ./cmd/nexus-collector
+	@echo "✅ Nexus collector built successfully"
+
+build-nexus-api: ## Build Nexus API server
+	@echo "Building Nexus API server..."
+	go build -o bin/nexus-api ./cmd/nexus-api
+	@echo "✅ Nexus API server built successfully"
+
+# Docker build commands
+docker-build-nexus: docker-build-nexus-collector docker-build-nexus-api ## Build all Nexus Docker images
+
+docker-build-nexus-collector: ## Build Nexus collector Docker image
+	@echo "Building Nexus collector Docker image..."
+	docker build -f deployments/docker/Dockerfile.nexus-collector -t $(NEXUS_COLLECTOR_IMAGE) .
+	@echo "✅ Nexus collector Docker image built: $(NEXUS_COLLECTOR_IMAGE)"
+
+docker-build-nexus-api: ## Build Nexus API Docker image
+	@echo "Building Nexus API Docker image..."
+	docker build -f deployments/docker/Dockerfile.nexus-api -t $(NEXUS_API_IMAGE) .
+	@echo "✅ Nexus API Docker image built: $(NEXUS_API_IMAGE)"
+
+# Infrastructure setup
+setup-etcd: ## Setup local etcd cluster
+	@echo "Starting etcd cluster..."
+	docker run -d \
+		--name telemetry-etcd \
+		-p 2379:2379 \
+		-p 2380:2380 \
+		-e ETCD_NAME=telemetry-etcd \
+		-e ETCD_DATA_DIR=/etcd-data \
+		-e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+		-e ETCD_ADVERTISE_CLIENT_URLS=http://localhost:2379 \
+		-e ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380 \
+		-e ETCD_INITIAL_ADVERTISE_PEER_URLS=http://localhost:2380 \
+		-e ETCD_INITIAL_CLUSTER=telemetry-etcd=http://localhost:2380 \
+		-e ETCD_INITIAL_CLUSTER_TOKEN=telemetry-cluster \
+		-e ETCD_INITIAL_CLUSTER_STATE=new \
+		-e ALLOW_NONE_AUTHENTICATION=yes \
+		$(ETCD_IMAGE)
+	@echo "✅ etcd cluster started on ports 2379 (client) and 2380 (peer)"
+
+# Run commands
+run-nexus-collector: build-nexus-collector ## Run Nexus collector locally
+	@echo "Starting Nexus collector..."
+	CLUSTER_ID=$(CLUSTER_ID) \
+	ETCD_ENDPOINTS=$(ETCD_ENDPOINTS) \
+	REDIS_URL=redis://localhost:6379 \
+	DB_HOST=localhost \
+	DB_PORT=5433 \
+	LOG_LEVEL=info \
+	./bin/nexus-collector
+
+run-nexus-api: build-nexus-api ## Run Nexus API server locally
+	@echo "Starting Nexus API server..."
+	CLUSTER_ID=$(CLUSTER_ID) \
+	ETCD_ENDPOINTS=$(ETCD_ENDPOINTS) \
+	PORT=8080 \
+	ENABLE_GRAPHQL=true \
+	ENABLE_WEBSOCKET=true \
+	ENABLE_CORS=true \
+	LOG_LEVEL=info \
+	./bin/nexus-api
+
+# Docker Compose commands
+run-nexus-docker: ## Run Nexus-enhanced pipeline with Docker Compose
+	@echo "Starting Nexus-enhanced telemetry pipeline with Docker Compose..."
+	docker-compose -f deployments/docker/docker-compose.nexus.yml up -d
+	@echo "✅ Nexus pipeline started"
+	@echo "📊 Nexus API: http://localhost:8080"
+	@echo "📊 Traditional API: http://localhost:8081"
+	@echo "🗄️ Database UI: http://localhost:8082"
+	@echo "📈 GraphQL: http://localhost:8080/graphql"
+	@echo "🔌 WebSocket: ws://localhost:8080/ws"
+
+stop-nexus-docker: ## Stop Nexus Docker Compose services
+	@echo "Stopping Nexus-enhanced telemetry pipeline..."
+	docker-compose -f deployments/docker/docker-compose.nexus.yml down
+	@echo "✅ Nexus pipeline stopped"
+
+logs-nexus-docker: ## Show logs from Nexus Docker services
+	docker-compose -f deployments/docker/docker-compose.nexus.yml logs -f
+
+# Development commands
+dev-nexus: setup-etcd setup-db run-nexus-collector run-nexus-api ## Start full Nexus development environment
+
+# Testing commands
+test-nexus: ## Run tests for Nexus components
+	@echo "Running Nexus component tests..."
+	go test -v ./internal/nexus/...
+	go test -v ./cmd/nexus-collector/...
+	go test -v ./cmd/nexus-api/...
+
+test-nexus-integration: ## Run integration tests for Nexus components
+	@echo "Running Nexus integration tests..."
+	go test -v -tags=integration ./test/nexus/...
+
+# Benchmark commands
+benchmark-nexus: ## Run benchmarks for Nexus components
+	@echo "Running Nexus benchmarks..."
+	go test -bench=. -benchmem ./internal/nexus/...
+
+# Health check commands
+health-nexus: ## Check health of Nexus components
+	@echo "Checking Nexus component health..."
+	@echo "🔍 Nexus API health:"
+	@curl -s http://localhost:8080/health | jq . || echo "❌ Nexus API not responding"
+	@echo "🔍 etcd health:"
+	@docker exec telemetry-etcd etcdctl endpoint health || echo "❌ etcd not healthy"
+
+# Monitoring commands
+monitor-etcd: ## Monitor etcd cluster status
+	@echo "etcd cluster status:"
+	@docker exec telemetry-etcd etcdctl endpoint status --write-out=table
+
+monitor-nexus-data: ## Monitor telemetry data in etcd
+	@echo "Telemetry data in etcd:"
+	@docker exec telemetry-etcd etcdctl get --prefix /telemetry/ --keys-only
+
+# GraphQL testing
+test-graphql: ## Test GraphQL endpoint
+	@echo "Testing GraphQL endpoint..."
+	@curl -X POST http://localhost:8080/graphql \
+		-H "Content-Type: application/json" \
+		-d '{"query": "{ cluster(id: \"$(CLUSTER_ID)\") { id name region totalHosts totalGPUs } }"}' | jq .
+
+# WebSocket testing
+test-websocket: ## Test WebSocket connection (requires websocat)
+	@echo "Testing WebSocket connection..."
+	@echo "Connect with: websocat ws://localhost:8080/ws"
+	@echo "Send message: {\"type\": \"ping\"}"
+
+# Cleanup commands
+clean-nexus: ## Clean up Nexus binaries and containers
+	@echo "Cleaning up Nexus components..."
+	rm -f bin/nexus-collector bin/nexus-api
+	docker stop telemetry-etcd || true
+	docker rm telemetry-etcd || true
+	@echo "✅ Nexus cleanup completed"
+
+clean-nexus-docker: ## Clean up Nexus Docker environment
+	@echo "Cleaning up Nexus Docker environment..."
+	docker-compose -f deployments/docker/docker-compose.nexus.yml down -v
+	docker rmi $(NEXUS_COLLECTOR_IMAGE) $(NEXUS_API_IMAGE) || true
+	@echo "✅ Nexus Docker cleanup completed"
+
+# Utility commands
+etcd-shell: ## Open etcd shell for debugging
+	@echo "Opening etcd shell..."
+	docker exec -it telemetry-etcd etcdctl
+
+nexus-logs-collector: ## Show Nexus collector logs
+	docker logs -f telemetry-nexus-collector
+
+nexus-logs-api: ## Show Nexus API logs
+	docker logs -f telemetry-nexus-api
+
+# Performance testing
+load-test-nexus: ## Run load test against Nexus API
+	@echo "Running load test against Nexus API..."
+	@echo "Testing health endpoint..."
+	ab -n 1000 -c 10 http://localhost:8080/health
+	@echo "Testing cluster stats endpoint..."
+	ab -n 500 -c 5 http://localhost:8080/api/v1/clusters/$(CLUSTER_ID)/stats
+
+# Documentation
+docs-nexus: ## Generate documentation for Nexus components
+	@echo "Generating Nexus documentation..."
+	godoc -http=:6060 &
+	@echo "📚 Documentation server started at http://localhost:6060"
+
+# Installation
+install-nexus: build-nexus ## Install Nexus binaries to /usr/local/bin
+	@echo "Installing Nexus binaries..."
+	sudo cp bin/nexus-collector /usr/local/bin/
+	sudo cp bin/nexus-api /usr/local/bin/
+	@echo "✅ Nexus binaries installed"
+
+# Validation
+validate-nexus: ## Validate Nexus configuration and setup
+	@echo "Validating Nexus setup..."
+	@echo "🔍 Checking Go version..."
+	@go version
+	@echo "🔍 Checking Docker..."
+	@docker --version
+	@echo "🔍 Checking etcd connectivity..."
+	@docker exec telemetry-etcd etcdctl version || echo "❌ etcd not accessible"
+	@echo "🔍 Checking dependencies..."
+	@go mod verify
+	@echo "✅ Nexus validation completed"
+
+# Quick start
+quick-start-nexus: docker-build-nexus run-nexus-docker ## Quick start: build and run Nexus pipeline
+	@echo "🚀 Nexus-enhanced telemetry pipeline is running!"
+	@echo ""
+	@echo "📊 Access points:"
+	@echo "  • Nexus API: http://localhost:8080"
+	@echo "  • GraphQL: http://localhost:8080/graphql"
+	@echo "  • WebSocket: ws://localhost:8080/ws"
+	@echo "  • Traditional API: http://localhost:8081"
+	@echo "  • Database UI: http://localhost:8082"
+	@echo ""
+	@echo "🔧 Management:"
+	@echo "  • View logs: make logs-nexus-docker"
+	@echo "  • Check health: make health-nexus"
+	@echo "  • Monitor etcd: make monitor-etcd"
+	@echo "  • Stop services: make stop-nexus-docker"

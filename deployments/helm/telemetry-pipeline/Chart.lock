@@ -1,6 +1,6 @@
 dependencies:
-- name: postgresql
+- name: etcd
   repository: https://charts.bitnami.com/bitnami
-  version: 12.12.10
-digest: sha256:3e50f191dcf868228a07a26896bd4759db58461fac5fe593ebadd95d18c4e8e1
-generated: "2025-08-21T11:09:15.046718+05:30"
+  version: 8.12.0
+digest: sha256:11e8d60d168e18cc618dae18f36ed0b21beffcf309d8a44e362c1c5bbdc708a7
+generated: "2025-08-22T19:29:28.085696+05:30"

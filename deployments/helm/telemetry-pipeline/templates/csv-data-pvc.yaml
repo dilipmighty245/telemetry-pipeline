@@ -1,0 +1,18 @@
+{{- if and .Values.nexusStreamer.enabled .Values.nexusStreamer.csvData.persistentVolume.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-csv-data
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: csv-data
+spec:
+  accessModes:
+    - {{ .Values.nexusStreamer.csvData.persistentVolume.accessMode }}
+  {{- if .Values.nexusStreamer.csvData.persistentVolume.storageClass }}
+  storageClassName: {{ .Values.nexusStreamer.csvData.persistentVolume.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nexusStreamer.csvData.persistentVolume.size }}
+{{- end }}

@@ -1,0 +1,26 @@
+{{- if and .Values.nexusStreamer.enabled .Values.nexusStreamer.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry-pipeline.fullname" . }}-nexus-streamer
+  labels:
+    {{- include "telemetry-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-streamer
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.nexusStreamer.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.nexusStreamer.service.type }}
+  ports:
+    - port: {{ .Values.nexusStreamer.service.port }}
+      targetPort: {{ .Values.nexusStreamer.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "telemetry-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus-streamer
+{{- end }}

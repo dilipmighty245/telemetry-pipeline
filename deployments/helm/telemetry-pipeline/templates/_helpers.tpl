@@ -64,75 +64,7 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
-{{/*
-Create the database connection string
-*/}}
-{{- define "telemetry-pipeline.databaseHost" -}}
-{{- if .Values.postgresql.enabled }}
-{{- printf "%s-postgresql" (include "telemetry-pipeline.fullname" .) }}
-{{- else }}
-{{- .Values.externalDatabase.host }}
-{{- end }}
-{{- end }}
 
-{{/*
-Create the database port
-*/}}
-{{- define "telemetry-pipeline.databasePort" -}}
-{{- if .Values.postgresql.enabled }}
-{{- printf "5432" }}
-{{- else }}
-{{- .Values.externalDatabase.port | toString }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the database name
-*/}}
-{{- define "telemetry-pipeline.databaseName" -}}
-{{- if .Values.postgresql.enabled }}
-{{- .Values.postgresql.auth.database }}
-{{- else }}
-{{- .Values.externalDatabase.database }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the database username
-*/}}
-{{- define "telemetry-pipeline.databaseUsername" -}}
-{{- if .Values.postgresql.enabled }}
-{{- .Values.postgresql.auth.username }}
-{{- else }}
-{{- .Values.externalDatabase.username }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the database password secret name
-*/}}
-{{- define "telemetry-pipeline.databaseSecretName" -}}
-{{- if .Values.postgresql.enabled }}
-{{- printf "%s-postgresql" (include "telemetry-pipeline.fullname" .) }}
-{{- else if .Values.externalDatabase.existingSecret }}
-{{- .Values.externalDatabase.existingSecret }}
-{{- else }}
-{{- printf "%s-database" (include "telemetry-pipeline.fullname" .) }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the database password secret key
-*/}}
-{{- define "telemetry-pipeline.databaseSecretPasswordKey" -}}
-{{- if .Values.postgresql.enabled }}
-{{- printf "password" }}
-{{- else if .Values.externalDatabase.existingSecret }}
-{{- .Values.externalDatabase.existingSecretPasswordKey }}
-{{- else }}
-{{- printf "password" }}
-{{- end }}
-{{- end }}
 
 {{/*
 Create image name
@@ -236,11 +168,7 @@ redis-mode: "external"
 {{- else }}
 redis-mode: "embedded"
 {{- end }}
-{{- if .Values.postgresql.enabled }}
-database-mode: "embedded"
-{{- else }}
-database-mode: "external"
-{{- end }}
+
 {{- end }}
 
 {{/*
@@ -279,25 +207,4 @@ Create environment variables for Redis connection
 {{- end }}
 {{- end }}
 
-{{/*
-Create environment variables for database connection
-*/}}
-{{- define "telemetry-pipeline.databaseEnvVars" -}}
-- name: DB_HOST
-  value: {{ include "telemetry-pipeline.databaseHost" . | quote }}
-- name: DB_PORT
-  value: {{ include "telemetry-pipeline.databasePort" . | quote }}
-- name: DB_NAME
-  value: {{ include "telemetry-pipeline.databaseName" . | quote }}
-- name: DB_USER
-  value: {{ include "telemetry-pipeline.databaseUsername" . | quote }}
-- name: DB_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "telemetry-pipeline.databaseSecretName" . }}
-      key: {{ include "telemetry-pipeline.databaseSecretPasswordKey" . }}
-{{- if not .Values.postgresql.enabled }}
-- name: DB_SSL_MODE
-  value: {{ .Values.externalDatabase.sslMode | quote }}
-{{- end }}
-{{- end }}
+

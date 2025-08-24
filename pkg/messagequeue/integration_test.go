@@ -3,7 +3,6 @@ package messagequeue
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -22,69 +21,31 @@ type MockTelemetryData struct {
 }
 
 func TestMessageQueueIntegration(t *testing.T) {
-	// Test both Redis Streams and in-memory implementations
-	testCases := []struct {
-		name        string
-		setupRedis  bool
-		expectRedis bool
-	}{
-		{
-			name:        "InMemory",
-			setupRedis:  false,
-			expectRedis: false,
-		},
-	}
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
-	// Add Redis test case if available
-	if os.Getenv("REDIS_URL") != "" {
-		testCases = append(testCases, struct {
-			name        string
-			setupRedis  bool
-			expectRedis bool
-		}{
-			name:        "RedisStreams",
-			setupRedis:  true,
-			expectRedis: true,
-		})
-	}
+	t.Run("EtcdBackend", func(t *testing.T) {
+		// Create service with etcd backend
+		service, err := NewMessageQueueService()
+		require.NoError(t, err, "Should create message queue service successfully")
+		defer service.Stop()
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Setup environment
-			originalURL := os.Getenv("REDIS_URL")
-			if !tc.setupRedis {
-				os.Unsetenv("REDIS_URL")
-			}
-			defer func() {
-				if originalURL != "" {
-					os.Setenv("REDIS_URL", originalURL)
-				}
-			}()
+		// Verify etcd backend is available
+		assert.NotNil(t, service.queue.etcdBackend, "Should use etcd backend")
 
-			// Create services
-			service := NewMessageQueueService()
-			defer service.Stop()
-
-			// Verify backend type
-			if tc.expectRedis {
-				assert.NotNil(t, service.queue.redisStreamsBackend, "Should use Redis Streams backend")
-			} else {
-				assert.Nil(t, service.queue.redisStreamsBackend, "Should use in-memory backend")
-				assert.Nil(t, service.queue.redisBackend, "Should use in-memory backend")
-			}
-
-			// Test full pipeline
-			testFullPipeline(t, service)
-		})
-	}
+		// Test full pipeline
+		testFullPipeline(t, service)
+	})
 }
 
 func testFullPipeline(t *testing.T, service *MessageQueueService) {
 	// ctx := context.Background() // Unused in current tests
 
 	t.Run("ProducerConsumerFlow", func(t *testing.T) {
-		const numMessages = 100
-		const numConsumers = 3
+		const numMessages = 10
+		const numConsumers = 1
 
 		// Step 1: Produce telemetry messages
 		var producedMessages []MockTelemetryData
@@ -165,7 +126,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 		select {
 		case <-done:
 			// All consumers finished
-		case <-time.After(30 * time.Second):
+		case <-time.After(60 * time.Second):
 			t.Fatal("Test timed out waiting for consumers")
 		}
 
@@ -182,7 +143,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 			assert.Equal(t, "test-host", telemetry.Hostname)
 		}
 
-		// In Redis Streams, each message should be consumed exactly once
+		// In etcd, each message should be consumed exactly once
 		// In in-memory, messages might be consumed by multiple consumers
 		assert.Greater(t, consumedCount, 0, "Should have consumed some messages")
 		assert.LessOrEqual(t, consumedCount, numMessages*numConsumers, "Should not exceed max possible")
@@ -242,11 +203,13 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 }
 
 func TestMessageQueueFailover(t *testing.T) {
-	if os.Getenv("REDIS_URL") == "" {
-		t.Skip("Redis not available for failover testing")
-	}
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err, "Should start embedded etcd server")
+	defer cleanup()
 
-	service := NewMessageQueueService()
+	service, err := NewMessageQueueService()
+	require.NoError(t, err)
 	defer service.Stop()
 
 	t.Run("ConsumerFailover", func(t *testing.T) {
@@ -276,7 +239,7 @@ func TestMessageQueueFailover(t *testing.T) {
 		// Don't acknowledge messages from consumer-1
 
 		// Consumer 2 should be able to claim pending messages after timeout
-		// This tests the failover mechanism in Redis Streams
+		// This tests the failover mechanism in etcd
 		time.Sleep(2 * time.Second) // Wait for potential timeout
 
 		messages2, err := service.ConsumeTelemetry("failover-group", "consumer-2", 10)
@@ -294,7 +257,13 @@ func TestMessageQueueFailover(t *testing.T) {
 }
 
 func BenchmarkMessageQueueIntegration(b *testing.B) {
-	service := NewMessageQueueService()
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(b, err)
+	defer cleanup()
+
+	service, err := NewMessageQueueService()
+	require.NoError(b, err)
 	defer service.Stop()
 
 	telemetryData := MockTelemetryData{

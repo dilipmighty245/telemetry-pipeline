@@ -1,39 +1,37 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15
-    container_name: telemetry-postgres
-    environment:
-      POSTGRES_DB: telemetry
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+  # etcd for enhanced message queue and coordination
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: telemetry-etcd
     ports:
-      - "5433:5432"
+      - "2379:2379"
+      - "2380:2380"
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://localhost:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=etcd1=http://0.0.0.0:2380
+      - --initial-cluster-token=etcd-cluster-1
+      - --initial-cluster-state=new
+      - --auto-compaction-retention=1h
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - etcd_data:/etcd-data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Redis for shared message queue
-  redis:
-    image: redis:7-alpine
-    container_name: telemetry-redis
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+
+
+
+
 
   # Telemetry Streamer
   streamer:
@@ -42,7 +40,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.streamer
     container_name: telemetry-streamer
     environment:
-      - REDIS_URL=redis://redis:6379
+
       - LOG_LEVEL=info
     volumes:
       - ./dcgm_metrics_20250718_134233.csv:/app/dcgm_metrics_20250718_134233.csv:ro
@@ -54,9 +52,7 @@ services:
       "-log-level=info"
     ]
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
+    depends_on: []
 
   # Telemetry Collector
   collector:
@@ -65,13 +61,6 @@ services:
       dockerfile: deployments/docker/Dockerfile.collector
     container_name: telemetry-collector
     environment:
-      - REDIS_URL=redis://redis:6379
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - DB_SSLMODE=disable
       - LOG_LEVEL=info
     command: [
       "-batch-size=100",
@@ -80,9 +69,7 @@ services:
     ]
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
+      etcd:
         condition: service_healthy
 
   # API Gateway
@@ -92,12 +79,6 @@ services:
       dockerfile: deployments/docker/Dockerfile.api-gateway
     container_name: telemetry-api-gateway
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=telemetry
-      - DB_SSLMODE=disable
       - LOG_LEVEL=info
       - PORT=8080
     ports:
@@ -108,23 +89,14 @@ services:
     ]
     restart: unless-stopped
     depends_on:
-      postgres:
+      etcd:
         condition: service_healthy
 
-  # Adminer for database management (optional)
-  adminer:
-    image: adminer
-    container_name: telemetry-adminer
-    ports:
-      - "8081:8080"
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres
-    depends_on:
-      - postgres
+
 
 volumes:
-  postgres_data:
-  redis_data:
+  etcd_data:
+
 
 networks:
   default:
