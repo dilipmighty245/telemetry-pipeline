@@ -452,7 +452,14 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	// In API-only mode, we don't run the streaming loop
 	// CSV processing happens only when files are uploaded via the API
 
-	return g.Wait()
+	// Wait for all goroutines to complete
+	err = g.Wait()
+	if err != nil && err != context.Canceled {
+		return err
+	}
+
+	// Context cancellation is expected during graceful shutdown
+	return nil
 }
 
 // parseCSVRecord parses a CSV record into a TelemetryRecord
@@ -479,20 +486,21 @@ func (ns *NexusStreamerService) parseCSVRecord(record []string, columnMap map[st
 	}
 
 	// Map CSV columns to struct fields
-	tr.Timestamp = getColumn("timestamp")
-	if tr.Timestamp == "" {
-		tr.Timestamp = time.Now().Format(time.RFC3339)
-	} else {
-		// Remove quotes if present and ensure RFC3339 format
-		tr.Timestamp = strings.Trim(tr.Timestamp, "\"")
-		// Validate and normalize timestamp format
-		if parsedTime, err := time.Parse(time.RFC3339, tr.Timestamp); err == nil {
-			tr.Timestamp = parsedTime.Format(time.RFC3339)
-		} else {
-			logging.Warnf("Invalid timestamp format '%s', using current time", tr.Timestamp)
-			tr.Timestamp = time.Now().Format(time.RFC3339)
-		}
-	}
+	// tr.Timestamp = getColumn("timestamp")
+	// if tr.Timestamp == "" {
+	// 	tr.Timestamp = time.Now().Format(time.RFC3339)
+	// } else {
+	// 	// Remove quotes if present and ensure RFC3339 format
+	// 	tr.Timestamp = strings.Trim(tr.Timestamp, "\"")
+	// 	// Validate and normalize timestamp format
+	// 	if parsedTime, err := time.Parse(time.RFC3339, tr.Timestamp); err == nil {
+	// 		tr.Timestamp = parsedTime.Format(time.RFC3339)
+	// 	} else {
+	// 		logging.Warnf("Invalid timestamp format '%s', using current time", tr.Timestamp)
+	// 		tr.Timestamp = time.Now().Format(time.RFC3339)
+	// 	}
+	// }
+	tr.Timestamp = time.Now().Format(time.RFC3339)
 
 	tr.GPUID = getColumn("gpu_id")
 	if tr.GPUID == "" {
@@ -622,11 +630,12 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 
 	// Fallback to etcd message queue publishing
 	queueKey := ns.config.MessageQueuePrefix + "/telemetry"
+	logging.Debugf("Publishing batch of %d records to etcd queue: %s", len(batch), queueKey)
 
 	// Use etcd transaction for atomic batch publishing
 	ops := make([]clientv3.Op, 0, len(batch))
 
-	for _, record := range batch {
+	for i, record := range batch {
 		// Create unique key for each message
 		messageKey := fmt.Sprintf("%s/%d_%s_%s_%d",
 			queueKey,
@@ -634,6 +643,11 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 			record.Hostname,
 			record.GPUID,
 			ns.messageCount)
+
+		// Log key generation for debugging (first and last record only to avoid spam)
+		if i == 0 || i == len(batch)-1 {
+			logging.Debugf("Generated etcd key for record %d/%d: %s", i+1, len(batch), messageKey)
+		}
 
 		// Serialize record
 		data, err := json.Marshal(record)
@@ -654,6 +668,12 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 	txnCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// Check if context is already canceled before attempting transaction
+	if ctx.Err() != nil {
+		return fmt.Errorf("context canceled before etcd transaction: %w", ctx.Err())
+	}
+
+	logging.Debugf("Executing etcd transaction with %d operations", len(ops))
 	txnResp, err := ns.etcdClient.Txn(txnCtx).Then(ops...).Commit()
 	if err != nil {
 		return fmt.Errorf("failed to publish batch to etcd: %w", err)
@@ -663,7 +683,7 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 		return fmt.Errorf("etcd transaction failed")
 	}
 
-	logging.Infof("Published batch of %d telemetry records to etcd queue", len(batch))
+	logging.Infof("Published batch of %d telemetry records to etcd queue (revision: %d)", len(batch), txnResp.Header.Revision)
 	return nil
 }
 
@@ -727,32 +747,41 @@ func (ns *NexusStreamerService) Close() error {
 
 	// Deregister service
 	if ns.serviceRegistry != nil {
-		// Use background context for cleanup
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Use background context for cleanup with shorter timeout to avoid hanging
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := ns.serviceRegistry.Deregister(cleanupCtx); err != nil {
-			logging.Errorf("Failed to deregister service: %v", err)
+			// Log as warning instead of error since service shutdown should not fail due to deregistration issues
+			logging.Warnf("Failed to deregister service (this is expected if etcd is unavailable): %v", err)
+		} else {
+			logging.Infof("Service deregistered successfully")
 		}
 	}
 
 	// Stop scaling coordinator
 	if ns.scalingCoord != nil {
 		if err := ns.scalingCoord.Stop(); err != nil {
-			logging.Errorf("Failed to stop scaling coordinator: %v", err)
+			logging.Warnf("Failed to stop scaling coordinator: %v", err)
+		} else {
+			logging.Infof("Scaling coordinator stopped successfully")
 		}
 	}
 
 	// Close configuration manager
 	if ns.configManager != nil {
 		if err := ns.configManager.Close(); err != nil {
-			logging.Errorf("Failed to close config manager: %v", err)
+			logging.Warnf("Failed to close config manager: %v", err)
+		} else {
+			logging.Infof("Configuration manager closed successfully")
 		}
 	}
 
 	if ns.etcdClient != nil {
 		ns.etcdClient.Close()
+		logging.Infof("etcd client closed")
 	}
 
+	logging.Infof("Nexus streamer closed successfully")
 	return nil
 }
 
@@ -954,8 +983,8 @@ func (ns *NexusStreamerService) startHTTPServer(ctx context.Context) error {
 	<-ctx.Done()
 	logging.Infof("Attempting graceful shutdown of HTTP server")
 
-	// Shutdown server
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Shutdown server with fresh context since ctx is already canceled
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -1041,7 +1070,7 @@ func (ns *NexusStreamerService) uploadCSVHandler(ctx context.Context, c echo.Con
 		})
 	}
 
-	logging.Infof("Starting CSV upload and processing: %s (Size: %d bytes)", fileHeader.Filename, fileHeader.Size)
+	logging.Infof("Starting CSV upload and processing: %s (Size: %d bytes, MD5 will be calculated)", fileHeader.Filename, fileHeader.Size)
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(ns.config.UploadDir, 0755); err != nil {
@@ -1076,6 +1105,7 @@ func (ns *NexusStreamerService) uploadCSVHandler(ctx context.Context, c echo.Con
 	}
 
 	md5Hash := fmt.Sprintf("%x", hasher.Sum(nil))
+	logging.Infof("File saved successfully with MD5: %s, starting CSV processing", md5Hash)
 
 	// Process CSV file immediately
 	// Use the provided context for CSV processing
@@ -1125,6 +1155,8 @@ func (ns *NexusStreamerService) uploadCSVHandler(ctx context.Context, c echo.Con
 
 // processUploadedCSV processes an uploaded CSV file and streams it to the message queue
 func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath string) (int, int, []string, error) {
+	logging.Infof("Starting to process CSV file: %s", filePath)
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, 0, nil, fmt.Errorf("failed to open CSV file: %w", err)
@@ -1162,22 +1194,26 @@ func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath
 		return 0, 0, headers, fmt.Errorf("missing required headers: %v", missingHeaders)
 	}
 
-	logging.Infof("CSV validation successful: %d headers found", len(headers))
+	logging.Infof("CSV validation successful: %d headers found, starting record processing", len(headers))
 
 	// Process records in batches
 	batch := make([]*TelemetryRecord, 0, ns.config.BatchSize)
 	totalRecords := 0
 	processedRecords := 0
+	batchCount := 0
 
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
 			// Process final batch
 			if len(batch) > 0 {
+				batchCount++
+				logging.Infof("Processing final batch %d with %d records", batchCount, len(batch))
 				if err := ns.publishBatch(ctx, batch); err != nil {
-					logging.Warnf("Failed to process final batch: %v", err)
+					logging.Warnf("Failed to process final batch %d: %v", batchCount, err)
 				} else {
 					processedRecords += len(batch)
+					logging.Infof("Successfully processed final batch %d (%d records)", batchCount, len(batch))
 				}
 			}
 			break
@@ -1200,15 +1236,20 @@ func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath
 		totalRecords++
 
 		if len(batch) >= ns.config.BatchSize {
+			batchCount++
+			logging.Infof("Processing batch %d with %d records", batchCount, len(batch))
 			if err := ns.publishBatch(ctx, batch); err != nil {
-				logging.Warnf("Failed to process batch: %v", err)
+				logging.Warnf("Failed to process batch %d: %v", batchCount, err)
 			} else {
 				processedRecords += len(batch)
+				logging.Infof("Successfully processed batch %d (%d records)", batchCount, len(batch))
 			}
 			batch = batch[:0] // Reset batch
 		}
 	}
 
+	logging.Infof("CSV processing completed: %d/%d records processed successfully in %d batches",
+		processedRecords, totalRecords, batchCount)
 	return processedRecords, totalRecords, headers, nil
 }
 

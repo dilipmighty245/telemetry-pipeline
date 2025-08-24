@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,26 +112,10 @@ func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID stri
 // Returns:
 //   - error: nil on success, error describing the failure otherwise
 func (sc *ScalingCoordinator) Start() error {
-	// Create lease for metrics reporting
-	lease, err := sc.client.Grant(sc.ctx, 60) // 60 second TTL
-	if err != nil {
-		return fmt.Errorf("failed to create lease: %w", err)
+	// Create initial lease for metrics reporting
+	if err := sc.recreateLease(sc.ctx); err != nil {
+		return fmt.Errorf("failed to create initial lease: %w", err)
 	}
-	sc.leaseID = lease.ID
-
-	// Keep lease alive
-	ch, err := sc.client.KeepAlive(sc.ctx, sc.leaseID)
-	if err != nil {
-		return fmt.Errorf("failed to start keep alive: %w", err)
-	}
-
-	go func() {
-		for ka := range ch {
-			if ka == nil {
-				return
-			}
-		}
-	}()
 
 	// Start metrics reporting
 	go sc.startMetricsReporting()
@@ -144,6 +129,7 @@ func (sc *ScalingCoordinator) Start() error {
 
 // ReportMetrics reports instance metrics to etcd for use in scaling decisions.
 // The metrics are stored with a lease to ensure they expire if the instance becomes unavailable.
+// If the lease has expired, it will attempt to recreate it automatically.
 //
 // Parameters:
 //   - metrics: The instance metrics to report
@@ -165,13 +151,101 @@ func (sc *ScalingCoordinator) ReportMetrics(metrics InstanceMetrics) error {
 	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
 	defer cancel()
 
-	_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(sc.leaseID))
-	if err != nil {
+	// Check if lease is still valid
+	sc.mu.RLock()
+	currentLeaseID := sc.leaseID
+	sc.mu.RUnlock()
+
+	// First attempt with current lease
+	if currentLeaseID != 0 {
+		_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(currentLeaseID))
+		if err == nil {
+			logging.Debugf("Reported metrics for %s: CPU=%.2f%%, Memory=%.2f%%, Queue=%.0f",
+				sc.instanceID, metrics.CPUUsage*100, metrics.MemoryUsage*100, metrics.QueueDepth)
+			return nil
+		}
+
+		// Check if it's a lease not found error
+		if strings.Contains(err.Error(), "lease not found") {
+			logging.Warnf("Lease expired for %s/%s, recreating lease", sc.serviceType, sc.instanceID)
+
+			// Recreate lease
+			if recreateErr := sc.recreateLease(ctx); recreateErr != nil {
+				return fmt.Errorf("failed to recreate lease after expiration: %w", recreateErr)
+			}
+
+			// Retry with new lease
+			sc.mu.RLock()
+			newLeaseID := sc.leaseID
+			sc.mu.RUnlock()
+
+			_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(newLeaseID))
+			if err != nil {
+				return fmt.Errorf("failed to report metrics after lease recreation: %w", err)
+			}
+
+			logging.Infof("Successfully reported metrics after lease recreation for %s/%s", sc.serviceType, sc.instanceID)
+			logging.Debugf("Reported metrics for %s: CPU=%.2f%%, Memory=%.2f%%, Queue=%.0f",
+				sc.instanceID, metrics.CPUUsage*100, metrics.MemoryUsage*100, metrics.QueueDepth)
+			return nil
+		}
+
+		// Other error, return it
 		return fmt.Errorf("failed to report metrics: %w", err)
+	}
+
+	// No lease available, create one
+	if err := sc.recreateLease(ctx); err != nil {
+		return fmt.Errorf("failed to create initial lease: %w", err)
+	}
+
+	// Retry with new lease
+	sc.mu.RLock()
+	newLeaseID := sc.leaseID
+	sc.mu.RUnlock()
+
+	_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(newLeaseID))
+	if err != nil {
+		return fmt.Errorf("failed to report metrics with new lease: %w", err)
 	}
 
 	logging.Debugf("Reported metrics for %s: CPU=%.2f%%, Memory=%.2f%%, Queue=%.0f",
 		sc.instanceID, metrics.CPUUsage*100, metrics.MemoryUsage*100, metrics.QueueDepth)
+	return nil
+}
+
+// recreateLease creates a new etcd lease and starts the keep-alive process
+func (sc *ScalingCoordinator) recreateLease(ctx context.Context) error {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	// Create new lease
+	lease, err := sc.client.Grant(ctx, 60) // 60 second TTL
+	if err != nil {
+		return fmt.Errorf("failed to create lease: %w", err)
+	}
+	sc.leaseID = lease.ID
+
+	// Start keep-alive for the new lease
+	ch, err := sc.client.KeepAlive(sc.ctx, sc.leaseID)
+	if err != nil {
+		return fmt.Errorf("failed to start keep alive: %w", err)
+	}
+
+	go func() {
+		for ka := range ch {
+			if ka == nil {
+				logging.Warnf("Lease expired for scaling coordinator %s/%s, will recreate on next metric report", sc.serviceType, sc.instanceID)
+				sc.mu.Lock()
+				sc.leaseID = 0 // Mark lease as invalid
+				sc.mu.Unlock()
+				return
+			}
+			logging.Debugf("Scaling coordinator %s/%s lease renewed: TTL=%d", sc.serviceType, sc.instanceID, ka.TTL)
+		}
+	}()
+
+	logging.Infof("Created new lease for scaling coordinator %s/%s: %d", sc.serviceType, sc.instanceID, sc.leaseID)
 	return nil
 }
 
@@ -446,7 +520,9 @@ func (sc *ScalingCoordinator) tryAcquireLeadership() bool {
 		Commit()
 
 	if err != nil || !txnResp.Succeeded {
-		sc.client.Revoke(ctx, lease.ID)
+		if _, revokeErr := sc.client.Revoke(ctx, lease.ID); revokeErr != nil {
+			logging.Errorf("Failed to revoke lease after failed leadership attempt: %v", revokeErr)
+		}
 		return false
 	}
 
@@ -464,7 +540,9 @@ func (sc *ScalingCoordinator) Stop() error {
 	if sc.leaseID != 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		sc.client.Revoke(ctx, sc.leaseID)
+		if _, err := sc.client.Revoke(ctx, sc.leaseID); err != nil {
+			logging.Errorf("Failed to revoke lease during coordinator stop: %v", err)
+		}
 	}
 
 	logging.Infof("Scaling coordinator stopped for %s/%s", sc.serviceType, sc.instanceID)

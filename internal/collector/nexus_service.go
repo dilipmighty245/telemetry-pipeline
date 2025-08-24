@@ -352,7 +352,15 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 	})
 
 	logging.Infof("Enhanced collector started with %d workers", nc.config.Workers)
-	return g.Wait()
+
+	// Wait for all goroutines to complete
+	err := g.Wait()
+	if err != nil && err != context.Canceled {
+		return err
+	}
+
+	// Context cancellation is expected during graceful shutdown
+	return nil
 }
 
 // setupWatchAPI sets up the Nexus Watch API for real-time notifications
@@ -404,12 +412,15 @@ func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
 	logging.Debugf("Found %d messages to process", len(resp.Kvs))
 
 	// Process each message
+	processedCount := 0
 	for _, kv := range resp.Kvs {
 		var record TelemetryRecord
 		if err := json.Unmarshal(kv.Value, &record); err != nil {
 			logging.Warnf("Failed to unmarshal telemetry record: %v", err)
 			// Delete malformed message
-			nc.etcdClient.Delete(ctx, string(kv.Key))
+			if _, delErr := nc.etcdClient.Delete(ctx, string(kv.Key)); delErr != nil {
+				logging.Warnf("Failed to delete malformed message: %v", delErr)
+			}
 			continue
 		}
 
@@ -417,6 +428,7 @@ func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
 		select {
 		case nc.processingChan <- &record:
 			nc.messageCount++
+			processedCount++
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
@@ -655,12 +667,15 @@ func (nc *NexusCollectorService) Close() error {
 
 	if nc.etcdClient != nil {
 		nc.etcdClient.Close()
+		logging.Infof("etcd client closed")
 	}
 
 	if nc.nexusService != nil {
 		nc.nexusService.Close()
+		logging.Infof("nexus service closed")
 	}
 
+	logging.Infof("Nexus collector closed successfully")
 	return nil
 }
 

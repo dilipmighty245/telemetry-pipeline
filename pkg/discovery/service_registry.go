@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -236,6 +237,11 @@ func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) erro
 
 	_, err = sr.client.Put(ctx, serviceKey, string(data), clientv3.WithLease(sr.leaseID))
 	if err != nil {
+		// Check if it's a lease not found error
+		if strings.Contains(err.Error(), "lease not found") {
+			logging.Warnf("Lease expired for service %s, health update failed - service should re-register", serviceKey)
+			return fmt.Errorf("service lease expired, re-registration required: %w", err)
+		}
 		return fmt.Errorf("failed to update service health: %w", err)
 	}
 

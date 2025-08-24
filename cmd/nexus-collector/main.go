@@ -15,8 +15,10 @@ func main() {
 		switch err {
 		case context.Canceled:
 			// not considered error
+			return
 		case http.ErrServerClosed:
 			// not considered error
+			return
 		default:
 			logging.Fatalf("could not run Collector: %v", err)
 		}
