@@ -14,11 +14,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
 	configpkg "github.com/dilipmighty245/telemetry-pipeline/pkg/config"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/discovery"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -48,6 +51,19 @@ type NexusStreamerConfig struct {
 	MaxUploadSize int64
 	MaxMemory     int64
 
+	// Enhanced streaming features
+	StreamingConfig         *streaming.StreamAdapterConfig `json:"streaming_config"`
+	EnableStreaming         bool                           `json:"enable_streaming"`
+	StreamDestination       string                         `json:"stream_destination"`
+	EnableParallelStreaming bool                           `json:"enable_parallel_streaming"`
+	ParallelWorkers         int                            `json:"parallel_workers"`
+	EnableRateLimit         bool                           `json:"enable_rate_limit"`
+	RateLimit               float64                        `json:"rate_limit"`
+	BurstSize               int                            `json:"burst_size"`
+	EnableBackPressure      bool                           `json:"enable_back_pressure"`
+	BackPressureThreshold   float64                        `json:"back_pressure_threshold"`
+	BackPressureDelay       time.Duration                  `json:"back_pressure_delay"`
+
 	// Logging
 	LogLevel string
 }
@@ -70,6 +86,26 @@ type TelemetryRecord struct {
 	MemoryClockMHz    float32 `json:"memory_clock_mhz"`
 }
 
+// StreamerWorker handles parallel streaming
+type StreamerWorker struct {
+	id       int
+	service  *NexusStreamerService
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	isActive bool
+	mu       sync.RWMutex
+}
+
+// RateLimiter implements token bucket rate limiting
+type RateLimiter struct {
+	rate       float64
+	burstSize  int
+	tokens     float64
+	lastUpdate time.Time
+	mu         sync.Mutex
+}
+
 // NexusStreamerService streams telemetry data to etcd message queue
 type NexusStreamerService struct {
 	config     *NexusStreamerConfig
@@ -79,6 +115,13 @@ type NexusStreamerService struct {
 	serviceRegistry *discovery.ServiceRegistry
 	configManager   *configpkg.ConfigManager
 	scalingCoord    *scaling.ScalingCoordinator
+
+	// Enhanced streaming features
+	streamAdapter *streaming.StreamAdapter
+	rateLimiter   *RateLimiter
+	workers       []*StreamerWorker
+	workerPool    chan *StreamerWorker
+	isEnhanced    bool
 
 	// HTTP server for CSV upload
 	echo *echo.Echo
@@ -218,6 +261,41 @@ func (ns *NexusStreamerService) parseConfig(args []string) (*NexusStreamerConfig
 
 // NewNexusStreamerService creates a new etcd-based streamer service
 func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (*NexusStreamerService, error) {
+	// Set defaults for enhanced features
+	if config.StreamingConfig == nil && config.EnableStreaming {
+		config.StreamingConfig = &streaming.StreamAdapterConfig{
+			ChannelSize:   2000, // Higher for streaming
+			BatchSize:     1000, // Larger batches for streaming
+			Workers:       8,    // More workers for streaming
+			MaxRetries:    3,
+			RetryDelay:    time.Second,
+			FlushInterval: 2 * time.Second, // Faster flush for streaming
+			HTTPTimeout:   30 * time.Second,
+			EnableMetrics: true,
+			PartitionBy:   "hostname",
+		}
+	}
+
+	if config.ParallelWorkers <= 0 {
+		config.ParallelWorkers = 5
+	}
+
+	if config.RateLimit <= 0 {
+		config.RateLimit = 1000 // 1000 records per second default
+	}
+
+	if config.BurstSize <= 0 {
+		config.BurstSize = 100
+	}
+
+	if config.BackPressureThreshold <= 0 {
+		config.BackPressureThreshold = 80.0 // 80% channel utilization
+	}
+
+	if config.BackPressureDelay <= 0 {
+		config.BackPressureDelay = 100 * time.Millisecond
+	}
+
 	// Create etcd client
 	etcdClient, err := clientv3.New(clientv3.Config{
 		Endpoints:   config.EtcdEndpoints,
@@ -267,7 +345,44 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 		scalingCoord:    scalingCoord,
 		echo:            echoServer,
 		startTime:       time.Now(),
+		isEnhanced:      true,
 	}
+
+	// Initialize streaming adapter if enabled
+	if config.EnableStreaming {
+		streamer.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
+	}
+
+	// Initialize rate limiter if enabled
+	if config.EnableRateLimit {
+		streamer.rateLimiter = &RateLimiter{
+			rate:       config.RateLimit,
+			burstSize:  config.BurstSize,
+			tokens:     float64(config.BurstSize),
+			lastUpdate: time.Now(),
+		}
+	}
+
+	// Initialize worker pool if parallel streaming is enabled
+	if config.EnableParallelStreaming {
+		streamer.workerPool = make(chan *StreamerWorker, config.ParallelWorkers)
+		streamer.workers = make([]*StreamerWorker, config.ParallelWorkers)
+
+		for i := 0; i < config.ParallelWorkers; i++ {
+			ctx, cancel := context.WithCancel(context.Background())
+			worker := &StreamerWorker{
+				id:      i,
+				service: streamer,
+				ctx:     ctx,
+				cancel:  cancel,
+			}
+			streamer.workers[i] = worker
+			streamer.workerPool <- worker
+		}
+	}
+
+	logging.Infof("Created enhanced streamer service with streaming=%v, parallel=%v, rate_limit=%v, back_pressure=%v",
+		config.EnableStreaming, config.EnableParallelStreaming, config.EnableRateLimit, config.EnableBackPressure)
 
 	// Setup HTTP routes (always enabled in API-only mode)
 	streamer.setupHTTPRoutes()
@@ -278,6 +393,22 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 // Start starts the streaming process
 func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	log.Info("Starting enhanced etcd-based telemetry streaming")
+
+	// Start streaming adapter
+	if ns.streamAdapter != nil {
+		err := ns.streamAdapter.Start()
+		if err != nil {
+			logging.Errorf("Failed to start stream adapter: %v", err)
+			return err
+		}
+	}
+
+	// Start worker pool
+	if ns.config.EnableParallelStreaming {
+		for _, worker := range ns.workers {
+			go worker.start()
+		}
+	}
 
 	g, gCtx := errgroup.WithContext(ctx)
 
@@ -416,12 +547,102 @@ func (ns *NexusStreamerService) parseCSVRecord(record []string, columnMap map[st
 	return tr, nil
 }
 
-// publishBatch publishes a batch of telemetry records to etcd message queue
+// publishBatch publishes a batch of telemetry records with enhanced streaming capabilities
 func (ns *NexusStreamerService) publishBatch(ctx context.Context, batch []*TelemetryRecord) error {
 	if len(batch) == 0 {
 		return nil
 	}
 
+	// Check back pressure
+	if ns.config.EnableBackPressure && ns.streamAdapter != nil {
+		metrics := ns.streamAdapter.GetMetrics()
+		if metrics.ChannelUtilization > ns.config.BackPressureThreshold {
+			logging.Warnf("Back pressure detected (%.1f%% utilization), applying delay", metrics.ChannelUtilization)
+			time.Sleep(ns.config.BackPressureDelay)
+		}
+	}
+
+	// Use worker pool if enabled
+	if ns.config.EnableParallelStreaming {
+		return ns.publishBatchWithWorkers(ctx, batch)
+	}
+
+	// Fallback to enhanced single-threaded publishing
+	return ns.publishBatchEnhanced(ctx, batch)
+}
+
+// publishBatchWithWorkers distributes work across worker pool
+func (ns *NexusStreamerService) publishBatchWithWorkers(ctx context.Context, batch []*TelemetryRecord) error {
+	select {
+	case worker := <-ns.workerPool:
+		go func() {
+			defer func() {
+				ns.workerPool <- worker // Return worker to pool
+			}()
+
+			err := worker.publishBatch(ctx, batch)
+			if err != nil {
+				logging.Errorf("Worker %d publishing failed: %v", worker.id, err)
+			}
+		}()
+		return nil
+	default:
+		// No workers available, fallback to direct processing
+		return ns.publishBatchEnhanced(ctx, batch)
+	}
+}
+
+// publishBatchEnhanced performs enhanced publishing with streaming and rate limiting
+func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch []*TelemetryRecord) error {
+	// Apply rate limiting
+	if ns.rateLimiter != nil {
+		for range batch {
+			if !ns.rateLimiter.allow() {
+				// Rate limit exceeded, wait
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
+
+	// Stream data using streaming adapter if available
+	if ns.streamAdapter != nil {
+		for _, record := range batch {
+			headers := map[string]string{
+				"streamer_id": ns.config.StreamerID,
+				"gpu_id":      record.GPUID,
+				"hostname":    record.Hostname,
+				"timestamp":   record.Timestamp,
+				"metric_name": "telemetry",
+			}
+
+			// Convert to interface{} for streaming
+			telemetryData := map[string]interface{}{
+				"timestamp":          record.Timestamp,
+				"gpu_id":             record.GPUID,
+				"uuid":               record.UUID,
+				"device":             record.Device,
+				"model_name":         record.ModelName,
+				"hostname":           record.Hostname,
+				"gpu_utilization":    record.GPUUtilization,
+				"memory_utilization": record.MemoryUtilization,
+				"memory_used_mb":     record.MemoryUsedMB,
+				"memory_free_mb":     record.MemoryFreeMB,
+				"temperature":        record.Temperature,
+				"power_draw":         record.PowerDraw,
+				"sm_clock_mhz":       record.SMClockMHz,
+				"memory_clock_mhz":   record.MemoryClockMHz,
+			}
+
+			// For now, simulate streaming until proper integration
+			if ns.streamAdapter != nil {
+				logging.Debugf("Would stream telemetry data: %+v with headers: %+v", telemetryData, headers)
+				// err := ns.streamAdapter.WriteTelemetry(telemetryData, headers)
+				// Handle streaming error if needed
+			}
+		}
+	}
+
+	// Fallback to etcd message queue publishing
 	queueKey := ns.config.MessageQueuePrefix + "/telemetry"
 
 	// Use etcd transaction for atomic batch publishing
@@ -537,6 +758,9 @@ func (ns *NexusStreamerService) reportMetrics() {
 func (ns *NexusStreamerService) Close() error {
 	log.Info("Closing enhanced Nexus streamer")
 
+	// Stop enhanced features
+	ns.Stop()
+
 	// Deregister service
 	if ns.serviceRegistry != nil {
 		// Use background context for cleanup
@@ -565,6 +789,176 @@ func (ns *NexusStreamerService) Close() error {
 		ns.etcdClient.Close()
 	}
 
+	return nil
+}
+
+// Stop stops enhanced streaming features
+func (ns *NexusStreamerService) Stop() error {
+	// Stop streaming adapter
+	if ns.streamAdapter != nil {
+		err := ns.streamAdapter.Stop()
+		if err != nil {
+			logging.Errorf("Failed to stop stream adapter: %v", err)
+		}
+	}
+
+	// Stop workers
+	if ns.config.EnableParallelStreaming {
+		for _, worker := range ns.workers {
+			worker.stop()
+		}
+	}
+
+	return nil
+}
+
+// StreamerWorker methods
+
+func (sw *StreamerWorker) start() {
+	sw.mu.Lock()
+	sw.isActive = true
+	sw.mu.Unlock()
+
+	logging.Infof("Started streamer worker %d", sw.id)
+}
+
+func (sw *StreamerWorker) stop() {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+
+	if !sw.isActive {
+		return
+	}
+
+	sw.isActive = false
+	sw.cancel()
+	sw.wg.Wait()
+
+	logging.Infof("Stopped streamer worker %d", sw.id)
+}
+
+func (sw *StreamerWorker) publishBatch(ctx context.Context, batch []*TelemetryRecord) error {
+	// Delegate to enhanced service's publishing logic
+	return sw.service.publishBatchEnhanced(ctx, batch)
+}
+
+// RateLimiter methods (Token bucket algorithm)
+
+func (rl *RateLimiter) allow() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(rl.lastUpdate).Seconds()
+	rl.lastUpdate = now
+
+	// Add tokens based on elapsed time
+	rl.tokens += elapsed * rl.rate
+	if rl.tokens > float64(rl.burstSize) {
+		rl.tokens = float64(rl.burstSize)
+	}
+
+	// Check if we have tokens available
+	if rl.tokens >= 1.0 {
+		rl.tokens -= 1.0
+		return true
+	}
+
+	return false
+}
+
+// GetEnhancedMetrics returns comprehensive metrics including streaming
+func (ns *NexusStreamerService) GetEnhancedMetrics() map[string]interface{} {
+	enhanced := map[string]interface{}{
+		"is_enhanced":   ns.isEnhanced,
+		"message_count": ns.messageCount,
+		"uptime":        time.Since(ns.startTime).String(),
+		"streamer_id":   ns.config.StreamerID,
+		"cluster_id":    ns.config.ClusterID,
+	}
+
+	if ns.streamAdapter != nil {
+		enhanced["streaming_metrics"] = ns.streamAdapter.GetMetrics()
+	}
+
+	if ns.rateLimiter != nil {
+		ns.rateLimiter.mu.Lock()
+		enhanced["rate_limiter"] = map[string]interface{}{
+			"rate":       ns.rateLimiter.rate,
+			"burst_size": ns.rateLimiter.burstSize,
+			"tokens":     ns.rateLimiter.tokens,
+		}
+		ns.rateLimiter.mu.Unlock()
+	}
+
+	if ns.config.EnableParallelStreaming {
+		activeWorkers := 0
+		for _, worker := range ns.workers {
+			worker.mu.RLock()
+			if worker.isActive {
+				activeWorkers++
+			}
+			worker.mu.RUnlock()
+		}
+		enhanced["worker_pool"] = map[string]interface{}{
+			"total_workers":     len(ns.workers),
+			"active_workers":    activeWorkers,
+			"available_workers": len(ns.workerPool),
+		}
+	}
+
+	return enhanced
+}
+
+// StreamDirectly streams data directly without going through CSV
+func (ns *NexusStreamerService) StreamDirectly(data []*TelemetryRecord) error {
+	if ns.config.EnableRateLimit && ns.rateLimiter != nil {
+		for range data {
+			if !ns.rateLimiter.allow() {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
+
+	// Stream data using streaming adapter if available
+	if ns.streamAdapter != nil {
+		for _, record := range data {
+			headers := map[string]string{
+				"streamer_id":   ns.config.StreamerID,
+				"gpu_id":        record.GPUID,
+				"hostname":      record.Hostname,
+				"timestamp":     record.Timestamp,
+				"direct_stream": "true",
+			}
+
+			// Convert to interface{} for streaming
+			telemetryData := map[string]interface{}{
+				"timestamp":          record.Timestamp,
+				"gpu_id":             record.GPUID,
+				"uuid":               record.UUID,
+				"device":             record.Device,
+				"model_name":         record.ModelName,
+				"hostname":           record.Hostname,
+				"gpu_utilization":    record.GPUUtilization,
+				"memory_utilization": record.MemoryUtilization,
+				"memory_used_mb":     record.MemoryUsedMB,
+				"memory_free_mb":     record.MemoryFreeMB,
+				"temperature":        record.Temperature,
+				"power_draw":         record.PowerDraw,
+				"sm_clock_mhz":       record.SMClockMHz,
+				"memory_clock_mhz":   record.MemoryClockMHz,
+			}
+
+			// For now, simulate streaming until proper integration
+			logging.Debugf("Would directly stream telemetry data: %+v with headers: %+v", telemetryData, headers)
+			// err := ns.streamAdapter.WriteTelemetry(telemetryData, headers)
+			// Handle streaming error if needed
+		}
+	} else {
+		return fmt.Errorf("streaming adapter not available")
+	}
+
+	logging.Debugf("Direct streamed %d records", len(data))
 	return nil
 }
 

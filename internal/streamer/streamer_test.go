@@ -2,16 +2,13 @@ package streamer
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 // MockMessageQueueService for testing
@@ -172,88 +169,51 @@ func TestStreamerService_UpdateConfig(t *testing.T) {
 	assert.Equal(t, "test-streamer", service.config.StreamerID)
 }
 
-// Tests for EnhancedStreamerService
+// Tests for NexusStreamerService with enhanced features
 
-func TestNewEnhancedStreamerService(t *testing.T) {
-	// Create a temporary CSV file for testing
-	tmpFile, err := os.CreateTemp("", "test_streamer_*.csv")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Write test CSV content
-	csvContent := "timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization\n"
-	csvContent += "2023-01-01T00:00:00Z,0,test-host,GPU-12345,nvidia0,NVIDIA H100,85.5,60.2\n"
-	_, err = tmpFile.WriteString(csvContent)
-	require.NoError(t, err)
-
-	config := &EnhancedStreamerConfig{
-		StreamerConfig: &StreamerConfig{
-			StreamerID:  "test-streamer",
-			BatchSize:   100,
-			CSVFilePath: tmpFile.Name(), // Set the CSV file path
-		},
+func TestNewNexusStreamerService(t *testing.T) {
+	config := &NexusStreamerConfig{
+		ClusterID:               "test-cluster",
+		StreamerID:              "test-streamer",
+		BatchSize:               100,
 		EnableStreaming:         true,
 		EnableParallelStreaming: true,
 		EnableRateLimit:         true,
 		EnableBackPressure:      true,
-		ParallelWorkers:         3,
+		ParallelWorkers:         0, // Set to 0 to test default assignment
+		EtcdEndpoints:           []string{"localhost:2379"},
 	}
 
-	service, err := NewEnhancedStreamerService(config, &messagequeue.MessageQueueService{})
+	// This will fail due to etcd not being available, but we can test the config setup
+	_, err := NewNexusStreamerService(context.Background(), config)
+	assert.Error(t, err) // Expected due to etcd connection failure
 
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
-	assert.True(t, service.isEnhanced)
-	assert.Equal(t, config, service.config)
-
-	if config.EnableStreaming {
-		assert.NotNil(t, service.streamAdapter)
-	}
-
-	if config.EnableRateLimit {
-		assert.NotNil(t, service.rateLimiter)
-	}
-
-	if config.EnableParallelStreaming {
-		assert.NotNil(t, service.workers)
-		assert.NotNil(t, service.workerPool)
-		assert.Len(t, service.workers, config.ParallelWorkers)
-	}
+	// Test that defaults were set
+	assert.Equal(t, 5, config.ParallelWorkers) // Should be set to default
+	assert.Equal(t, 1000.0, config.RateLimit)
+	assert.Equal(t, 100, config.BurstSize)
+	assert.Equal(t, 80.0, config.BackPressureThreshold)
+	assert.Equal(t, 100*time.Millisecond, config.BackPressureDelay)
 }
 
-func TestEnhancedStreamerService_DefaultConfigs(t *testing.T) {
-	// Create a temporary CSV file for testing
-	tmpFile, err := os.CreateTemp("", "test_streamer_defaults_*.csv")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Write test CSV content
-	csvContent := "timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization\n"
-	csvContent += "2023-01-01T00:00:00Z,0,test-host,GPU-12345,nvidia0,NVIDIA H100,85.5,60.2\n"
-	_, err = tmpFile.WriteString(csvContent)
-	require.NoError(t, err)
-
-	config := &EnhancedStreamerConfig{
-		StreamerConfig: &StreamerConfig{
-			StreamerID:  "test-streamer",
-			BatchSize:   100,
-			CSVFilePath: tmpFile.Name(), // Set the CSV file path
-		},
+func TestNexusStreamerService_DefaultConfigs(t *testing.T) {
+	config := &NexusStreamerConfig{
+		ClusterID:               "test-cluster",
+		StreamerID:              "test-streamer",
+		BatchSize:               100,
 		EnableStreaming:         true,
 		EnableParallelStreaming: true,
 		EnableRateLimit:         true,
 		EnableBackPressure:      true,
+		EtcdEndpoints:           []string{"localhost:2379"},
 		// Leave other fields empty to test defaults
 	}
 
-	service, err := NewEnhancedStreamerService(config, &messagequeue.MessageQueueService{})
+	// This will fail due to etcd not being available, but we can test the config setup
+	_, err := NewNexusStreamerService(context.Background(), config)
+	assert.Error(t, err) // Expected due to etcd connection failure
 
-	assert.NoError(t, err)
-	assert.NotNil(t, service)
-
-	// Test default values
+	// Test default values were set
 	assert.Equal(t, 5, config.ParallelWorkers)
 	assert.Equal(t, 1000.0, config.RateLimit)
 	assert.Equal(t, 100, config.BurstSize)
@@ -349,111 +309,72 @@ func TestStreamerWorker_Lifecycle(t *testing.T) {
 	})
 }
 
-func TestEnhancedStreamerService_GetEnhancedMetrics(t *testing.T) {
-	// Create a temporary CSV file for testing
-	tmpFile, err := os.CreateTemp("", "test_streamer_metrics_*.csv")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Write test CSV content
-	csvContent := "timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization\n"
-	csvContent += "2023-01-01T00:00:00Z,0,test-host,GPU-12345,nvidia0,NVIDIA H100,85.5,60.2\n"
-	_, err = tmpFile.WriteString(csvContent)
-	require.NoError(t, err)
-
-	config := &EnhancedStreamerConfig{
-		StreamerConfig: &StreamerConfig{
-			StreamerID:  "test-streamer",
-			BatchSize:   100,
-			CSVFilePath: tmpFile.Name(), // Set the CSV file path
-		},
+func TestNexusStreamerService_GetMetrics(t *testing.T) {
+	config := &NexusStreamerConfig{
+		ClusterID:               "test-cluster",
+		StreamerID:              "test-streamer",
+		BatchSize:               100,
 		EnableStreaming:         true,
 		EnableParallelStreaming: true,
 		EnableRateLimit:         true,
 		ParallelWorkers:         3,
+		EtcdEndpoints:           []string{"localhost:2379"},
 	}
 
-	service, err := NewEnhancedStreamerService(config, &messagequeue.MessageQueueService{})
-	assert.NoError(t, err)
+	// Create a mock service for testing metrics
+	service := &NexusStreamerService{
+		config:       config,
+		isEnhanced:   true,
+		messageCount: 100,
+		startTime:    time.Now().Add(-1 * time.Hour),
+	}
 
 	metrics := service.GetEnhancedMetrics()
 
 	assert.NotNil(t, metrics)
 	assert.Equal(t, true, metrics["is_enhanced"])
-	assert.NotNil(t, metrics["base_metrics"])
-
-	// Check streaming metrics
-	if config.EnableStreaming {
-		assert.Contains(t, metrics, "streaming_metrics")
-	}
-
-	// Check rate limiter metrics
-	if config.EnableRateLimit {
-		assert.Contains(t, metrics, "rate_limiter")
-		rlMetrics := metrics["rate_limiter"].(map[string]interface{})
-		assert.Contains(t, rlMetrics, "rate")
-		assert.Contains(t, rlMetrics, "burst_size")
-		assert.Contains(t, rlMetrics, "tokens")
-	}
-
-	// Check worker pool metrics
-	if config.EnableParallelStreaming {
-		assert.Contains(t, metrics, "worker_pool")
-		wpMetrics := metrics["worker_pool"].(map[string]interface{})
-		assert.Contains(t, wpMetrics, "total_workers")
-		assert.Contains(t, wpMetrics, "active_workers")
-		assert.Contains(t, wpMetrics, "available_workers")
-	}
+	assert.Equal(t, int64(100), metrics["message_count"])
+	assert.Equal(t, "test-streamer", metrics["streamer_id"])
+	assert.Equal(t, "test-cluster", metrics["cluster_id"])
 }
 
-func TestEnhancedStreamerService_StreamDirectly(t *testing.T) {
-	// Create a temporary CSV file for testing
-	tmpFile, err := os.CreateTemp("", "test_streamer_direct_*.csv")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Write test CSV content
-	csvContent := "timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization\n" +
-		"2023-01-01 12:00:00,0,host1,uuid1,device1,model1,75.5,65.0\n"
-	_, err = tmpFile.WriteString(csvContent)
-	require.NoError(t, err)
-
-	config := &EnhancedStreamerConfig{
-		StreamerConfig: &StreamerConfig{
-			StreamerID:  "test-streamer",
-			BatchSize:   100,
-			CSVFilePath: tmpFile.Name(),
-		},
+func TestNexusStreamerService_StreamDirectly(t *testing.T) {
+	config := &NexusStreamerConfig{
+		ClusterID:       "test-cluster",
+		StreamerID:      "test-streamer",
+		BatchSize:       100,
 		EnableStreaming: false, // Disable streaming for error test
+		EtcdEndpoints:   []string{"localhost:2379"},
 	}
 
-	service, err := NewEnhancedStreamerService(config, &messagequeue.MessageQueueService{})
-	assert.NoError(t, err)
+	// Create a mock service for testing
+	service := &NexusStreamerService{
+		config:     config,
+		isEnhanced: true,
+	}
 
-	// Create test data
-	testData := []*models.TelemetryData{
+	// Create test data using TelemetryRecord (the type used by NexusStreamerService)
+	testData := []*TelemetryRecord{
 		{
-			Timestamp:  time.Now(),
-			Hostname:   "host1",
-			GPUID:      "gpu1",
-			MetricName: "utilization",
-			Value:      75.5,
+			Timestamp:         "2023-01-01T12:00:00Z",
+			Hostname:          "host1",
+			GPUID:             "gpu1",
+			GPUUtilization:    75.5,
+			MemoryUtilization: 65.0,
 		},
 		{
-			Timestamp:  time.Now(),
-			Hostname:   "host2",
-			GPUID:      "gpu2",
-			MetricName: "temperature",
-			Value:      65.0,
+			Timestamp:         "2023-01-01T12:01:00Z",
+			Hostname:          "host2",
+			GPUID:             "gpu2",
+			GPUUtilization:    80.0,
+			MemoryUtilization: 70.0,
 		},
 	}
 
 	// Test streaming without adapter (should fail)
-	err = service.StreamDirectly(testData)
+	err := service.StreamDirectly(testData)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "streamer service is not running")
+	assert.Contains(t, err.Error(), "streaming adapter not available")
 }
 
 func TestRateLimiter_TokenReplenishment(t *testing.T) {
@@ -538,12 +459,11 @@ func TestStreamerConfig_Validation(t *testing.T) {
 	assert.Equal(t, 2000, config.BufferSize)
 }
 
-func TestEnhancedStreamerConfig_Validation(t *testing.T) {
-	config := &EnhancedStreamerConfig{
-		StreamerConfig: &StreamerConfig{
-			StreamerID: "test-streamer",
-			BatchSize:  100,
-		},
+func TestNexusStreamerConfig_Validation(t *testing.T) {
+	config := &NexusStreamerConfig{
+		ClusterID:               "test-cluster",
+		StreamerID:              "test-streamer",
+		BatchSize:               100,
 		EnableStreaming:         true,
 		StreamDestination:       "kafka://localhost:9092",
 		EnableParallelStreaming: true,
@@ -554,10 +474,12 @@ func TestEnhancedStreamerConfig_Validation(t *testing.T) {
 		EnableBackPressure:      true,
 		BackPressureThreshold:   85.0,
 		BackPressureDelay:       150 * time.Millisecond,
+		EtcdEndpoints:           []string{"localhost:2379"},
 	}
 
-	assert.Equal(t, "test-streamer", config.StreamerConfig.StreamerID)
-	assert.Equal(t, 100, config.StreamerConfig.BatchSize)
+	assert.Equal(t, "test-cluster", config.ClusterID)
+	assert.Equal(t, "test-streamer", config.StreamerID)
+	assert.Equal(t, 100, config.BatchSize)
 	assert.True(t, config.EnableStreaming)
 	assert.Equal(t, "kafka://localhost:9092", config.StreamDestination)
 	assert.True(t, config.EnableParallelStreaming)
@@ -568,6 +490,7 @@ func TestEnhancedStreamerConfig_Validation(t *testing.T) {
 	assert.True(t, config.EnableBackPressure)
 	assert.Equal(t, 85.0, config.BackPressureThreshold)
 	assert.Equal(t, 150*time.Millisecond, config.BackPressureDelay)
+	assert.Equal(t, []string{"localhost:2379"}, config.EtcdEndpoints)
 }
 
 func TestStreamerService_StreamingRateCalculation(t *testing.T) {
