@@ -57,56 +57,16 @@ type NexusCollectorConfig struct {
 	// Feature flags - Nexus and WatchAPI are now enabled by default
 
 	// Enhanced streaming features
-	StreamingConfig      *streaming.StreamAdapterConfig `json:"streaming_config"`
-	StreamDestination    string                         `json:"stream_destination"`
-	EnableCircuitBreaker bool                           `json:"enable_circuit_breaker"`
-	CircuitBreakerConfig *CircuitBreakerConfig          `json:"circuit_breaker_config"`
-	EnableAdaptiveBatch  bool                           `json:"enable_adaptive_batching"`
-	MinBatchSize         int                            `json:"min_batch_size"`
-	MaxBatchSize         int                            `json:"max_batch_size"`
+	StreamingConfig   *streaming.StreamAdapterConfig `json:"streaming_config"`
+	StreamDestination string                         `json:"stream_destination"`
 	EnableLoadBalancing  bool                           `json:"enable_load_balancing"`
 
 	// Logging
 	LogLevel string
+	Verbosity int
 }
 
-// CircuitBreakerConfig configures circuit breaker behavior for fault tolerance.
-//
-// The circuit breaker pattern helps prevent cascading failures by temporarily
-// stopping requests to a failing service and allowing it time to recover.
-type CircuitBreakerConfig struct {
-	FailureThreshold int           `json:"failure_threshold"`
-	RecoveryTimeout  time.Duration `json:"recovery_timeout"`
-	HalfOpenRequests int           `json:"half_open_requests"`
-}
 
-// CircuitBreakerState represents the current state of a circuit breaker.
-//
-// The circuit breaker can be in one of three states:
-//   - Closed: Normal operation, requests are allowed through
-//   - Open: Failure threshold exceeded, requests are blocked
-//   - HalfOpen: Testing if the service has recovered
-type CircuitBreakerState int
-
-const (
-	Closed CircuitBreakerState = iota
-	Open
-	HalfOpen
-)
-
-// CircuitBreaker implements the circuit breaker pattern for fault tolerance.
-//
-// It tracks failures and automatically opens the circuit when the failure threshold
-// is exceeded, preventing further requests until a recovery timeout has passed.
-// It then enters a half-open state to test if the service has recovered.
-type CircuitBreaker struct {
-	config       *CircuitBreakerConfig
-	state        CircuitBreakerState
-	failures     int
-	lastFailure  time.Time
-	halfOpenReqs int
-	mu           sync.RWMutex
-}
 
 // CollectorWorker handles parallel processing of telemetry records.
 //
@@ -122,18 +82,6 @@ type CollectorWorker struct {
 	mu       sync.RWMutex
 }
 
-// AdaptiveBatcher dynamically adjusts batch sizes based on current system load.
-//
-// It monitors processing metrics and automatically increases batch sizes during
-// high load periods and decreases them during low load periods to optimize
-// throughput and resource utilization.
-type AdaptiveBatcher struct {
-	config           *NexusCollectorConfig
-	currentBatchSize int
-	loadAverage      float64
-	lastAdjustment   time.Time
-	mu               sync.RWMutex
-}
 
 // TelemetryRecord represents a telemetry data record consumed from the message queue.
 //
@@ -173,9 +121,7 @@ type NexusCollectorService struct {
 	etcdBackend     *messagequeue.EtcdBackend
 
 	// Enhanced streaming features
-	streamAdapter   *streaming.StreamAdapter
-	circuitBreaker  *CircuitBreaker
-	adaptiveBatcher *AdaptiveBatcher
+	streamAdapter *streaming.StreamAdapter
 	workers         []*CollectorWorker
 	workerPool      chan *CollectorWorker
 	isEnhanced      bool
@@ -224,20 +170,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		}
 	}
 
-	if config.CircuitBreakerConfig == nil && config.EnableCircuitBreaker {
-		config.CircuitBreakerConfig = &CircuitBreakerConfig{
-			FailureThreshold: 5,
-			RecoveryTimeout:  30 * time.Second,
-			HalfOpenRequests: 3,
-		}
-	}
 
-	if config.MinBatchSize <= 0 {
-		config.MinBatchSize = 50
-	}
-	if config.MaxBatchSize <= 0 {
-		config.MaxBatchSize = 1000
-	}
 
 	collector := &NexusCollectorService{
 		config:         config,
@@ -251,22 +184,14 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	// Initialize streaming adapter (always enabled for performance)
 	collector.streamAdapter = streaming.NewStreamAdapter(ctx, config.StreamingConfig, config.StreamDestination)
 
-	// Initialize circuit breaker if enabled
-	if config.EnableCircuitBreaker {
-		collector.circuitBreaker = &CircuitBreaker{
-			config: config.CircuitBreakerConfig,
-			state:  Closed,
-		}
+
+	// Enable load balancing by default
+	if !config.EnableLoadBalancing {
+		config.EnableLoadBalancing = true
+		logging.Infof("Load balancing enabled by default")
 	}
 
-	// Initialize adaptive batcher if enabled
-	collector.adaptiveBatcher = &AdaptiveBatcher{
-		config:           config,
-		currentBatchSize: config.BatchSize,
-		lastAdjustment:   time.Now(),
-	}
-
-	// Initialize worker pool if load balancing is enabled
+	// Initialize worker pool (always enabled with load balancing)
 	collector.workerPool = make(chan *CollectorWorker, config.Workers)
 	collector.workers = make([]*CollectorWorker, config.Workers)
 
@@ -297,8 +222,8 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 
 	logging.Infof("Nexus integration enabled")
 
-	logging.Infof("Created enhanced collector service with streaming=true, circuit_breaker=%v, adaptive_batching=%v, load_balancing=%v",
-		config.EnableCircuitBreaker, config.EnableAdaptiveBatch, config.EnableLoadBalancing)
+	logging.Infof("Created enhanced collector service with streaming=true, load_balancing=%v",
+		config.EnableLoadBalancing)
 
 	// Initialize etcd client for message queue
 	etcdClient, err := clientv3.New(clientv3.Config{
@@ -402,16 +327,15 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 		}
 	}
 
-	// Enhanced features will be started here
-	if nc.config.EnableLoadBalancing {
-		logging.Infof("Load balancing workers will be started")
-	}
-
-	if nc.config.EnableAdaptiveBatch {
-		logging.Infof("Adaptive batching monitor will be started")
-	}
-
 	g, gCtx := errgroup.WithContext(ctx)
+
+	// Start worker pool if load balancing is enabled
+	if nc.config.EnableLoadBalancing {
+		logging.Infof("Starting load balancing workers")
+		for _, worker := range nc.workers {
+			worker.start(gCtx)
+		}
+	}
 
 	// Setup watch API (always enabled)
 	if err := nc.setupWatchAPI(gCtx); err != nil {
@@ -419,11 +343,19 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 	}
 
 	// Start worker goroutines for processing
-	for i := 0; i < nc.config.Workers; i++ {
-		workerID := i
+	if nc.config.EnableLoadBalancing {
+		// Use worker pool for load balancing
 		g.Go(func() error {
-			return nc.processingWorker(gCtx, workerID)
+			return nc.workerPoolProcessor(gCtx)
 		})
+	} else {
+		// Use direct processing workers
+		for i := 0; i < nc.config.Workers; i++ {
+			workerID := i
+			g.Go(func() error {
+				return nc.processingWorker(gCtx, workerID)
+			})
+		}
 	}
 
 	// Start message queue consumer (only process records from streamer queue)
@@ -564,15 +496,60 @@ func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
 	return nil
 }
 
-// processingWorker runs a worker goroutine for processing telemetry data from the processing channel.
+// workerPoolProcessor manages the worker pool for load-balanced processing.
 //
-// Each worker continuously reads TelemetryRecord instances from the shared processing channel
-// and processes them through the complete pipeline including validation, registration,
-// and storage operations.
+// This method coordinates work distribution across the worker pool by managing
+// worker availability and routing telemetry records to available workers.
+// It implements a load balancing strategy using the worker pool channel.
 //
 // Parameters:
-//   - ctx: Context for cancellation and shutdown
-//   - workerID: Unique identifier for this worker (used for logging)
+//   - ctx: Context for the processor operations
+//
+// Returns:
+//   - error: Any error that occurred during processing
+func (nc *NexusCollectorService) workerPoolProcessor(ctx context.Context) error {
+	logging.Infof("Starting worker pool processor with %d workers", len(nc.workers))
+
+	for {
+		select {
+		case <-ctx.Done():
+			logging.Infof("Worker pool processor stopping due to context cancellation")
+			return ctx.Err()
+		case record, ok := <-nc.processingChan:
+			if !ok {
+				logging.Infof("Worker pool processor stopping due to channel closure")
+				return nil
+			}
+
+			// Get an available worker from the pool
+			select {
+			case worker := <-nc.workerPool:
+				// Process record with the worker and return worker to pool
+				go func(w *CollectorWorker, r *TelemetryRecord) {
+					defer func() {
+						nc.workerPool <- w // Return worker to pool
+					}()
+
+					if err := nc.processRecord(ctx, r); err != nil {
+						logging.Errorf("Worker %d failed to process record: %v", w.id, err)
+					}
+				}(worker, record)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+// processingWorker is a worker goroutine that processes telemetry records from the processing channel.
+//
+// This worker continuously reads records from the processingChan and processes them
+// using the processRecord method. It handles graceful shutdown when the context is
+// canceled and logs processing statistics.
+//
+// Parameters:
+//   - ctx: Context for the worker operations
+//   - workerID: Unique identifier for this worker instance
 //
 // Returns:
 //   - error: Any error that occurred during worker execution
@@ -613,11 +590,6 @@ func (nc *NexusCollectorService) processingWorker(ctx context.Context, workerID 
 // The method includes comprehensive error handling and fallback mechanisms
 // to ensure data is not lost even if some processing steps fail.
 func (nc *NexusCollectorService) processRecord(ctx context.Context, record *TelemetryRecord) error {
-	// Check circuit breaker
-	if nc.circuitBreaker != nil && !nc.circuitBreaker.canExecute() {
-		logging.Warnf("Circuit breaker is open, skipping record processing")
-		return nil
-	}
 
 	// Debug logging to check what collector receives
 	logging.Debugf("Collector received: GPUID=%s, UUID=%s, Device=%s, ModelName=%s, Hostname=%s",
@@ -661,15 +633,9 @@ func (nc *NexusCollectorService) processRecord(ctx context.Context, record *Tele
 		}
 		if err != nil {
 			logging.Warnf("Failed to stream telemetry data: %v", err)
-			if nc.circuitBreaker != nil {
-				nc.circuitBreaker.recordFailure()
-			}
 			// Continue with normal processing as fallback
 		} else {
 			logging.Debugf("Successfully streamed telemetry data")
-			if nc.circuitBreaker != nil {
-				nc.circuitBreaker.recordSuccess()
-			}
 		}
 	}
 
@@ -685,15 +651,9 @@ func (nc *NexusCollectorService) processRecord(ctx context.Context, record *Tele
 	// Store in Nexus (always enabled)
 	if err := nc.storeInNexus(ctx, record); err != nil {
 		logging.Errorf("Failed to store in Nexus: %v", err)
-		if nc.circuitBreaker != nil {
-			nc.circuitBreaker.recordFailure()
-		}
 		// Continue with database storage
 	} else {
 		logging.Debugf("Successfully stored in Nexus")
-		if nc.circuitBreaker != nil {
-			nc.circuitBreaker.recordSuccess()
-		}
 	}
 
 	return nil
@@ -1000,18 +960,11 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 
 // Enhanced methods for streaming capabilities
 
-// getBatchSize returns the current batch size, either adaptive or fixed based on configuration.
-//
-// If adaptive batching is enabled, this method would return the dynamically adjusted
-// batch size. Currently returns the configured fixed batch size.
+// getBatchSize returns the configured batch size for processing.
 //
 // Returns:
-//   - int: The current batch size to use for processing
+//   - int: The batch size to use for processing
 func (nc *NexusCollectorService) getBatchSize() int {
-	if nc.config.EnableAdaptiveBatch {
-		// Would return adaptive batch size
-		return nc.config.BatchSize
-	}
 	return nc.config.BatchSize
 }
 
@@ -1043,39 +996,53 @@ func (nc *NexusCollectorService) GetEnhancedMetrics() map[string]interface{} {
 		enhanced["streaming_metrics"] = nc.streamAdapter.GetMetrics()
 	}
 
-	if nc.config.EnableCircuitBreaker {
-		enhanced["circuit_breaker"] = map[string]interface{}{
-			"enabled": true,
-		}
-	}
 
-	if nc.config.EnableAdaptiveBatch {
-		enhanced["adaptive_batcher"] = map[string]interface{}{
-			"enabled": true,
-		}
-	}
 
 	return enhanced
 }
 
 // CollectorWorker methods
 
-// start activates the collector worker and marks it as active.
+// start activates the collector worker and begins processing records from the channel.
 //
-// This method sets the worker's active status to true and logs the startup.
-// It should be called before the worker begins processing records.
-func (cw *CollectorWorker) start() {
+// This method starts a goroutine that processes telemetry records from the service's
+// processing channel. The worker will continue processing until the context is canceled
+// or the processing channel is closed.
+//
+// Parameters:
+//   - ctx: Context for the worker processing operations
+func (cw *CollectorWorker) start(ctx context.Context) {
 	cw.mu.Lock()
 	cw.isActive = true
 	cw.mu.Unlock()
-
-	logging.Infof("Started collector worker %d", cw.id)
+	
+	cw.wg.Add(1)
+	go func() {
+		defer cw.wg.Done()
+		logging.Infof("Started collector worker %d", cw.id)
+		
+		for {
+			select {
+			case <-ctx.Done():
+				logging.Infof("Collector worker %d stopping due to context cancellation", cw.id)
+				return
+			case record, ok := <-cw.service.processingChan:
+				if !ok {
+					logging.Infof("Collector worker %d stopping due to channel closure", cw.id)
+					return
+				}
+				
+				if err := cw.service.processRecord(ctx, record); err != nil {
+					logging.Errorf("Worker %d failed to process record: %v", cw.id, err)
+				}
+			}
+		}
+	}()
 }
 
 // stop deactivates the collector worker and performs cleanup.
 //
 // This method cancels the worker's context, waits for any in-flight work to complete,
-// and marks the worker as inactive. It ensures graceful shutdown of the worker.
 func (cw *CollectorWorker) stop() {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
@@ -1088,137 +1055,8 @@ func (cw *CollectorWorker) stop() {
 	cw.cancel()
 	cw.wg.Wait()
 
-	logging.Infof("Stopped collector worker %d", cw.id)
 }
 
-// Circuit breaker methods
-
-// canExecute determines whether the circuit breaker allows execution based on its current state.
-//
-// Returns:
-//   - bool: true if execution is allowed, false if the circuit is open
-//
-// The method implements the circuit breaker state machine:
-//   - Closed: Always allows execution
-//   - Open: Blocks execution until recovery timeout expires
-//   - HalfOpen: Allows limited execution to test service recovery
-func (cb *CircuitBreaker) canExecute() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case Closed:
-		return true
-	case Open:
-		if time.Since(cb.lastFailure) > cb.config.RecoveryTimeout {
-			cb.state = HalfOpen
-			cb.halfOpenReqs = 0
-			return true
-		}
-		return false
-	case HalfOpen:
-		if cb.halfOpenReqs < cb.config.HalfOpenRequests {
-			cb.halfOpenReqs++
-			return true
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-// recordSuccess records a successful operation and potentially closes the circuit.
-//
-// This method resets the failure counter and transitions from HalfOpen to Closed
-// state if the circuit breaker was testing service recovery.
-func (cb *CircuitBreaker) recordSuccess() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	cb.failures = 0
-	if cb.state == HalfOpen {
-		cb.state = Closed
-	}
-}
-
-// recordFailure records a failed operation and potentially opens the circuit.
-//
-// This method increments the failure counter and opens the circuit if the
-// failure threshold is exceeded. In HalfOpen state, any failure immediately
-// opens the circuit.
-func (cb *CircuitBreaker) recordFailure() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	cb.failures++
-	cb.lastFailure = time.Now()
-
-	if cb.state == HalfOpen {
-		cb.state = Open
-	} else if cb.failures >= cb.config.FailureThreshold {
-		cb.state = Open
-	}
-}
-
-// getCurrentBatchSize returns the current batch size from the adaptive batcher.
-//
-// Returns:
-//   - int: The current batch size being used for processing
-//
-// This method is thread-safe and uses a read lock to access the current batch size.
-func (ab *AdaptiveBatcher) getCurrentBatchSize() int {
-	ab.mu.RLock()
-	defer ab.mu.RUnlock()
-	return ab.currentBatchSize
-}
-
-// updateMetrics updates the adaptive batcher's performance metrics.
-//
-// Parameters:
-//   - recordsProcessed: Number of records processed in the last batch
-//   - processingTime: Time taken to process the batch
-//
-// This method calculates a simple load average based on throughput and updates
-// the internal metrics used for batch size adjustment decisions.
-func (ab *AdaptiveBatcher) updateMetrics(recordsProcessed int, processingTime time.Duration) {
-	ab.mu.Lock()
-	defer ab.mu.Unlock()
-
-	// Simple load average calculation
-	newLoad := float64(recordsProcessed) / processingTime.Seconds()
-	ab.loadAverage = (ab.loadAverage + newLoad) / 2
-}
-
-// adjustBatchSize dynamically adjusts the batch size based on current load metrics.
-//
-// This method increases batch size during high load periods and decreases it
-// during low load periods to optimize throughput and resource utilization.
-// Adjustments are limited by configured minimum and maximum batch sizes and
-// are performed at most once per minute to avoid oscillation.
-func (ab *AdaptiveBatcher) adjustBatchSize() {
-	ab.mu.Lock()
-	defer ab.mu.Unlock()
-
-	if time.Since(ab.lastAdjustment) < 60*time.Second {
-		return // Don't adjust too frequently
-	}
-
-	// Increase batch size if load is high, decrease if low
-	if ab.loadAverage > 1000 { // High load
-		newSize := int(float64(ab.currentBatchSize) * 1.2)
-		if newSize <= ab.config.MaxBatchSize {
-			ab.currentBatchSize = newSize
-		}
-	} else if ab.loadAverage < 100 { // Low load
-		newSize := int(float64(ab.currentBatchSize) * 0.8)
-		if newSize >= ab.config.MinBatchSize {
-			ab.currentBatchSize = newSize
-		}
-	}
-
-	ab.lastAdjustment = time.Now()
-	logging.Infof("Adjusted batch size to %d (load average: %.2f)", ab.currentBatchSize, ab.loadAverage)
-}
 
 // StopStreaming stops enhanced collector service features including streaming and load balancing.
 //
@@ -1244,6 +1082,9 @@ func (nc *NexusCollectorService) StopStreaming() error {
 	// Stop enhanced features
 	if nc.config.EnableLoadBalancing {
 		logging.Infof("Stopping load balancing workers")
+		for _, worker := range nc.workers {
+			worker.stop()
+		}
 	}
 
 	return nil
