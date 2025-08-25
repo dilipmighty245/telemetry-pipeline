@@ -1,7 +1,6 @@
 package streaming
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -125,12 +124,13 @@ func TestNewStreamAdapter(t *testing.T) {
 		PartitionBy:   "hostname",
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 	assert.NotNil(t, adapter)
 	assert.Equal(t, config, adapter.config)
 	assert.NotNil(t, adapter.dataCh)
 	assert.Equal(t, 100, cap(adapter.dataCh))
+	assert.NotNil(t, adapter.ctx)
 	assert.NotNil(t, adapter.cancel)
 	assert.NotNil(t, adapter.httpClient)
 	assert.NotNil(t, adapter.metrics)
@@ -139,7 +139,7 @@ func TestNewStreamAdapter(t *testing.T) {
 
 func TestNewStreamAdapter_WithDefaults(t *testing.T) {
 	// Test with nil config (should use defaults)
-	adapter := NewStreamAdapter(context.Background(), nil, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(nil, "http://localhost:8080/api/data")
 
 	assert.NotNil(t, adapter)
 	assert.NotNil(t, adapter.config)
@@ -161,11 +161,11 @@ func TestStreamAdapter_Start_Stop(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 	// Test starting
 	assert.False(t, adapter.IsRunning())
-	adapter.Start(context.Background())
+	adapter.Start()
 	assert.True(t, adapter.IsRunning())
 
 	// Give it a moment to start
@@ -215,8 +215,8 @@ func TestStreamAdapter_WriteTelemetry(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, server.URL)
-	adapter.Start(context.Background())
+	adapter := NewStreamAdapter(config, server.URL)
+	adapter.Start()
 	defer adapter.Stop()
 
 	// Write test data
@@ -229,7 +229,7 @@ func TestStreamAdapter_WriteTelemetry(t *testing.T) {
 		Timestamp:  time.Now(),
 	}
 
-	err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err := adapter.WriteTelemetry(testData, map[string]string{})
 	assert.NoError(t, err)
 
 	// Write another piece of data to trigger batch
@@ -242,7 +242,7 @@ func TestStreamAdapter_WriteTelemetry(t *testing.T) {
 		Timestamp:  time.Now(),
 	}
 
-	err = adapter.WriteTelemetry(context.Background(), testData2, map[string]string{})
+	err = adapter.WriteTelemetry(testData2, map[string]string{})
 	assert.NoError(t, err)
 
 	// Wait for data to be processed
@@ -263,7 +263,7 @@ func TestStreamAdapter_WriteTelemetry_ChannelFull(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 	// Don't start the adapter so the channel will fill up
 
 	testData := &models.TelemetryData{
@@ -276,14 +276,14 @@ func TestStreamAdapter_WriteTelemetry_ChannelFull(t *testing.T) {
 	}
 
 	// Fill the channel
-	err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err := adapter.WriteTelemetry(testData, map[string]string{})
 	assert.NoError(t, err)
 
-	err = adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err = adapter.WriteTelemetry(testData, map[string]string{})
 	assert.NoError(t, err)
 
 	// This should fail because channel is full
-	err = adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err = adapter.WriteTelemetry(testData, map[string]string{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "channel is full")
 }
@@ -296,7 +296,7 @@ func TestStreamAdapter_GetMetrics(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 	// Test initial metrics
 	metrics := adapter.GetMetrics()
@@ -314,13 +314,13 @@ func TestStreamAdapter_IsRunning(t *testing.T) {
 		Workers:     1,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 	// Initially not running
 	assert.False(t, adapter.IsRunning())
 
 	// Start and check
-	adapter.Start(context.Background())
+	adapter.Start()
 	assert.True(t, adapter.IsRunning())
 
 	// Stop and check
@@ -378,7 +378,7 @@ func TestStreamAdapter_getPartition(t *testing.T) {
 			config := &StreamAdapterConfig{
 				PartitionBy: tt.partitionBy,
 			}
-			adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+			adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 			result := adapter.getPartition(tt.data)
 			assert.Equal(t, tt.expected, result)
@@ -418,8 +418,8 @@ func TestStreamAdapter_ConcurrentWrites(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, server.URL)
-	adapter.Start(context.Background())
+	adapter := NewStreamAdapter(config, server.URL)
+	adapter.Start()
 	defer adapter.Stop()
 
 	// Concurrent writes
@@ -441,7 +441,7 @@ func TestStreamAdapter_ConcurrentWrites(t *testing.T) {
 					Timestamp:  time.Now(),
 				}
 
-				err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+				err := adapter.WriteTelemetry(testData, map[string]string{})
 				assert.NoError(t, err)
 			}
 		}(i)
@@ -477,8 +477,8 @@ func TestStreamAdapter_ErrorHandling(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, server.URL)
-	adapter.Start(context.Background())
+	adapter := NewStreamAdapter(config, server.URL)
+	adapter.Start()
 	defer adapter.Stop()
 
 	// Write test data
@@ -491,10 +491,10 @@ func TestStreamAdapter_ErrorHandling(t *testing.T) {
 		Timestamp:  time.Now(),
 	}
 
-	err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err := adapter.WriteTelemetry(testData, map[string]string{})
 	assert.NoError(t, err)
 
-	err = adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+	err = adapter.WriteTelemetry(testData, map[string]string{})
 	assert.NoError(t, err)
 
 	// Wait for processing and retries
@@ -521,8 +521,8 @@ func TestStreamAdapter_MetricsCollection(t *testing.T) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, server.URL)
-	adapter.Start(context.Background())
+	adapter := NewStreamAdapter(config, server.URL)
+	adapter.Start()
 	defer adapter.Stop()
 
 	// Write test data
@@ -536,7 +536,7 @@ func TestStreamAdapter_MetricsCollection(t *testing.T) {
 			Timestamp:  time.Now(),
 		}
 
-		err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+		err := adapter.WriteTelemetry(testData, map[string]string{})
 		assert.NoError(t, err)
 	}
 
@@ -632,7 +632,7 @@ func TestStreamAdapter_EdgeCases(t *testing.T) {
 		Workers:     1,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 	assert.NotNil(t, adapter)
 	assert.Equal(t, config, adapter.config)
 
@@ -681,8 +681,8 @@ func BenchmarkStreamAdapter_WriteTelemetry(b *testing.B) {
 		EnableMetrics: false, // Disable for cleaner benchmark
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
-	adapter.Start(context.Background())
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
+	adapter.Start()
 	defer adapter.Stop()
 
 	testData := &models.TelemetryData{
@@ -696,7 +696,7 @@ func BenchmarkStreamAdapter_WriteTelemetry(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := adapter.WriteTelemetry(context.Background(), testData, map[string]string{})
+		err := adapter.WriteTelemetry(testData, map[string]string{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -711,7 +711,7 @@ func BenchmarkStreamAdapter_GetMetrics(b *testing.B) {
 		EnableMetrics: true,
 	}
 
-	adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+	adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -730,7 +730,7 @@ func BenchmarkNewStreamAdapter(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		adapter := NewStreamAdapter(context.Background(), config, "http://localhost:8080/api/data")
+		adapter := NewStreamAdapter(config, "http://localhost:8080/api/data")
 		_ = adapter
 	}
 }

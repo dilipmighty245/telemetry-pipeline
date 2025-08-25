@@ -71,8 +71,8 @@ func (mqs *MessageQueueService) ConsumeTelemetry(consumerGroup, consumerID strin
 }
 
 // AcknowledgeMessages acknowledges processed messages
-func (mqs *MessageQueueService) AcknowledgeMessages(consumerGroup string, messages []*Message) error {
-	acked, failed, err := mqs.queue.Acknowledge(consumerGroup, messages)
+func (mqs *MessageQueueService) AcknowledgeMessages(ctx context.Context, consumerGroup string, messages []*Message) error {
+	acked, failed, err := mqs.queue.Acknowledge(ctx, consumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 		return err
@@ -97,8 +97,8 @@ func (mqs *MessageQueueService) CreateTopic(name string, config map[string]strin
 }
 
 // ListTopics returns all available topics
-func (mqs *MessageQueueService) ListTopics() map[string]*Topic {
-	return mqs.queue.ListTopics()
+func (mqs *MessageQueueService) ListTopics(ctx context.Context) map[string]*Topic {
+	return mqs.queue.ListTopics(ctx)
 }
 
 // Health checks the health of the message queue service

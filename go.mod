@@ -103,5 +103,5 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-// Use local Nexus framework
-replace github.com/intel-innersource/applications.development.nexus.core/nexus => ../graph-framework-for-microservices/nexus
+// Use local Nexus framework - temporarily disabled for testing
+// replace github.com/intel-innersource/applications.development.nexus.core/nexus => ../graph-framework-for-microservices/nexus

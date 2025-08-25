@@ -108,7 +108,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 					}
 
 					// Acknowledge processed messages
-					err = service.AcknowledgeMessages(ctx, "telemetry-processors", messages)
+					err = service.AcknowledgeMessages("telemetry-processors", messages)
 					if err != nil {
 						t.Errorf("Failed to acknowledge: %v", err)
 					}
@@ -197,7 +197,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 		_ = messages
 
 		// Test acknowledgment with empty messages
-		err = service.AcknowledgeMessages(ctx, "group", []*Message{})
+		err = service.AcknowledgeMessages("group", []*Message{})
 		assert.NoError(t, err)
 	})
 }
@@ -250,7 +250,7 @@ func TestMessageQueueFailover(t *testing.T) {
 
 		// Acknowledge all messages from consumer 2
 		if len(messages2) > 0 {
-			err = service.AcknowledgeMessages(ctx, "failover-group", messages2)
+			err = service.AcknowledgeMessages("failover-group", messages2)
 			assert.NoError(t, err)
 		}
 	})
@@ -299,7 +299,7 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 
 				// Acknowledge if we got messages
 				if len(messages) > 0 {
-					err = service.AcknowledgeMessages(ctx, "bench-group", messages)
+					err = service.AcknowledgeMessages("bench-group", messages)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -329,7 +329,7 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 
 			// Acknowledge batch
 			if len(messages) > 0 {
-				err = service.AcknowledgeMessages(ctx, "batch-group", messages)
+				err = service.AcknowledgeMessages("batch-group", messages)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -147,7 +147,7 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 	}
 
 	// Publish to etcd backend
-	err := mq.etcdBackend.PublishMessage(topic, msg)
+	err := mq.etcdBackend.PublishMessage(ctx, topic, msg)
 	if err != nil {
 		logging.Errorf("Failed to publish to etcd backend: %v", err)
 		return nil, err
@@ -158,7 +158,7 @@ func (mq *MessageQueue) Publish(ctx context.Context, topic string, payload []byt
 // Consume consumes messages from a topic
 func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consumerID string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
 	// Consume from etcd backend
-	messages, err := mq.etcdBackend.ConsumeMessages(topic, maxMessages, timeoutSeconds)
+	messages, err := mq.etcdBackend.ConsumeMessages(ctx, topic, maxMessages, timeoutSeconds)
 	if err != nil {
 		logging.Errorf("Failed to consume from etcd backend: %v", err)
 		return nil, err
@@ -167,14 +167,14 @@ func (mq *MessageQueue) Consume(ctx context.Context, topic, consumerGroup, consu
 }
 
 // Acknowledge acknowledges processed messages
-func (mq *MessageQueue) Acknowledge(consumerGroup string, messages []*Message) ([]string, []string, error) {
+func (mq *MessageQueue) Acknowledge(ctx context.Context, consumerGroup string, messages []*Message) ([]string, []string, error) {
 	// Acknowledge messages in etcd backend
-	return mq.etcdBackend.AcknowledgeMessagesByKeys(consumerGroup, messages)
+	return mq.etcdBackend.AcknowledgeMessagesByKeys(ctx, consumerGroup, messages)
 }
 
 // ListTopics returns all topics from etcd
-func (mq *MessageQueue) ListTopics() map[string]*Topic {
-	topicNames, err := mq.etcdBackend.ListTopics()
+func (mq *MessageQueue) ListTopics(ctx context.Context) map[string]*Topic {
+	topicNames, err := mq.etcdBackend.ListTopics(ctx)
 	if err != nil {
 		logging.Errorf("Failed to list topics from etcd: %v", err)
 		return make(map[string]*Topic)

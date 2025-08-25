@@ -153,9 +153,8 @@ func TestListTopicsBasic(t *testing.T) {
 
 	mq, err := NewMessageQueue()
 	require.NoError(t, err)
-	ctx := context.Background()
 
-	topics := mq.ListTopics(ctx)
+	topics := mq.ListTopics()
 	assert.NotNil(t, topics)
 	assert.Equal(t, 0, len(topics))
 }
@@ -264,11 +263,10 @@ func TestAcknowledgeBasic(t *testing.T) {
 
 	mq, err := NewMessageQueue()
 	require.NoError(t, err)
-	ctx := context.Background()
 
 	// Test with empty message list
 	messages := []*Message{}
-	acked, failed, err := mq.Acknowledge(ctx, "test-group", messages)
+	acked, failed, err := mq.Acknowledge("test-group", messages)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(acked))
 	assert.Equal(t, 0, len(failed))
