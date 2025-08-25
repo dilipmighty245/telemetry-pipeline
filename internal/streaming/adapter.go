@@ -47,7 +47,6 @@ type StreamAdapter struct {
 	config         *StreamAdapterConfig
 	dataCh         chan TelemetryChannelData
 	wg             sync.WaitGroup
-	cancel         context.CancelFunc
 	httpClient     *http.Client
 	metrics        *StreamMetrics
 	mu             sync.RWMutex
@@ -100,8 +99,6 @@ func NewStreamAdapter(ctx context.Context, config *StreamAdapterConfig, destinat
 		config.PartitionBy = "hostname"
 	}
 
-	_, cancel := context.WithCancel(ctx)
-
 	// Create optimized HTTP client similar to prtc
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -117,7 +114,6 @@ func NewStreamAdapter(ctx context.Context, config *StreamAdapterConfig, destinat
 	adapter := &StreamAdapter{
 		config:         config,
 		dataCh:         make(chan TelemetryChannelData, config.ChannelSize),
-		cancel:         cancel,
 		httpClient:     httpClient,
 		destinationURL: destinationURL,
 		metrics: &StreamMetrics{
@@ -166,7 +162,6 @@ func (sa *StreamAdapter) Stop() error {
 
 	sa.isRunning = false
 	close(sa.dataCh)
-	sa.cancel()
 	sa.wg.Wait()
 
 	logging.Infof("Stopped stream adapter")

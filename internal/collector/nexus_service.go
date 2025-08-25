@@ -85,7 +85,6 @@ type CircuitBreaker struct {
 type CollectorWorker struct {
 	id       int
 	service  *NexusCollectorService
-	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	isActive bool
@@ -200,30 +199,25 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	}
 
 	// Initialize adaptive batcher if enabled
-	if config.EnableAdaptiveBatch {
-		collector.adaptiveBatcher = &AdaptiveBatcher{
-			config:           config,
-			currentBatchSize: config.BatchSize,
-			lastAdjustment:   time.Now(),
-		}
+	collector.adaptiveBatcher = &AdaptiveBatcher{
+		config:           config,
+		currentBatchSize: config.BatchSize,
+		lastAdjustment:   time.Now(),
 	}
 
 	// Initialize worker pool if load balancing is enabled
-	if config.EnableLoadBalancing {
-		collector.workerPool = make(chan *CollectorWorker, config.Workers)
-		collector.workers = make([]*CollectorWorker, config.Workers)
+	collector.workerPool = make(chan *CollectorWorker, config.Workers)
+	collector.workers = make([]*CollectorWorker, config.Workers)
 
-		for i := 0; i < config.Workers; i++ {
-			ctx, cancel := context.WithCancel(ctx)
-			worker := &CollectorWorker{
-				id:      i,
-				service: collector,
-				ctx:     ctx,
-				cancel:  cancel,
-			}
-			collector.workers[i] = worker
-			collector.workerPool <- worker
+	for i := 0; i < config.Workers; i++ {
+		_, cancel := context.WithCancel(ctx)
+		worker := &CollectorWorker{
+			id:      i,
+			service: collector,
+			cancel:  cancel,
 		}
+		collector.workers[i] = worker
+		collector.workerPool <- worker
 	}
 
 	nexusConfig := &nexus.ServiceConfig{
@@ -856,7 +850,6 @@ func (cb *CircuitBreaker) recordFailure() {
 }
 
 // Adaptive batcher methods
-
 func (ab *AdaptiveBatcher) getCurrentBatchSize() int {
 	ab.mu.RLock()
 	defer ab.mu.RUnlock()

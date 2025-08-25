@@ -101,7 +101,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	service, err := NewMessageQueueService(ctx)
 	require.NoError(t, err)
 	defer service.Stop()
@@ -157,6 +157,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Stop the service
+		cancel()
 		tempService.Stop()
 
 		// Health should return false after stop
