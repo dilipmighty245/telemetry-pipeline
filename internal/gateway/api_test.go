@@ -6,14 +6,27 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/validation"
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
-	// Create a simple gateway service for testing
+	// Setup embedded etcd server for testing
+	etcdServer, err := testhelper.StartEtcdTestServer()
+	require.NoError(t, err)
+	defer etcdServer.Server.Close()
+
+	// Create gateway service with real etcd client
 	gateway := &NexusGatewayService{
-		echo: echo.New(),
+		echo:       echo.New(),
+		validator:  validation.NewValidator(),
+		etcdClient: etcdServer.Client,
+		config: &GatewayConfig{
+			ClusterID: "test-cluster",
+		},
 	}
 
 	t.Run("ListClustersHandler", func(t *testing.T) {
@@ -28,8 +41,11 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Contains(t, response, "clusters")
+		assert.Equal(t, true, response["success"])
+		assert.Contains(t, response, "data")
 		assert.Contains(t, response, "count")
+		// Also check backward compatibility
+		assert.Contains(t, response, "clusters")
 	})
 
 	t.Run("GetClusterHandler", func(t *testing.T) {
@@ -41,18 +57,22 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 
 		err := gateway.getClusterHandler(c)
 		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, rec.Code)
+		// Should return 404 since cluster doesn't exist in empty etcd
+		assert.Equal(t, http.StatusNotFound, rec.Code)
 
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, "test-cluster", response["cluster_id"])
+		assert.Equal(t, false, response["success"])
+		assert.Contains(t, response, "error")
 	})
 
 	t.Run("GetClusterStatsHandler", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/test-cluster/stats", nil)
 		rec := httptest.NewRecorder()
 		c := gateway.echo.NewContext(req, rec)
+		c.SetParamNames("cluster_id")
+		c.SetParamValues("test-cluster")
 
 		err := gateway.getClusterStatsHandler(c)
 		assert.NoError(t, err)
@@ -61,6 +81,9 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
+		assert.Equal(t, true, response["success"])
+		assert.Contains(t, response, "data")
+		// Also check backward compatibility
 		assert.Contains(t, response, "stats")
 	})
 
@@ -68,6 +91,8 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/test-cluster/hosts", nil)
 		rec := httptest.NewRecorder()
 		c := gateway.echo.NewContext(req, rec)
+		c.SetParamNames("cluster_id")
+		c.SetParamValues("test-cluster")
 
 		err := gateway.listHostsHandler(c)
 		assert.NoError(t, err)
@@ -76,8 +101,11 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Contains(t, response, "hosts")
+		assert.Equal(t, true, response["success"])
+		assert.Contains(t, response, "data")
 		assert.Contains(t, response, "count")
+		// Also check backward compatibility
+		assert.Contains(t, response, "hosts")
 	})
 
 	t.Run("GetHostHandler", func(t *testing.T) {
@@ -94,7 +122,9 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, "test-host", response["host_id"])
+		assert.Equal(t, true, response["success"])
+		data := response["data"].(map[string]interface{})
+		assert.Equal(t, "test-host", data["host_id"])
 	})
 
 	t.Run("ListGPUsHandler", func(t *testing.T) {
@@ -127,7 +157,9 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 		var response map[string]interface{}
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, "0", response["gpu_id"])
+		assert.Equal(t, true, response["success"])
+		data := response["data"].(map[string]interface{})
+		assert.Equal(t, "0", data["gpu_id"])
 	})
 
 	t.Run("GetGPUMetricsHandler", func(t *testing.T) {
@@ -219,7 +251,14 @@ func TestAPIEndpoints_AdditionalCoverage(t *testing.T) {
 
 		err := gateway.websocketHandler(c)
 		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, rec.Code)
+		// Should return 400 because it's not a proper WebSocket upgrade request
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		
+		var response map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, false, response["success"])
+		assert.Contains(t, response, "error")
 	})
 
 	// Note: Swagger functionality is handled by echoSwagger.WrapHandler middleware

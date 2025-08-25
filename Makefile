@@ -82,12 +82,8 @@ test: ## Run all tests and collect unified coverage
 	@echo "Step 2: Running unit tests with coverage..."
 	go test -v -coverprofile=unit-coverage.out -coverpkg=./... ./...
 	@echo ""
-	@echo "Step 3: Running E2E tests with coverage..."
-	@if command -v etcd >/dev/null 2>&1; then \
-		go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...; \
-	else \
-		echo "⚠️  etcd not available, skipping E2E tests"; \
-	fi
+	@echo "Step 3: Running E2E tests with coverage (using embedded etcd)..."
+	go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...
 	@echo ""
 	@echo "Step 4: Merging all coverage into single coverage.out..."
 	@$(MAKE) _merge-coverage-profiles
@@ -117,9 +113,9 @@ test-integration: ## Run integration tests only
 	@echo "Running integration tests..."
 	go test -v -tags=integration -coverprofile=integration-coverage.out -coverpkg=./... ./test/integration/...
 
-test-e2e: ## Run end-to-end tests only
-	@echo "Running E2E tests..."
-	go test -v -coverprofile=e2e-coverage.out -coverpkg=./... ./test/e2e/...
+test-e2e: ## Run end-to-end tests only (using embedded etcd)
+	@echo "Running E2E tests with embedded etcd..."
+	go test -v -coverprofile=e2e-coverage.out -coverpkg=./... -timeout=10m ./test/e2e/...
 
 test-comprehensive: test ## Alias for unified test (legacy compatibility)
 
