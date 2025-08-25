@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
@@ -31,6 +33,8 @@ func Run(args []string, stdout io.Writer) error {
 	// Create the streamer service
 	service := &streamer.NexusStreamerService{}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 	// Run the service
-	return service.Run(args, stdout)
+	return service.Run(ctx, args, stdout)
 }

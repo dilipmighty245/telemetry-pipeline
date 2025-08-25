@@ -1,6 +1,8 @@
 package messagequeue
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,12 +15,10 @@ func TestMessageQueueService(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	service, err := NewMessageQueueService()
+	ctx := context.Background()
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(t, err)
 	defer service.Stop()
-
-	// ctx := context.Background() // Unused in current tests
 
 	t.Run("PublishTelemetry", func(t *testing.T) {
 		payload := []byte(`{"gpu_id": "test-gpu", "metric": "utilization", "value": 85}`)
@@ -28,7 +28,7 @@ func TestMessageQueueService(t *testing.T) {
 			"timestamp":   time.Now().Format(time.RFC3339),
 		}
 
-		err := service.PublishTelemetry(payload, headers)
+		err := service.PublishTelemetry(ctx, payload, headers)
 		assert.NoError(t, err)
 	})
 
@@ -40,12 +40,12 @@ func TestMessageQueueService(t *testing.T) {
 				"gpu_id": "test-gpu",
 				"index":  string(rune(i + '0')),
 			}
-			err := service.PublishTelemetry(payload, headers)
+			err := service.PublishTelemetry(ctx, payload, headers)
 			require.NoError(t, err)
 		}
 
 		// Consume messages
-		messages, err := service.ConsumeTelemetry("test-group", "test-consumer", 5)
+		messages, err := service.ConsumeTelemetry(ctx, "test-group", "test-consumer", 5)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(messages), 3)
 
@@ -62,16 +62,16 @@ func TestMessageQueueService(t *testing.T) {
 		// Publish a test message
 		payload := []byte(`{"gpu_id": "ack-gpu", "metric": "test", "value": 42}`)
 		headers := map[string]string{"gpu_id": "ack-gpu"}
-		err := service.PublishTelemetry(payload, headers)
+		err := service.PublishTelemetry(ctx, payload, headers)
 		require.NoError(t, err)
 
 		// Consume the message
-		messages, err := service.ConsumeTelemetry("ack-group", "ack-consumer", 1)
+		messages, err := service.ConsumeTelemetry(ctx, "ack-group", "ack-consumer", 1)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(messages), 1)
 
 		// Acknowledge the message
-		err = service.AcknowledgeMessages("ack-group", messages[:1])
+		err = service.AcknowledgeMessages(ctx, "ack-group", messages[:1])
 		assert.NoError(t, err)
 	})
 
@@ -91,7 +91,7 @@ func TestMessageQueueService(t *testing.T) {
 	})
 
 	t.Run("HealthCheck", func(t *testing.T) {
-		healthy := service.Health()
+		healthy := service.Health(ctx)
 		assert.True(t, healthy)
 	})
 }
@@ -101,26 +101,26 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	service, err := NewMessageQueueService()
+	ctx, cancel := context.WithCancel(context.Background())
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(t, err)
 	defer service.Stop()
 
 	t.Run("EmptyPayload", func(t *testing.T) {
-		err := service.PublishTelemetry([]byte{}, nil)
+		err := service.PublishTelemetry(ctx, []byte{}, nil)
 		assert.NoError(t, err) // Should handle empty payload gracefully
 	})
 
 	t.Run("NilHeaders", func(t *testing.T) {
 		payload := []byte(`{"test": "data"}`)
-		err := service.PublishTelemetry(payload, nil)
+		err := service.PublishTelemetry(ctx, payload, nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("ConsumeFromEmptyTopic", func(t *testing.T) {
 		// Create a new service with a fresh queue to ensure no leftover messages
 		// Note: Using same etcd server but different consumer group and topic
-		freshService, err := NewMessageQueueService()
+		freshService, err := NewMessageQueueService(ctx)
 		require.NoError(t, err)
 		// Use a unique topic name to avoid conflicts with other tests
 		uniqueTopicName := "empty-test-topic-" + time.Now().Format("20060102150405")
@@ -129,7 +129,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 		// Now consume from the empty topic using the service's internal method
 		// Since we can't easily call ConsumeTelemetry with a different topic,
 		// we'll consume from the default telemetry topic with a unique consumer group
-		messages, err := freshService.ConsumeTelemetry("empty-group-"+time.Now().Format("20060102150405"), "empty-consumer", 10)
+		messages, err := freshService.ConsumeTelemetry(ctx, "empty-group-"+time.Now().Format("20060102150405"), "empty-consumer", 10)
 		assert.NoError(t, err)
 		// In etcd, there might be leftover messages from other tests, so we just check it doesn't error
 		// The actual count may vary depending on test execution order
@@ -138,7 +138,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("AcknowledgeEmptyMessages", func(t *testing.T) {
-		err := service.AcknowledgeMessages("test-group", []*Message{})
+		err := service.AcknowledgeMessages(ctx, "test-group", []*Message{})
 		assert.NoError(t, err)
 	})
 
@@ -149,18 +149,19 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 
 	t.Run("StopService", func(t *testing.T) {
 		// Note: Using same etcd server for this test
-		tempService, err := NewMessageQueueService()
+		tempService, err := NewMessageQueueService(ctx)
 		require.NoError(t, err)
 
 		// Publish a message
-		err = tempService.PublishTelemetry([]byte(`{"test": "stop"}`), nil)
+		err = tempService.PublishTelemetry(ctx, []byte(`{"test": "stop"}`), nil)
 		assert.NoError(t, err)
 
 		// Stop the service
+		cancel()
 		tempService.Stop()
 
 		// Health should return false after stop
-		healthy := tempService.Health()
+		healthy := tempService.Health(ctx)
 		assert.False(t, healthy)
 	})
 }
@@ -170,8 +171,8 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	service, err := NewMessageQueueService()
+	ctx := context.Background()
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(t, err)
 	defer service.Stop()
 
@@ -190,7 +191,7 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 						"publisher": string(rune(id + '0')),
 						"message":   string(rune(j + '0')),
 					}
-					err := service.PublishTelemetry(payload, headers)
+					err := service.PublishTelemetry(ctx, payload, headers)
 					errChan <- err
 				}
 			}(i)
@@ -209,7 +210,7 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 		// Publish test messages first
 		for i := 0; i < 20; i++ {
 			payload := []byte(`{"concurrent": "test", "id": ` + string(rune(i+'0')) + `}`)
-			err := service.PublishTelemetry(payload, nil)
+			err := service.PublishTelemetry(ctx, payload, nil)
 			require.NoError(t, err)
 		}
 
@@ -219,7 +220,7 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 		for i := 0; i < numConsumers; i++ {
 			go func(id int) {
 				consumerID := "concurrent-consumer-" + string(rune(id+'0'))
-				messages, err := service.ConsumeTelemetry("concurrent-group", consumerID, 10)
+				messages, err := service.ConsumeTelemetry(ctx, "concurrent-group", consumerID, 10)
 				if err == nil {
 					messageChan <- messages
 				} else {
@@ -242,13 +243,123 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 	})
 }
 
+func TestMessageQueueService_TopicOperations(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
+	ctx := context.Background()
+	service, err := NewMessageQueueService(ctx)
+	require.NoError(t, err)
+	defer service.Stop()
+
+	t.Run("ListTopics", func(t *testing.T) {
+		// Test listing topics
+		topics := service.ListTopics(ctx)
+		assert.NotNil(t, topics)
+		// Should at least have the default telemetry topic
+		assert.GreaterOrEqual(t, len(topics), 0)
+	})
+
+	t.Run("GetQueueStats", func(t *testing.T) {
+		stats := service.GetQueueStats()
+		assert.NotNil(t, stats)
+		assert.GreaterOrEqual(t, stats.TotalMessages, int64(0))
+	})
+}
+
+func TestMessageQueueService_BatchOperations(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
+	ctx := context.Background()
+	service, err := NewMessageQueueService(ctx)
+	require.NoError(t, err)
+	defer service.Stop()
+
+	t.Run("PublishBatch", func(t *testing.T) {
+		payloads := [][]byte{
+			[]byte(`{"test": "batch1"}`),
+			[]byte(`{"test": "batch2"}`),
+			[]byte(`{"test": "batch3"}`),
+		}
+		headers := []map[string]string{
+			{"batch": "1"},
+			{"batch": "2"},
+			{"batch": "3"},
+		}
+
+		messages, err := service.PublishBatch(ctx, "telemetry", payloads, headers, 3600)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(messages))
+	})
+
+	t.Run("ConsumeBatch", func(t *testing.T) {
+		// First publish some messages
+		for i := 0; i < 5; i++ {
+			payload := []byte(`{"test": "consume_batch"}`)
+			headers := map[string]string{"index": fmt.Sprintf("%d", i)}
+			err := service.PublishTelemetry(ctx, payload, headers)
+			require.NoError(t, err)
+		}
+
+		// Test consuming from multiple topics
+		topics := []string{"telemetry"}
+		messages, err := service.ConsumeBatch(ctx, topics, "batch-group", "batch-consumer", 3)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(messages), 0)
+	})
+}
+
+func TestMessageQueueService_ErrorHandling(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+	ctx := context.Background()
+	service, err := NewMessageQueueService(ctx)
+	require.NoError(t, err)
+	defer service.Stop()
+
+	t.Run("AcknowledgeInvalidMessages", func(t *testing.T) {
+		// Try to acknowledge messages with invalid IDs
+		invalidMessages := []*Message{
+			{
+				ID:      "invalid-id",
+				Topic:   "telemetry",
+				Payload: []byte(`{"test": "data"}`),
+				Headers: map[string]string{},
+			},
+		}
+
+		err := service.AcknowledgeMessages(ctx, "test-group", invalidMessages)
+		// Should not error even with invalid messages
+		assert.NoError(t, err)
+	})
+
+	t.Run("PublishBatchWithInvalidData", func(t *testing.T) {
+		// Test with empty payloads
+		emptyPayloads := [][]byte{}
+		emptyHeaders := []map[string]string{}
+
+		messages, err := service.PublishBatch(ctx, "telemetry", emptyPayloads, emptyHeaders, 3600)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(messages))
+	})
+}
+
 func BenchmarkMessageQueueService(b *testing.B) {
 	// Start embedded etcd server for testing
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(b, err)
 	defer cleanup()
 
-	service, err := NewMessageQueueService()
+	ctx := context.Background()
+
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(b, err)
 	defer service.Stop()
 
@@ -258,7 +369,7 @@ func BenchmarkMessageQueueService(b *testing.B) {
 	b.Run("PublishTelemetry", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			err := service.PublishTelemetry(payload, headers)
+			err := service.PublishTelemetry(ctx, payload, headers)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -268,18 +379,18 @@ func BenchmarkMessageQueueService(b *testing.B) {
 	b.Run("ConsumeTelemetry", func(b *testing.B) {
 		// Pre-publish messages for consumption
 		for i := 0; i < b.N; i++ {
-			service.PublishTelemetry(payload, headers)
+			service.PublishTelemetry(ctx, payload, headers)
 		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			messages, err := service.ConsumeTelemetry("bench-group", "bench-consumer", 1)
+			messages, err := service.ConsumeTelemetry(ctx, "bench-group", "bench-consumer", 1)
 			if err != nil {
 				b.Fatal(err)
 			}
 			if len(messages) > 0 {
 				// Acknowledge to clean up
-				service.AcknowledgeMessages("bench-group", messages)
+				service.AcknowledgeMessages(ctx, "bench-group", messages)
 			}
 		}
 	})

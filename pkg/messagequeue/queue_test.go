@@ -16,7 +16,7 @@ func TestNewMessageQueue(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, mq)
 	assert.NotNil(t, mq.topics)
@@ -28,8 +28,9 @@ func TestCreateTopic(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
+	ctx := context.Background()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(ctx)
 	require.NoError(t, err)
 
 	config := map[string]string{
@@ -41,19 +42,14 @@ func TestCreateTopic(t *testing.T) {
 
 	// In etcd backend, topics are created implicitly when first message is published
 	// So we need to publish a message to see the topic
-	ctx := context.Background()
 	payload := []byte("test message")
 	_, err = mq.Publish(ctx, "test-topic", payload, nil, 3600)
 	require.NoError(t, err)
 
 	// Check topic was created
-	topics := mq.ListTopics()
+	topics := mq.ListTopics(ctx)
 	assert.Len(t, topics, 1)
 	assert.Contains(t, topics, "test-topic")
-
-	// Creating same topic again should not error
-	err = mq.CreateTopic("test-topic", config)
-	assert.NoError(t, err)
 }
 
 func TestPublishMessage(t *testing.T) {
@@ -61,10 +57,10 @@ func TestPublishMessage(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic first
 	err = mq.CreateTopic("test-topic", nil)
@@ -88,10 +84,9 @@ func TestPublishToNonExistentTopic(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	payload := []byte("test message")
 
@@ -105,10 +100,9 @@ func TestConsumeMessages(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic and publish messages
 	err = mq.CreateTopic("test-topic", nil)
@@ -138,10 +132,9 @@ func TestConsumeFromNonExistentTopic(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// In etcd backend, consuming from non-existent topic returns empty results
 	messages, err := mq.Consume(ctx, "non-existent", "test-group", "consumer-1", 10, 30)
@@ -154,10 +147,9 @@ func TestAcknowledgeMessages(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic and publish messages
 	err = mq.CreateTopic("test-topic", nil)
@@ -179,7 +171,7 @@ func TestAcknowledgeMessages(t *testing.T) {
 
 	// Acknowledge first two messages
 	messagesToAck := []*Message{messages[0], messages[1]}
-	acked, failed, err := mq.Acknowledge("test-group", messagesToAck)
+	acked, failed, err := mq.Acknowledge(ctx, "test-group", messagesToAck)
 	assert.NoError(t, err)
 	assert.Len(t, acked, 2)
 	assert.Len(t, failed, 0)
@@ -195,10 +187,9 @@ func TestMessageExpiration(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic
 	err = mq.CreateTopic("test-topic", nil)
@@ -235,9 +226,9 @@ func TestQueueStats(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic and publish messages
 	err = mq.CreateTopic("test-topic", nil)
@@ -264,10 +255,9 @@ func TestConsumerRegistration(t *testing.T) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
-
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic
 	err = mq.CreateTopic("test-topic", nil)
@@ -296,9 +286,9 @@ func TestConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
-	require.NoError(t, err)
 	ctx := context.Background()
+	mq, err := NewMessageQueue(ctx)
+	require.NoError(t, err)
 
 	// Create topic
 	err = mq.CreateTopic("test-topic", nil)

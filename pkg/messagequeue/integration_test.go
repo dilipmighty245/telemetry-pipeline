@@ -1,6 +1,7 @@
 package messagequeue
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -28,7 +29,7 @@ func TestMessageQueueIntegration(t *testing.T) {
 
 	t.Run("EtcdBackend", func(t *testing.T) {
 		// Create service with etcd backend
-		service, err := NewMessageQueueService()
+		service, err := NewMessageQueueService(context.Background())
 		require.NoError(t, err, "Should create message queue service successfully")
 		defer service.Stop()
 
@@ -41,7 +42,7 @@ func TestMessageQueueIntegration(t *testing.T) {
 }
 
 func testFullPipeline(t *testing.T, service *MessageQueueService) {
-	// ctx := context.Background() // Unused in current tests
+	ctx := context.Background() // Used in acknowledgment tests
 
 	t.Run("ProducerConsumerFlow", func(t *testing.T) {
 		const numMessages = 10
@@ -68,7 +69,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 				"hostname":    telemetryData.Hostname,
 			}
 
-			err = service.PublishTelemetry(payload, headers)
+			err = service.PublishTelemetry(ctx, payload, headers)
 			require.NoError(t, err)
 		}
 
@@ -83,7 +84,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 
 				consumerName := fmt.Sprintf("consumer-%d", consumerID)
 				for {
-					messages, err := service.ConsumeTelemetry("telemetry-processors", consumerName, 10)
+					messages, err := service.ConsumeTelemetry(ctx, "telemetry-processors", consumerName, 10)
 					if err != nil {
 						t.Errorf("Consumer %d failed: %v", consumerID, err)
 						return
@@ -108,7 +109,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 					}
 
 					// Acknowledge processed messages
-					err = service.AcknowledgeMessages("telemetry-processors", messages)
+					err = service.AcknowledgeMessages(ctx, "telemetry-processors", messages)
 					if err != nil {
 						t.Errorf("Failed to acknowledge: %v", err)
 					}
@@ -167,11 +168,11 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 			"type":   "persistence-test",
 		}
 
-		err = service.PublishTelemetry(payload, headers)
+		err = service.PublishTelemetry(ctx, payload, headers)
 		require.NoError(t, err)
 
 		// Consume without acknowledging
-		messages, err := service.ConsumeTelemetry("persistence-group", "persistence-consumer", 1)
+		messages, err := service.ConsumeTelemetry(ctx, "persistence-group", "persistence-consumer", 1)
 		require.NoError(t, err)
 		require.Len(t, messages, 1)
 
@@ -188,16 +189,16 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 
 	t.Run("ErrorHandling", func(t *testing.T) {
 		// Test invalid JSON
-		err := service.PublishTelemetry([]byte("invalid json"), nil)
+		err := service.PublishTelemetry(ctx, []byte("invalid json"), nil)
 		assert.NoError(t, err) // Service should accept any payload
 
 		// Test empty consumer group
-		messages, err := service.ConsumeTelemetry("", "consumer", 1)
+		messages, err := service.ConsumeTelemetry(ctx, "", "consumer", 1)
 		assert.NoError(t, err) // Should handle gracefully
 		_ = messages
 
 		// Test acknowledgment with empty messages
-		err = service.AcknowledgeMessages("group", []*Message{})
+		err = service.AcknowledgeMessages(ctx, "group", []*Message{})
 		assert.NoError(t, err)
 	})
 }
@@ -208,7 +209,9 @@ func TestMessageQueueFailover(t *testing.T) {
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
-	service, err := NewMessageQueueService()
+	ctx := context.Background()
+
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(t, err)
 	defer service.Stop()
 
@@ -227,12 +230,12 @@ func TestMessageQueueFailover(t *testing.T) {
 			payload, err := json.Marshal(telemetry)
 			require.NoError(t, err)
 
-			err = service.PublishTelemetry(payload, map[string]string{"gpu_id": telemetry.GPUID})
+			err = service.PublishTelemetry(ctx, payload, map[string]string{"gpu_id": telemetry.GPUID})
 			require.NoError(t, err)
 		}
 
 		// Consumer 1 consumes messages but doesn't acknowledge
-		messages1, err := service.ConsumeTelemetry("failover-group", "consumer-1", 5)
+		messages1, err := service.ConsumeTelemetry(ctx, "failover-group", "consumer-1", 5)
 		require.NoError(t, err)
 		require.Len(t, messages1, 5)
 
@@ -242,7 +245,7 @@ func TestMessageQueueFailover(t *testing.T) {
 		// This tests the failover mechanism in etcd
 		time.Sleep(2 * time.Second) // Wait for potential timeout
 
-		messages2, err := service.ConsumeTelemetry("failover-group", "consumer-2", 10)
+		messages2, err := service.ConsumeTelemetry(ctx, "failover-group", "consumer-2", 10)
 		require.NoError(t, err)
 
 		// Consumer 2 should get remaining messages and potentially some pending ones
@@ -250,7 +253,7 @@ func TestMessageQueueFailover(t *testing.T) {
 
 		// Acknowledge all messages from consumer 2
 		if len(messages2) > 0 {
-			err = service.AcknowledgeMessages("failover-group", messages2)
+			err = service.AcknowledgeMessages(ctx, "failover-group", messages2)
 			assert.NoError(t, err)
 		}
 	})
@@ -262,7 +265,9 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 	require.NoError(b, err)
 	defer cleanup()
 
-	service, err := NewMessageQueueService()
+	ctx := context.Background()
+
+	service, err := NewMessageQueueService(ctx)
 	require.NoError(b, err)
 	defer service.Stop()
 
@@ -286,20 +291,20 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				// Publish
-				err := service.PublishTelemetry(payload, headers)
+				err := service.PublishTelemetry(ctx, payload, headers)
 				if err != nil {
 					b.Fatal(err)
 				}
 
 				// Consume
-				messages, err := service.ConsumeTelemetry("bench-group", "bench-consumer", 1)
+				messages, err := service.ConsumeTelemetry(ctx, "bench-group", "bench-consumer", 1)
 				if err != nil {
 					b.Fatal(err)
 				}
 
 				// Acknowledge if we got messages
 				if len(messages) > 0 {
-					err = service.AcknowledgeMessages("bench-group", messages)
+					err = service.AcknowledgeMessages(ctx, "bench-group", messages)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -315,21 +320,21 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			// Publish batch
 			for j := 0; j < batchSize; j++ {
-				err := service.PublishTelemetry(payload, headers)
+				err := service.PublishTelemetry(ctx, payload, headers)
 				if err != nil {
 					b.Fatal(err)
 				}
 			}
 
 			// Consume batch
-			messages, err := service.ConsumeTelemetry("batch-group", "batch-consumer", batchSize)
+			messages, err := service.ConsumeTelemetry(ctx, "batch-group", "batch-consumer", batchSize)
 			if err != nil {
 				b.Fatal(err)
 			}
 
 			// Acknowledge batch
 			if len(messages) > 0 {
-				err = service.AcknowledgeMessages("batch-group", messages)
+				err = service.AcknowledgeMessages(ctx, "batch-group", messages)
 				if err != nil {
 					b.Fatal(err)
 				}

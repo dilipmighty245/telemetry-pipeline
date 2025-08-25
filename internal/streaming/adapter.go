@@ -47,8 +47,6 @@ type StreamAdapter struct {
 	config         *StreamAdapterConfig
 	dataCh         chan TelemetryChannelData
 	wg             sync.WaitGroup
-	ctx            context.Context
-	cancel         context.CancelFunc
 	httpClient     *http.Client
 	metrics        *StreamMetrics
 	mu             sync.RWMutex
@@ -68,7 +66,7 @@ type StreamMetrics struct {
 }
 
 // NewStreamAdapter creates a new high-performance streaming adapter
-func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *StreamAdapter {
+func NewStreamAdapter(ctx context.Context, config *StreamAdapterConfig, destinationURL string) *StreamAdapter {
 	// Handle nil config by creating default config
 	if config == nil {
 		config = &StreamAdapterConfig{}
@@ -101,8 +99,6 @@ func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *Strea
 		config.PartitionBy = "hostname"
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	// Create optimized HTTP client similar to prtc
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -118,8 +114,6 @@ func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *Strea
 	adapter := &StreamAdapter{
 		config:         config,
 		dataCh:         make(chan TelemetryChannelData, config.ChannelSize),
-		ctx:            ctx,
-		cancel:         cancel,
 		httpClient:     httpClient,
 		destinationURL: destinationURL,
 		metrics: &StreamMetrics{
@@ -131,7 +125,7 @@ func NewStreamAdapter(config *StreamAdapterConfig, destinationURL string) *Strea
 }
 
 // Start starts the streaming adapter with multiple workers
-func (sa *StreamAdapter) Start() error {
+func (sa *StreamAdapter) Start(ctx context.Context) error {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
 
@@ -144,13 +138,13 @@ func (sa *StreamAdapter) Start() error {
 	// Start multiple workers for parallel processing
 	for i := 0; i < sa.config.Workers; i++ {
 		sa.wg.Add(1)
-		go sa.streamWorker(i)
+		go sa.streamWorker(ctx, i)
 	}
 
 	// Start metrics collector if enabled
 	if sa.config.EnableMetrics {
 		sa.wg.Add(1)
-		go sa.metricsCollector()
+		go sa.metricsCollector(ctx)
 	}
 
 	logging.Infof("Started stream adapter with %d workers", sa.config.Workers)
@@ -168,7 +162,6 @@ func (sa *StreamAdapter) Stop() error {
 
 	sa.isRunning = false
 	close(sa.dataCh)
-	sa.cancel()
 	sa.wg.Wait()
 
 	logging.Infof("Stopped stream adapter")
@@ -176,7 +169,7 @@ func (sa *StreamAdapter) Stop() error {
 }
 
 // WriteTelemetry writes telemetry data to the streaming channel
-func (sa *StreamAdapter) WriteTelemetry(data *models.TelemetryData, headers map[string]string) error {
+func (sa *StreamAdapter) WriteTelemetry(ctx context.Context, data *models.TelemetryData, headers map[string]string) error {
 	partition := sa.getPartition(data)
 
 	select {
@@ -187,7 +180,7 @@ func (sa *StreamAdapter) WriteTelemetry(data *models.TelemetryData, headers map[
 		Partition: partition,
 	}:
 		return nil
-	case <-sa.ctx.Done():
+	case <-ctx.Done():
 		return fmt.Errorf("stream adapter is shutting down")
 	default:
 		// Channel is full, could implement backpressure here
@@ -210,7 +203,7 @@ func (sa *StreamAdapter) getPartition(data *models.TelemetryData) string {
 }
 
 // streamWorker processes data in batches (similar to prtc's streamBatch)
-func (sa *StreamAdapter) streamWorker(workerID int) {
+func (sa *StreamAdapter) streamWorker(ctx context.Context, workerID int) {
 	defer sa.wg.Done()
 
 	logging.Infof("Started stream worker %d", workerID)
@@ -251,7 +244,7 @@ func (sa *StreamAdapter) streamWorker(workerID int) {
 			// Periodic flush of all partitions
 			sa.flushAllPartitions(recordMap, workerID)
 
-		case <-sa.ctx.Done():
+		case <-ctx.Done():
 			sa.flushAllPartitions(recordMap, workerID)
 			logging.Infof("Stream worker %d stopped", workerID)
 			return
@@ -333,7 +326,7 @@ func (sa *StreamAdapter) updateMetrics(recordsProcessed, batchesProcessed, error
 }
 
 // metricsCollector periodically calculates performance metrics
-func (sa *StreamAdapter) metricsCollector() {
+func (sa *StreamAdapter) metricsCollector(ctx context.Context) {
 	defer sa.wg.Done()
 
 	ticker := time.NewTicker(30 * time.Second)
@@ -352,7 +345,7 @@ func (sa *StreamAdapter) metricsCollector() {
 			sa.metrics.ChannelUtilization = float64(len(sa.dataCh)) / float64(sa.config.ChannelSize) * 100
 			sa.metrics.mu.Unlock()
 
-		case <-sa.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}

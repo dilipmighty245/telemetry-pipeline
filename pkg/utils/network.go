@@ -132,7 +132,7 @@ func GetServiceAddressWithFallback(fallback string) string {
 // ValidateServiceAddress checks if the provided address is reachable.
 // This can be used to verify that the determined address is actually accessible.
 func ValidateServiceAddress(address string, port int) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", address, port))
+	conn, err := net.Dial("tcp", net.JoinHostPort(address, fmt.Sprintf("%d", port)))
 	if err != nil {
 		return fmt.Errorf("cannot connect to %s:%d - %w", address, port, err)
 	}

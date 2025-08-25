@@ -10,12 +10,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
@@ -152,10 +150,7 @@ type CSVUploadResponse struct {
 }
 
 // Run is the main entry point for the streamer service
-func (ns *NexusStreamerService) Run(args []string, _ io.Writer) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
+func (ns *NexusStreamerService) Run(ctx context.Context, args []string, _ io.Writer) error {
 	cfg, err := ns.parseConfig(args)
 	if err != nil {
 		return fmt.Errorf("failed to parse configuration: %w", err)
@@ -176,7 +171,7 @@ func (ns *NexusStreamerService) Run(args []string, _ io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("failed to create streamer: %w", err)
 	}
-	defer streamer.Close()
+	defer streamer.Close(ctx)
 
 	// Start streaming
 	if err := streamer.Start(ctx); err != nil {
@@ -299,7 +294,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 	etcdClient := client
 
 	// Test etcd connection
-	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
@@ -342,7 +337,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 	}
 
 	// Initialize streaming adapter (always enabled for performance)
-	streamer.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
+	streamer.streamAdapter = streaming.NewStreamAdapter(ctx, config.StreamingConfig, config.StreamDestination)
 
 	// Initialize rate limiter (always enabled for performance)
 	streamer.rateLimiter = &RateLimiter{
@@ -357,11 +352,11 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 	streamer.workers = make([]*StreamerWorker, config.ParallelWorkers)
 
 	for i := 0; i < config.ParallelWorkers; i++ {
-		ctx, cancel := context.WithCancel(context.Background())
+		childCtx, cancel := context.WithCancel(ctx)
 		worker := &StreamerWorker{
 			id:      i,
 			service: streamer,
-			ctx:     ctx,
+			ctx:     childCtx,
 			cancel:  cancel,
 		}
 		streamer.workers[i] = worker
@@ -381,7 +376,7 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	logging.Infof("Starting enhanced etcd-based telemetry streaming")
 
 	// Start streaming adapter
-	err := ns.streamAdapter.Start()
+	err := ns.streamAdapter.Start(ctx)
 	if err != nil {
 		logging.Errorf("Failed to start stream adapter: %v", err)
 		return err
@@ -435,7 +430,7 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	logging.Infof("Service registered: %s", ns.config.StreamerID)
 
 	// Start scaling coordinator
-	if err := ns.scalingCoord.Start(); err != nil {
+	if err := ns.scalingCoord.Start(ctx); err != nil {
 		logging.Errorf("Failed to start scaling coordinator: %v", err)
 	}
 
@@ -448,9 +443,6 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	g.Go(func() error {
 		return ns.startHTTPServer(gCtx)
 	})
-
-	// In API-only mode, we don't run the streaming loop
-	// CSV processing happens only when files are uploaded via the API
 
 	// Wait for all goroutines to complete
 	err = g.Wait()
@@ -485,21 +477,7 @@ func (ns *NexusStreamerService) parseCSVRecord(record []string, columnMap map[st
 		return 0
 	}
 
-	// Map CSV columns to struct fields
-	// tr.Timestamp = getColumn("timestamp")
-	// if tr.Timestamp == "" {
-	// 	tr.Timestamp = time.Now().Format(time.RFC3339)
-	// } else {
-	// 	// Remove quotes if present and ensure RFC3339 format
-	// 	tr.Timestamp = strings.Trim(tr.Timestamp, "\"")
-	// 	// Validate and normalize timestamp format
-	// 	if parsedTime, err := time.Parse(time.RFC3339, tr.Timestamp); err == nil {
-	// 		tr.Timestamp = parsedTime.Format(time.RFC3339)
-	// 	} else {
-	// 		logging.Warnf("Invalid timestamp format '%s', using current time", tr.Timestamp)
-	// 		tr.Timestamp = time.Now().Format(time.RFC3339)
-	// 	}
-	// }
+	// add timestamp at the time of processing
 	tr.Timestamp = time.Now().Format(time.RFC3339)
 
 	tr.GPUID = getColumn("gpu_id")
@@ -578,7 +556,7 @@ func (ns *NexusStreamerService) publishBatchWithWorkers(ctx context.Context, bat
 	default:
 		// No workers available, fallback to direct processing
 		// Use background context to avoid cancellation issues
-		return ns.publishBatchEnhanced(context.Background(), batch)
+		return ns.publishBatchEnhanced(ctx, batch)
 	}
 }
 
@@ -737,7 +715,7 @@ func (ns *NexusStreamerService) watchConfiguration(ctx context.Context) error {
 }
 
 // Close closes the streamer and cleans up resources
-func (ns *NexusStreamerService) Close() error {
+func (ns *NexusStreamerService) Close(ctx context.Context) error {
 	logging.Infof("Closing enhanced Nexus streamer")
 
 	// Stop enhanced features
@@ -748,7 +726,7 @@ func (ns *NexusStreamerService) Close() error {
 	// Deregister service
 	if ns.serviceRegistry != nil {
 		// Use background context for cleanup with shorter timeout to avoid hanging
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if err := ns.serviceRegistry.Deregister(cleanupCtx); err != nil {
 			// Log as warning instead of error since service shutdown should not fail due to deregistration issues
@@ -760,7 +738,7 @@ func (ns *NexusStreamerService) Close() error {
 
 	// Stop scaling coordinator
 	if ns.scalingCoord != nil {
-		if err := ns.scalingCoord.Stop(); err != nil {
+		if err := ns.scalingCoord.Stop(ctx); err != nil {
 			logging.Warnf("Failed to stop scaling coordinator: %v", err)
 		} else {
 			logging.Infof("Scaling coordinator stopped successfully")

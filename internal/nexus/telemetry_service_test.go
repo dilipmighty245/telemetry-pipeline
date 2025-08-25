@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -392,6 +393,9 @@ func TestNewTelemetryService(t *testing.T) {
 	clientURL, cleanup := SetupTestEtcd(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	config := &ServiceConfig{
 		EtcdEndpoints:  []string{clientURL},
 		ClusterID:      "test-cluster",
@@ -400,7 +404,7 @@ func TestNewTelemetryService(t *testing.T) {
 		BatchSize:      100,
 	}
 
-	service, err := NewTelemetryService(config)
+	service, err := NewTelemetryService(ctx, config)
 	require.NoError(t, err)
 	defer service.Close()
 
@@ -415,6 +419,8 @@ func TestTelemetryService_initializeCluster(t *testing.T) {
 	clientURL, cleanup := SetupTestEtcd(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	config := &ServiceConfig{
 		EtcdEndpoints:  []string{clientURL},
 		ClusterID:      "test-cluster",
@@ -423,7 +429,7 @@ func TestTelemetryService_initializeCluster(t *testing.T) {
 		BatchSize:      100,
 	}
 
-	service, err := NewTelemetryService(config)
+	service, err := NewTelemetryService(ctx, config)
 	require.NoError(t, err)
 	defer service.Close()
 
@@ -458,13 +464,16 @@ func TestTelemetryService_Close(t *testing.T) {
 	clientURL, cleanup := SetupTestEtcd(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	config := &ServiceConfig{
 		EtcdEndpoints: []string{clientURL},
 		ClusterID:     "test-cluster",
 		ServiceID:     "test-service",
 	}
 
-	service, err := NewTelemetryService(config)
+	service, err := NewTelemetryService(ctx, config)
 	require.NoError(t, err)
 
 	// Test that Close doesn't panic
@@ -598,6 +607,9 @@ func TestTelemetryService_EdgeCases(t *testing.T) {
 	clientURL, cleanup := SetupTestEtcd(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// Test with minimal config
 	config := &ServiceConfig{
 		EtcdEndpoints: []string{clientURL},
@@ -606,14 +618,14 @@ func TestTelemetryService_EdgeCases(t *testing.T) {
 		BatchSize:     1,
 	}
 
-	service, err := NewTelemetryService(config)
+	service, err := NewTelemetryService(ctx, config)
 	require.NoError(t, err)
 	assert.NotNil(t, service)
 	assert.Equal(t, config, service.config)
 	service.Close()
 
 	// Test with nil config (should return error)
-	_, err = NewTelemetryService(nil)
+	_, err = NewTelemetryService(ctx, nil)
 	assert.Error(t, err)
 }
 
@@ -621,6 +633,9 @@ func TestTelemetryService_EtcdIntegration(t *testing.T) {
 	// Setup embedded etcd server for testing
 	clientURL, cleanup := SetupTestEtcd(t)
 	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	config := &ServiceConfig{
 		EtcdEndpoints:  []string{clientURL},
@@ -630,7 +645,7 @@ func TestTelemetryService_EtcdIntegration(t *testing.T) {
 		BatchSize:      100,
 	}
 
-	service, err := NewTelemetryService(config)
+	service, err := NewTelemetryService(ctx, config)
 	require.NoError(t, err)
 	defer service.Close()
 
@@ -896,9 +911,12 @@ func BenchmarkNewTelemetryService(b *testing.B) {
 		BatchSize:      100,
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		service, err := NewTelemetryService(config)
+		service, err := NewTelemetryService(ctx, config)
 		require.NoError(b, err)
 		service.Close()
 	}

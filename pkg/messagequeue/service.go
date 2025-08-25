@@ -12,34 +12,27 @@ import (
 type MessageQueueService struct {
 	queue         *MessageQueue
 	cleanupTicker *time.Ticker
-	ctx           context.Context
-	cancel        context.CancelFunc
 }
 
 // NewMessageQueueService creates a new message queue service
-func NewMessageQueueService() (*MessageQueueService, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	queue, err := NewMessageQueue()
+func NewMessageQueueService(ctx context.Context) (*MessageQueueService, error) {
+	queue, err := NewMessageQueue(ctx)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to create message queue: %w", err)
 	}
 
 	service := &MessageQueueService{
-		queue:  queue,
-		ctx:    ctx,
-		cancel: cancel,
+		queue: queue,
 	}
 
 	// Start cleanup routine
-	service.startCleanupRoutine()
+	service.startCleanupRoutine(ctx)
 
 	return service, nil
 }
 
 // PublishTelemetry publishes telemetry data to the queue
-func (mqs *MessageQueueService) PublishTelemetry(payload []byte, headers map[string]string) error {
+func (mqs *MessageQueueService) PublishTelemetry(ctx context.Context, payload []byte, headers map[string]string) error {
 	// Ensure telemetry topic exists
 	err := mqs.queue.CreateTopic("telemetry", map[string]string{
 		"max_size": "50000",
@@ -50,7 +43,7 @@ func (mqs *MessageQueueService) PublishTelemetry(payload []byte, headers map[str
 		return err
 	}
 
-	_, err = mqs.queue.Publish(mqs.ctx, "telemetry", payload, headers, 3600)
+	_, err = mqs.queue.Publish(ctx, "telemetry", payload, headers, 3600)
 	if err != nil {
 		logging.Errorf("Failed to publish telemetry message: %v", err)
 		return err
@@ -60,8 +53,8 @@ func (mqs *MessageQueueService) PublishTelemetry(payload []byte, headers map[str
 }
 
 // ConsumeTelemetry consumes telemetry data from the queue
-func (mqs *MessageQueueService) ConsumeTelemetry(consumerGroup, consumerID string, maxMessages int) ([]*Message, error) {
-	messages, err := mqs.queue.Consume(mqs.ctx, "telemetry", consumerGroup, consumerID, maxMessages, 30)
+func (mqs *MessageQueueService) ConsumeTelemetry(ctx context.Context, consumerGroup, consumerID string, maxMessages int) ([]*Message, error) {
+	messages, err := mqs.queue.Consume(ctx, "telemetry", consumerGroup, consumerID, maxMessages, 30)
 	if err != nil {
 		logging.Errorf("Failed to consume telemetry messages: %v", err)
 		return nil, err
@@ -71,8 +64,8 @@ func (mqs *MessageQueueService) ConsumeTelemetry(consumerGroup, consumerID strin
 }
 
 // AcknowledgeMessages acknowledges processed messages
-func (mqs *MessageQueueService) AcknowledgeMessages(consumerGroup string, messages []*Message) error {
-	acked, failed, err := mqs.queue.Acknowledge(consumerGroup, messages)
+func (mqs *MessageQueueService) AcknowledgeMessages(ctx context.Context, consumerGroup string, messages []*Message) error {
+	acked, failed, err := mqs.queue.Acknowledge(ctx, consumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 		return err
@@ -97,15 +90,15 @@ func (mqs *MessageQueueService) CreateTopic(name string, config map[string]strin
 }
 
 // ListTopics returns all available topics
-func (mqs *MessageQueueService) ListTopics() map[string]*Topic {
-	return mqs.queue.ListTopics()
+func (mqs *MessageQueueService) ListTopics(ctx context.Context) map[string]*Topic {
+	return mqs.queue.ListTopics(ctx)
 }
 
 // Health checks the health of the message queue service
-func (mqs *MessageQueueService) Health() bool {
+func (mqs *MessageQueueService) Health(ctx context.Context) bool {
 	// Simple health check - service is healthy if context is not cancelled
 	select {
-	case <-mqs.ctx.Done():
+	case <-ctx.Done():
 		return false
 	default:
 		return true
@@ -120,12 +113,11 @@ func (mqs *MessageQueueService) Stop() {
 		mqs.cleanupTicker.Stop()
 	}
 
-	mqs.cancel()
 	logging.Infof("Message queue service stopped")
 }
 
 // startCleanupRoutine starts the background cleanup routine for expired messages
-func (mqs *MessageQueueService) startCleanupRoutine() {
+func (mqs *MessageQueueService) startCleanupRoutine(ctx context.Context) {
 	mqs.cleanupTicker = time.NewTicker(5 * time.Minute) // Cleanup every 5 minutes
 
 	go func() {
@@ -137,7 +129,7 @@ func (mqs *MessageQueueService) startCleanupRoutine() {
 
 		for {
 			select {
-			case <-mqs.ctx.Done():
+			case <-ctx.Done():
 				logging.Infof("Stopping cleanup routine")
 				return
 			case <-mqs.cleanupTicker.C:
@@ -156,7 +148,7 @@ func (mqs *MessageQueueService) GetMessageQueueInstance() *MessageQueue {
 }
 
 // PublishBatch publishes a batch of messages to the queue
-func (mqs *MessageQueueService) PublishBatch(topic string, payloads [][]byte, headers []map[string]string, ttlSeconds int) ([]*Message, error) {
+func (mqs *MessageQueueService) PublishBatch(ctx context.Context, topic string, payloads [][]byte, headers []map[string]string, ttlSeconds int) ([]*Message, error) {
 	var messages []*Message
 	var errors []error
 
@@ -166,7 +158,7 @@ func (mqs *MessageQueueService) PublishBatch(topic string, payloads [][]byte, he
 			msgHeaders = headers[i]
 		}
 
-		msg, err := mqs.queue.Publish(mqs.ctx, topic, payload, msgHeaders, ttlSeconds)
+		msg, err := mqs.queue.Publish(ctx, topic, payload, msgHeaders, ttlSeconds)
 		if err != nil {
 			errors = append(errors, err)
 			logging.Errorf("Failed to publish message %d in batch: %v", i, err)
@@ -185,11 +177,11 @@ func (mqs *MessageQueueService) PublishBatch(topic string, payloads [][]byte, he
 }
 
 // ConsumeBatch consumes multiple batches of messages
-func (mqs *MessageQueueService) ConsumeBatch(topics []string, consumerGroup, consumerID string, maxMessagesPerTopic int) (map[string][]*Message, error) {
+func (mqs *MessageQueueService) ConsumeBatch(ctx context.Context, topics []string, consumerGroup, consumerID string, maxMessagesPerTopic int) (map[string][]*Message, error) {
 	result := make(map[string][]*Message)
 
 	for _, topic := range topics {
-		messages, err := mqs.queue.Consume(mqs.ctx, topic, consumerGroup, consumerID, maxMessagesPerTopic, 30)
+		messages, err := mqs.queue.Consume(ctx, topic, consumerGroup, consumerID, maxMessagesPerTopic, 30)
 		if err != nil {
 			logging.Errorf("Failed to consume from topic %s: %v", topic, err)
 			continue

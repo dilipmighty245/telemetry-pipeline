@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-
+*.bak
 telemetry.code-workspace
 # Build output directory
 bin/

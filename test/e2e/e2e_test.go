@@ -15,12 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
-
-	// Import service packages for in-process testing
 	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/gateway"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,44 +67,15 @@ func TestE2EServices(t *testing.T) {
 
 	// Start services in background using goroutines
 	var wg sync.WaitGroup
-	serviceCancel := make(chan struct{})
-	defer close(serviceCancel)
+	// serviceCancel := make(chan struct{})
+	// defer close(serviceCancel)
 
-	// Start gateway service
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// Set environment variable for pprof port
-		os.Setenv("PPROF_PORT", strconv.Itoa(pprofPort))
-		gatewayService := &gateway.NexusGatewayService{}
-		if err := gatewayService.Run([]string{"--port=" + strconv.Itoa(gatewayPort)}, os.Stdout); err != nil && err != context.Canceled {
-			t.Logf("Gateway service error: %v", err)
-		}
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
 
-	// Start streamer service
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		streamerService := &streamer.NexusStreamerService{}
-		if err := streamerService.Run([]string{"--port=" + strconv.Itoa(streamerPort)}, os.Stdout); err != nil && err != context.Canceled {
-			t.Logf("Streamer service error: %v", err)
-		}
-	}()
-
-	// Start collector service
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		collectorService := &collector.NexusCollectorService{}
-		if err := collectorService.Run([]string{}, os.Stdout); err != nil && err != context.Canceled {
-			t.Logf("Collector service error: %v", err)
-		}
-	}()
-
-	// Ensure services are stopped when test completes
-	defer func() {
-		// Give services a moment to shut down gracefully
+	// Ensure all services stop at test end
+	t.Cleanup(func() {
+		cancel()
 		done := make(chan struct{})
 		go func() {
 			wg.Wait()
@@ -114,16 +83,41 @@ func TestE2EServices(t *testing.T) {
 		}()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Log("Services did not shut down within 5 seconds")
+		case <-time.After(10 * time.Second):
+			t.Log("Services did not shut down in time")
 		}
-	}()
+	})
 
-	// Wait for services to be ready
-	gatewayURL := fmt.Sprintf("http://localhost:%d/health", gatewayPort)
-	streamerURL := fmt.Sprintf("http://localhost:%d/health", streamerPort)
-	waitForService(t, gatewayURL, 10*time.Second)
-	waitForService(t, streamerURL, 10*time.Second)
+	// Start services
+	start := func(name string, fn func(context.Context) error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fn(ctx); err != nil && err != context.Canceled {
+				t.Logf("%s exited with error: %v", name, err)
+			}
+		}()
+	}
+
+	os.Setenv("PPROF_PORT", strconv.Itoa(pprofPort))
+
+	start("collector", func(ctx context.Context) error {
+		cl := &collector.NexusCollectorService{}
+		return cl.Run(ctx, []string{}, os.Stdout)
+	})
+	start("gateway", func(ctx context.Context) error {
+		gw := &gateway.NexusGatewayService{}
+		return gw.Run(ctx, []string{"--port=" + strconv.Itoa(gatewayPort)}, os.Stdout)
+	})
+
+	start("streamer", func(ctx context.Context) error {
+		st := &streamer.NexusStreamerService{}
+		return st.Run(ctx, []string{"--port=" + strconv.Itoa(streamerPort)}, os.Stdout)
+	})
+
+	// Wait for services to become ready
+	waitForService(t, fmt.Sprintf("http://localhost:%d/health", gatewayPort), 10*time.Second)
+	waitForService(t, fmt.Sprintf("http://localhost:%d/health", streamerPort), 10*time.Second)
 
 	// Run E2E tests with dynamic ports
 	t.Run("HealthChecks", func(t *testing.T) { testHealthChecks(t, gatewayPort, streamerPort) })
@@ -347,4 +341,15 @@ func waitForService(t *testing.T, url string, timeout time.Duration) {
 	}
 
 	t.Fatalf("Service at %s not ready within %v", url, timeout)
+}
+
+func runService(t *testing.T, start func() (*http.Server, error)) (stop func()) {
+	t.Helper()
+	srv, err := start()
+	require.NoError(t, err)
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx) // best-effort shutdown
+	}
 }

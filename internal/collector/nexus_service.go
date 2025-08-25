@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
@@ -87,7 +85,6 @@ type CircuitBreaker struct {
 type CollectorWorker struct {
 	id       int
 	service  *NexusCollectorService
-	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	isActive bool
@@ -191,7 +188,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	}
 
 	// Initialize streaming adapter (always enabled for performance)
-	collector.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
+	collector.streamAdapter = streaming.NewStreamAdapter(ctx, config.StreamingConfig, config.StreamDestination)
 
 	// Initialize circuit breaker if enabled
 	if config.EnableCircuitBreaker {
@@ -202,30 +199,25 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	}
 
 	// Initialize adaptive batcher if enabled
-	if config.EnableAdaptiveBatch {
-		collector.adaptiveBatcher = &AdaptiveBatcher{
-			config:           config,
-			currentBatchSize: config.BatchSize,
-			lastAdjustment:   time.Now(),
-		}
+	collector.adaptiveBatcher = &AdaptiveBatcher{
+		config:           config,
+		currentBatchSize: config.BatchSize,
+		lastAdjustment:   time.Now(),
 	}
 
 	// Initialize worker pool if load balancing is enabled
-	if config.EnableLoadBalancing {
-		collector.workerPool = make(chan *CollectorWorker, config.Workers)
-		collector.workers = make([]*CollectorWorker, config.Workers)
+	collector.workerPool = make(chan *CollectorWorker, config.Workers)
+	collector.workers = make([]*CollectorWorker, config.Workers)
 
-		for i := 0; i < config.Workers; i++ {
-			ctx, cancel := context.WithCancel(context.Background())
-			worker := &CollectorWorker{
-				id:      i,
-				service: collector,
-				ctx:     ctx,
-				cancel:  cancel,
-			}
-			collector.workers[i] = worker
-			collector.workerPool <- worker
+	for i := 0; i < config.Workers; i++ {
+		_, cancel := context.WithCancel(ctx)
+		worker := &CollectorWorker{
+			id:      i,
+			service: collector,
+			cancel:  cancel,
 		}
+		collector.workers[i] = worker
+		collector.workerPool <- worker
 	}
 
 	nexusConfig := &nexus.ServiceConfig{
@@ -236,7 +228,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		BatchSize:      config.BatchSize,
 	}
 
-	nexusService, err := nexus.NewTelemetryService(nexusConfig)
+	nexusService, err := nexus.NewTelemetryService(ctx, nexusConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 	}
@@ -258,7 +250,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	collector.etcdClient = etcdClient
 
 	// Test etcd connection
-	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
@@ -272,10 +264,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 }
 
 // Run is the main entry point for the collector service
-func (nc *NexusCollectorService) Run(args []string, _ io.Writer) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
+func (nc *NexusCollectorService) Run(ctx context.Context, args []string, _ io.Writer) error {
 	config, err := nc.parseConfig(args)
 	if err != nil {
 		return fmt.Errorf("failed to parse configuration: %w", err)
@@ -315,7 +304,7 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 
 	// Start streaming adapter
 	if nc.streamAdapter != nil {
-		err := nc.streamAdapter.Start()
+		err := nc.streamAdapter.Start(ctx)
 		if err != nil {
 			logging.Errorf("Failed to start stream adapter: %v", err)
 			return err
@@ -861,7 +850,6 @@ func (cb *CircuitBreaker) recordFailure() {
 }
 
 // Adaptive batcher methods
-
 func (ab *AdaptiveBatcher) getCurrentBatchSize() int {
 	ab.mu.RLock()
 	defer ab.mu.RUnlock()

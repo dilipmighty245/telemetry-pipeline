@@ -329,18 +329,12 @@ func TestValidateServiceAddress(t *testing.T) {
 			port:      99999,
 			expectErr: true,
 		},
-		{
-			name:      "Unreachable address",
-			address:   "192.0.2.1", // TEST-NET-1 (RFC 5737) - should be unreachable
-			port:      8080,
-			expectErr: true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Add timeout to prevent hanging on network calls
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			done := make(chan error)

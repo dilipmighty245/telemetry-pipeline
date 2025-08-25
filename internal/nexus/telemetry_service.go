@@ -128,7 +128,7 @@ type ClusterMetadata struct {
 }
 
 // NewTelemetryService creates a new Nexus-style telemetry service
-func NewTelemetryService(config *ServiceConfig) (*TelemetryService, error) {
+func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*TelemetryService, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
@@ -142,7 +142,7 @@ func NewTelemetryService(config *ServiceConfig) (*TelemetryService, error) {
 		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	service := &TelemetryService{
 		etcdClient: etcdClient,

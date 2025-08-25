@@ -96,7 +96,7 @@ func NewStreamerService(config *StreamerConfig, mqService *messagequeue.MessageQ
 }
 
 // Start starts the streaming service
-func (ss *StreamerService) Start() error {
+func (ss *StreamerService) Start(ctx context.Context) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -107,7 +107,7 @@ func (ss *StreamerService) Start() error {
 	ss.isRunning = true
 	ss.wg.Add(1)
 
-	go ss.streamLoop()
+	go ss.streamLoop(ctx)
 
 	logging.Infof("Started streamer service %s", ss.config.StreamerID)
 	return nil
@@ -179,7 +179,7 @@ func (ss *StreamerService) GetTotalStreamed() int64 {
 }
 
 // streamLoop is the main streaming loop
-func (ss *StreamerService) streamLoop() {
+func (ss *StreamerService) streamLoop(ctx context.Context) {
 	defer ss.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
@@ -194,7 +194,7 @@ func (ss *StreamerService) streamLoop() {
 
 	for {
 		select {
-		case <-ss.ctx.Done():
+		case <-ctx.Done():
 			logging.Infof("Streaming loop stopped for service %s", ss.config.StreamerID)
 			return
 		case <-ticker.C:
@@ -204,7 +204,7 @@ func (ss *StreamerService) streamLoop() {
 				return
 			}
 
-			err := ss.streamBatch()
+			err := ss.streamBatch(ctx)
 			if err != nil {
 				ss.mu.Lock()
 				ss.lastError = err
@@ -224,7 +224,7 @@ func (ss *StreamerService) streamLoop() {
 }
 
 // streamBatch streams a batch of telemetry data
-func (ss *StreamerService) streamBatch() error {
+func (ss *StreamerService) streamBatch(ctx context.Context) error {
 	// Read batch from CSV
 	telemetryData, err := ss.csvReader.ReadBatch(ss.config.BatchSize)
 	if err != nil && err != io.EOF {
@@ -244,7 +244,7 @@ func (ss *StreamerService) streamBatch() error {
 			return ss.ctx.Err()
 		}
 
-		err = ss.publishTelemetryData(data)
+		err = ss.publishTelemetryData(ctx, data)
 		if err != nil {
 			logging.Errorf("Failed to publish telemetry data: %v", err)
 
@@ -265,7 +265,7 @@ func (ss *StreamerService) streamBatch() error {
 					// Continue with retry
 				}
 
-				err = ss.publishTelemetryData(data)
+				err = ss.publishTelemetryData(ctx, data)
 				if err == nil {
 					break
 				}
@@ -288,7 +288,7 @@ func (ss *StreamerService) streamBatch() error {
 }
 
 // publishTelemetryData publishes a single telemetry data point to the message queue
-func (ss *StreamerService) publishTelemetryData(data *models.TelemetryData) error {
+func (ss *StreamerService) publishTelemetryData(ctx context.Context, data *models.TelemetryData) error {
 	// Convert to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -305,7 +305,7 @@ func (ss *StreamerService) publishTelemetryData(data *models.TelemetryData) erro
 	}
 
 	// Publish to message queue
-	return ss.messageQueue.PublishTelemetry(jsonData, headers)
+	return ss.messageQueue.PublishTelemetry(ctx, jsonData, headers)
 }
 
 // updateMetrics updates streaming metrics

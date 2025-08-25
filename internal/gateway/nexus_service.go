@@ -8,10 +8,9 @@ import (
 	"net/http"
 	_ "net/http/pprof" // register pprof handlers
 	"os"
-	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/docs/generated"
@@ -19,7 +18,8 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/gorilla/websocket"
-	nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
+
+	// nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	echoSwagger "github.com/swaggo/echo-swagger"
@@ -36,7 +36,7 @@ type NexusGatewayService struct {
 	port         int
 	etcdClient   *clientv3.Client
 	nexusService *nexus.TelemetryService
-	nexusGraphQL nexusgraphql.ServerClient
+	// nexusGraphQL nexusgraphql.ServerClient
 	messageQueue *messagequeue.MessageQueueService
 	echo         *echo.Echo
 	upgrader     websocket.Upgrader
@@ -70,10 +70,7 @@ type TelemetryData struct {
 }
 
 // Run is the main entry point for the gateway service
-func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
+func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io.Writer) error {
 	config, err := ng.parseConfig(args)
 	if err != nil {
 		return fmt.Errorf("failed to parse configuration: %w", err)
@@ -184,7 +181,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	}
 
 	// Test etcd connection
-	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
@@ -199,7 +196,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		EtcdEndpoints: config.EtcdEndpoints,
 		ClusterID:     config.ClusterID,
 	}
-	nexusService, err := nexus.NewTelemetryService(nexusConfig)
+	nexusService, err := nexus.NewTelemetryService(ctx, nexusConfig)
 	if err != nil {
 		if etcdClient != nil {
 			etcdClient.Close()
@@ -209,10 +206,10 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 
 	// Create Nexus GraphQL client (would connect to Nexus GraphQL server)
 	// For now, we'll use a mock/placeholder as we're integrating with existing Nexus
-	var nexusGraphQLClient nexusgraphql.ServerClient
+	// var nexusGraphQLClient nexusgraphql.ServerClient
 
 	// Create message queue service
-	messageQueue, err := messagequeue.NewMessageQueueService()
+	messageQueue, err := messagequeue.NewMessageQueueService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize message queue: %w", err)
 	}
@@ -232,7 +229,6 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		port:         config.Port,
 		etcdClient:   etcdClient,
 		nexusService: nexusService,
-		nexusGraphQL: nexusGraphQLClient,
 		messageQueue: messageQueue,
 		echo:         e,
 		upgrader:     upgrader,
@@ -276,7 +272,7 @@ func (ng *NexusGatewayService) Start(ctx context.Context) error {
 		logging.Infof("Attempting graceful shutdown of HTTP server")
 
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -614,16 +610,15 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 		}
 	}
 
-	// Sort by timestamp (most recent first)
-	for i := 0; i < len(telemetryData)-1; i++ {
-		for j := i + 1; j < len(telemetryData); j++ {
-			t1, _ := time.Parse(time.RFC3339, telemetryData[i].Timestamp)
-			t2, _ := time.Parse(time.RFC3339, telemetryData[j].Timestamp)
-			if t1.Before(t2) {
-				telemetryData[i], telemetryData[j] = telemetryData[j], telemetryData[i]
-			}
+	// Sort by timestamp (most recent first) using Go's efficient sort package
+	sort.Slice(telemetryData, func(i, j int) bool {
+		t1, err1 := time.Parse(time.RFC3339, telemetryData[i].Timestamp)
+		t2, err2 := time.Parse(time.RFC3339, telemetryData[j].Timestamp)
+		if err1 != nil || err2 != nil {
+			return false // Keep original order if parsing fails
 		}
-	}
+		return t1.After(t2) // Most recent first
+	})
 
 	// Apply limit
 	if len(telemetryData) > limit {
