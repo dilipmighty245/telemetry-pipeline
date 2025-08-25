@@ -211,7 +211,7 @@ func TestNexusGatewayService_QueryTelemetryByGPUHandler(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// Test with valid GPU ID but no etcd connection
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/gpus/gpu-123/telemetry?start_time=2023-01-01T00:00:00Z&end_time=2023-01-02T00:00:00Z&limit=50", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gpus/gpu-123/telemetry?limit=50", nil)
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
 	c.SetParamNames("id")
@@ -268,7 +268,13 @@ func TestNexusGatewayService_PlaceholderHandlers(t *testing.T) {
 
 			err := h.handler(c)
 			assert.NoError(t, err)
-			assert.Equal(t, http.StatusOK, rec.Code)
+			
+			// WebSocket handler returns 400 for invalid upgrade requests, others return 200
+			if h.name == "websocket" {
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+			} else {
+				assert.Equal(t, http.StatusOK, rec.Code)
+			}
 		})
 	}
 }

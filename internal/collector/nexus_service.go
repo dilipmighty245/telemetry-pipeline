@@ -297,7 +297,7 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 	logging.Infof("Starting enhanced Nexus collector processing")
 
 	// Start streaming adapter
-	if nc.streamAdapter != nil {
+	if nc.streamAdapter == nil {
 		return fmt.Errorf("stream adapter is not initialized")
 	}
 
@@ -359,11 +359,11 @@ func (nc *NexusCollectorService) setupWatchAPI(ctx context.Context) error {
 	})
 }
 
-// messageQueueConsumer consumes messages directly from etcd and feeds them to processing workers.
+// messageQueueConsumer consumes messages from etcd using Watch API for real-time notifications.
 //
-// This method runs in a separate goroutine and continuously polls the etcd message queue
-// for new telemetry messages. It retrieves messages in batches and forwards them to
-// the processing workers through a buffered channel.
+// This method runs in a separate goroutine and watches the etcd message queue
+// for new telemetry messages using etcd's Watch API. It processes messages as they
+// arrive and forwards them to the processing workers through a buffered channel.
 //
 // Parameters:
 //   - ctx: Context for cancellation and shutdown
@@ -371,92 +371,143 @@ func (nc *NexusCollectorService) setupWatchAPI(ctx context.Context) error {
 // Returns:
 //   - error: Any error that occurred during message consumption
 //
-// The consumer uses a ticker to poll at regular intervals and handles graceful
+// The consumer uses etcd Watch for real-time notifications and handles graceful
 // shutdown when the context is canceled.
 func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error {
-	logging.Infof("Starting message queue consumer (direct etcd consumption)")
+	logging.Infof("Starting message queue consumer (etcd Watch API)")
 
-	ticker := time.NewTicker(nc.config.PollInterval)
-	defer ticker.Stop()
+	queueKey := nc.config.MessageQueuePrefix + "/telemetry"
+	
+	// First, process any existing messages
+	if err := nc.processExistingMessages(ctx); err != nil {
+		logging.Warnf("Error processing existing messages: %v", err)
+	}
 
+	// Start watching for new messages
+	watchChan := nc.etcdClient.Watch(ctx, queueKey+"/", clientv3.WithPrefix())
+	
 	for {
 		select {
 		case <-ctx.Done():
 			logging.Infof("Stopping message queue consumer")
 			return ctx.Err()
-		case <-ticker.C:
-			if err := nc.consumeFromQueue(ctx); err != nil {
-				logging.Errorf("Error consuming from queue: %v", err)
+		case watchResp := <-watchChan:
+			if watchResp.Err() != nil {
+				logging.Errorf("Watch error: %v", watchResp.Err())
+				// Restart watch on error
+				watchChan = nc.etcdClient.Watch(ctx, queueKey+"/", clientv3.WithPrefix())
+				continue
+			}
+			
+			for _, event := range watchResp.Events {
+				if event.Type == clientv3.EventTypePut {
+					if err := nc.processWatchEvent(ctx, event); err != nil {
+						logging.Errorf("Error processing watch event: %v", err)
+					}
+				}
 			}
 		}
 	}
 }
 
-// consumeFromQueue consumes a batch of messages directly from the etcd message queue.
+// processExistingMessages processes any messages that already exist in etcd before starting the watch.
 //
-// This method retrieves messages from etcd using a prefix scan, unmarshals them into
-// TelemetryRecord structures, and forwards them to the processing channel. It also
-// handles message acknowledgment by deleting processed messages from etcd.
+// This method ensures that messages that were added before the watch started are not missed.
+// It uses the same logic as the original consumeFromQueue but is called once at startup.
 //
 // Parameters:
 //   - ctx: Context for the etcd operations
 //
 // Returns:
 //   - error: Any error that occurred during message retrieval or processing
-//
-// The method processes messages in batches for efficiency and includes error handling
-// for malformed messages, automatically cleaning them up from the queue.
-func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
+func (nc *NexusCollectorService) processExistingMessages(ctx context.Context) error {
 	queueKey := nc.config.MessageQueuePrefix + "/telemetry"
 
-	// Get messages from etcd, sorted by key (which includes timestamp)
+	// Get existing messages from etcd, sorted by key (which includes timestamp)
 	resp, err := nc.etcdClient.Get(ctx, queueKey+"/",
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(nc.config.BatchSize)))
 	if err != nil {
-		return fmt.Errorf("failed to get messages from etcd: %w", err)
+		return fmt.Errorf("failed to get existing messages from etcd: %w", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil // No messages to process
+		logging.Debugf("No existing messages found in queue")
+		return nil
 	}
 
-	logging.Debugf("Found %d messages to process", len(resp.Kvs))
+	logging.Debugf("Found %d existing messages to process", len(resp.Kvs))
 
-	// Process each message
-	processedCount := 0
+	// Process each existing message
 	for _, kv := range resp.Kvs {
-		var record TelemetryRecord
-		if err := json.Unmarshal(kv.Value, &record); err != nil {
-			logging.Warnf("Failed to unmarshal telemetry record: %v", err)
-			// Delete malformed message
-			if _, delErr := nc.etcdClient.Delete(ctx, string(kv.Key)); delErr != nil {
-				logging.Warnf("Failed to delete malformed message: %v", delErr)
-			}
-			continue
-		}
-
-		// Send to processing channel (non-blocking)
-		select {
-		case nc.processingChan <- &record:
-			nc.messageCount++
-			processedCount++
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			logging.Warnf("Processing channel full, dropping message")
-		}
-
-		// Delete message after queuing for processing (acknowledgment)
-		if _, err := nc.etcdClient.Delete(ctx, string(kv.Key)); err != nil {
-			logging.Warnf("Failed to delete processed message: %v", err)
+		if err := nc.processMessage(ctx, kv.Key, kv.Value); err != nil {
+			logging.Errorf("Error processing existing message: %v", err)
 		}
 	}
 
-	logging.Debugf("Queued %d messages for processing", len(resp.Kvs))
 	return nil
 }
+
+// processWatchEvent processes a single watch event from etcd.
+//
+// This method handles PUT events (new messages) by unmarshaling and processing them.
+// It's called for each event received from the etcd watch channel.
+//
+// Parameters:
+//   - ctx: Context for the etcd operations
+//   - event: The etcd watch event to process
+//
+// Returns:
+//   - error: Any error that occurred during message processing
+func (nc *NexusCollectorService) processWatchEvent(ctx context.Context, event *clientv3.Event) error {
+	return nc.processMessage(ctx, event.Kv.Key, event.Kv.Value)
+}
+
+// processMessage processes a single message from etcd (used by both existing and watch processing).
+//
+// This method unmarshals the message, sends it to the processing channel, and deletes it from etcd.
+// It handles malformed messages by logging warnings and cleaning them up.
+//
+// Parameters:
+//   - ctx: Context for the etcd operations
+//   - key: The etcd key of the message
+//   - value: The message data
+//
+// Returns:
+//   - error: Any error that occurred during message processing
+func (nc *NexusCollectorService) processMessage(ctx context.Context, key []byte, value []byte) error {
+	var record TelemetryRecord
+	if err := json.Unmarshal(value, &record); err != nil {
+		logging.Warnf("Failed to unmarshal telemetry record: %v", err)
+		// Delete malformed message
+		if _, delErr := nc.etcdClient.Delete(ctx, string(key)); delErr != nil {
+			logging.Warnf("Failed to delete malformed message: %v", delErr)
+		}
+		return fmt.Errorf("failed to unmarshal message: %w", err)
+	}
+
+	// Send to processing channel (non-blocking)
+	select {
+	case nc.processingChan <- &record:
+		nc.messageCount++
+		logging.Debugf("Queued message for processing: %s", string(key))
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		logging.Warnf("Processing channel full, dropping message: %s", string(key))
+		return fmt.Errorf("processing channel full")
+	}
+
+	// Delete message after queuing for processing (acknowledgment)
+	if _, err := nc.etcdClient.Delete(ctx, string(key)); err != nil {
+		logging.Warnf("Failed to delete processed message: %v", err)
+		return fmt.Errorf("failed to delete message: %w", err)
+	}
+
+	return nil
+}
+
 
 // workerPoolProcessor manages the worker pool for load-balanced processing.
 //
