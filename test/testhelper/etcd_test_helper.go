@@ -1,4 +1,4 @@
-package messagequeue
+package testhelper
 
 import (
 	"context"
@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3client"
@@ -101,6 +103,22 @@ func StartEtcdTestServer() (*EtcdTestServer, error) {
 	}, nil
 }
 
+func enforcePortRelease(ports ...int) {
+	// Give services a moment to fully shutdown before checking
+	time.Sleep(200 * time.Millisecond)
+
+	for _, port := range ports {
+		addr := fmt.Sprintf(":%d", port)
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			logging.Warnf("port %d is still in use after test cleanup", port)
+			return
+		}
+		_ = ln.Close()
+	}
+
+}
+
 // Stop stops the etcd test server and cleans up
 func (ets *EtcdTestServer) Stop() error {
 	if ets.Client != nil {
@@ -120,6 +138,19 @@ func (ets *EtcdTestServer) Stop() error {
 	// Clean up data directory
 	if ets.DataDir != "" {
 		return os.RemoveAll(ets.DataDir)
+	}
+
+	endpoints := ets.Endpoints
+	if len(endpoints) == 0 {
+		return nil
+	}
+
+	for _, endpoint := range endpoints {
+		val := strings.TrimPrefix(endpoint, "http://127.0.0.1:")
+		i, err := strconv.Atoi(val)
+		if err == nil {
+			enforcePortRelease(i)
+		}
 	}
 
 	return nil

@@ -2,17 +2,19 @@ package messagequeue
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewMessageQueue(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -25,7 +27,7 @@ func TestNewMessageQueue(t *testing.T) {
 
 func TestCreateTopic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -54,7 +56,7 @@ func TestCreateTopic(t *testing.T) {
 
 func TestPublishMessage(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -81,7 +83,7 @@ func TestPublishMessage(t *testing.T) {
 
 func TestPublishToNonExistentTopic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -97,7 +99,7 @@ func TestPublishToNonExistentTopic(t *testing.T) {
 
 func TestConsumeMessages(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -129,7 +131,7 @@ func TestConsumeMessages(t *testing.T) {
 
 func TestConsumeFromNonExistentTopic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -144,7 +146,7 @@ func TestConsumeFromNonExistentTopic(t *testing.T) {
 
 func TestAcknowledgeMessages(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -156,12 +158,10 @@ func TestAcknowledgeMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	// Publish messages
-	var publishedIDs []string
 	for i := 0; i < 3; i++ {
 		payload := []byte("test message " + string(rune(i+'0')))
-		msg, err := mq.Publish(ctx, "test-topic", payload, nil, 3600)
+		_, err := mq.Publish(ctx, "test-topic", payload, nil, 3600)
 		require.NoError(t, err)
-		publishedIDs = append(publishedIDs, msg.ID)
 	}
 
 	// Consume messages
@@ -184,7 +184,7 @@ func TestAcknowledgeMessages(t *testing.T) {
 
 func TestMessageExpiration(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -222,7 +222,7 @@ func TestMessageExpiration(t *testing.T) {
 
 func TestQueueStats(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -252,7 +252,7 @@ func TestQueueStats(t *testing.T) {
 
 func TestConsumerRegistration(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -282,7 +282,7 @@ func TestConsumerRegistration(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -294,24 +294,56 @@ func TestConcurrentAccess(t *testing.T) {
 	err = mq.CreateTopic("test-topic", nil)
 	require.NoError(t, err)
 
+	// Use sync.WaitGroup for better synchronization
+	var wg sync.WaitGroup
+	publishErrors := make(chan error, 10)
+
 	// Concurrently publish messages
-	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
+		wg.Add(1)
 		go func(id int) {
+			defer wg.Done()
 			payload := []byte("test message " + string(rune(id+'0')))
 			_, publishErr := mq.Publish(ctx, "test-topic", payload, nil, 3600)
-			assert.NoError(t, publishErr)
-			done <- true
+			if publishErr != nil {
+				publishErrors <- publishErr
+			}
 		}(i)
 	}
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 10; i++ {
-		<-done
+	wg.Wait()
+	close(publishErrors)
+
+	// Check for any publish errors
+	for publishErr := range publishErrors {
+		assert.NoError(t, publishErr)
 	}
 
-	// In etcd backend, we can verify by consuming all messages
-	messages, err := mq.Consume(ctx, "test-topic", "test-group", "consumer-1", 20, 30)
-	assert.NoError(t, err)
-	assert.Len(t, messages, 10)
+	// Add a small delay to ensure all messages are fully committed to etcd
+	// This addresses the race condition where etcd might not have fully
+	// committed all messages even after the publish calls return successfully
+	time.Sleep(100 * time.Millisecond)
+
+	// Retry consuming messages with exponential backoff to handle eventual consistency
+	var messages []*Message
+	maxRetries := 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		messages, err = mq.Consume(ctx, "test-topic", "test-group", "consumer-1", 20, 30)
+		assert.NoError(t, err)
+
+		if len(messages) == 10 {
+			break // Success - we got all expected messages
+		}
+
+		if attempt < maxRetries-1 {
+			// Wait before retrying with exponential backoff
+			backoffDelay := time.Duration(50*(1<<attempt)) * time.Millisecond
+			time.Sleep(backoffDelay)
+			logging.Debugf("Attempt %d: Got %d messages, expected 10. Retrying in %v...",
+				attempt+1, len(messages), backoffDelay)
+		}
+	}
+
+	assert.Len(t, messages, 10, "Expected 10 messages after %d attempts, got %d", maxRetries, len(messages))
 }

@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMessageQueueService(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -98,7 +99,7 @@ func TestMessageQueueService(t *testing.T) {
 
 func TestMessageQueueService_EdgeCases(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -168,7 +169,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 
 func TestMessageQueueService_Concurrent(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -245,7 +246,7 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 
 func TestMessageQueueService_TopicOperations(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -271,7 +272,7 @@ func TestMessageQueueService_TopicOperations(t *testing.T) {
 
 func TestMessageQueueService_BatchOperations(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -316,7 +317,7 @@ func TestMessageQueueService_BatchOperations(t *testing.T) {
 
 func TestMessageQueueService_ErrorHandling(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 	ctx := context.Background()
@@ -353,7 +354,7 @@ func TestMessageQueueService_ErrorHandling(t *testing.T) {
 
 func BenchmarkMessageQueueService(b *testing.B) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(b, err)
 	defer cleanup()
 

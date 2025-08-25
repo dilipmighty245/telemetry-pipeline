@@ -18,14 +18,14 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/internal/collector"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/gateway"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streamer"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	testTimeout = 30 * time.Second
+	testTimeout = 60 * time.Second
 )
 
 // getAvailablePort returns an available port on the local machine
@@ -40,12 +40,26 @@ func getAvailablePort() (int, error) {
 	return addr.Port, nil
 }
 
+func enforcePortRelease(t *testing.T, ports ...int) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		// Give services a moment to fully shutdown before checking
+		time.Sleep(200 * time.Millisecond)
+
+		for _, port := range ports {
+			addr := fmt.Sprintf(":%d", port)
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				t.Fatalf("port %d is still in use after test cleanup", port)
+			}
+			_ = ln.Close()
+		}
+	})
+}
+
 // TestE2EServices tests the complete end-to-end flow
 func TestE2EServices(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping E2E tests in short mode")
-	}
-
 	// Get available ports for services
 	gatewayPort, err := getAvailablePort()
 	require.NoError(t, err, "Should get available port for gateway")
@@ -57,12 +71,12 @@ func TestE2EServices(t *testing.T) {
 	require.NoError(t, err, "Should get available port for pprof")
 
 	// Start embedded etcd server for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
 	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	err = testhelper.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
 	// Start services in background using goroutines

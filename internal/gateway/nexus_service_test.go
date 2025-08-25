@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +16,7 @@ import (
 
 func TestGatewayConfig_Validation(t *testing.T) {
 	// Setup embedded etcd server for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 

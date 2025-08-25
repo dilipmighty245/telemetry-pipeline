@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -174,12 +175,12 @@ func TestStreamerService_UpdateConfig(t *testing.T) {
 
 func TestNewNexusStreamerService(t *testing.T) {
 	// Setup embedded etcd for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
 	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	err = testhelper.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
 	config := &NexusStreamerConfig{
@@ -207,12 +208,12 @@ func TestNewNexusStreamerService(t *testing.T) {
 
 func TestNexusStreamerService_DefaultConfigs(t *testing.T) {
 	// Setup embedded etcd for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
 	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	err = testhelper.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
 	config := &NexusStreamerConfig{
@@ -328,12 +329,12 @@ func TestStreamerWorker_Lifecycle(t *testing.T) {
 
 func TestNexusStreamerService_GetMetrics(t *testing.T) {
 	// Setup embedded etcd for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
 	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	err = testhelper.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
 	config := &NexusStreamerConfig{
@@ -364,12 +365,12 @@ func TestNexusStreamerService_GetMetrics(t *testing.T) {
 
 func TestNexusStreamerService_StreamDirectly(t *testing.T) {
 	// Setup embedded etcd for testing
-	etcdServer, cleanup, err := messagequeue.SetupEtcdForTest()
+	etcdServer, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
 	// Wait for etcd to be ready
-	err = messagequeue.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
+	err = testhelper.WaitForEtcdReady(etcdServer.Endpoints, 10*time.Second)
 	require.NoError(t, err, "etcd should be ready")
 
 	config := &NexusStreamerConfig{

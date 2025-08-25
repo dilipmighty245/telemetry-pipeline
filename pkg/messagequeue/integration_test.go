@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ type MockTelemetryData struct {
 
 func TestMessageQueueIntegration(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
@@ -205,7 +206,7 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 
 func TestMessageQueueFailover(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
@@ -261,7 +262,7 @@ func TestMessageQueueFailover(t *testing.T) {
 
 func BenchmarkMessageQueueIntegration(b *testing.B) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(b, err)
 	defer cleanup()
 

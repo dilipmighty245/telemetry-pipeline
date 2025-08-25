@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/test/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,7 +114,7 @@ func TestTopicStatsStruct(t *testing.T) {
 
 func TestNewMessageQueueBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -127,7 +128,7 @@ func TestNewMessageQueueBasic(t *testing.T) {
 
 func TestCreateTopicBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -147,7 +148,7 @@ func TestCreateTopicBasic(t *testing.T) {
 
 func TestListTopicsBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -162,7 +163,7 @@ func TestListTopicsBasic(t *testing.T) {
 
 func TestGetStatsBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -180,7 +181,7 @@ func TestGetStatsBasic(t *testing.T) {
 
 func TestCleanupExpiredMessagesBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -195,7 +196,7 @@ func TestCleanupExpiredMessagesBasic(t *testing.T) {
 
 func TestCloseBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -220,7 +221,7 @@ func TestErrorConstants(t *testing.T) {
 
 func TestPublishBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -242,7 +243,7 @@ func TestPublishBasic(t *testing.T) {
 
 func TestConsumeBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -258,7 +259,7 @@ func TestConsumeBasic(t *testing.T) {
 
 func TestAcknowledgeBasic(t *testing.T) {
 	// Start embedded etcd server for testing
-	_, cleanup, err := SetupEtcdForTest()
+	_, cleanup, err := testhelper.SetupEtcdForTest()
 	require.NoError(t, err)
 	defer cleanup()
 
