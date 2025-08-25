@@ -1,3 +1,15 @@
+// Package nexus provides Nexus-style telemetry service integration using etcd as the backend.
+//
+// This package implements a telemetry service that manages GPU clusters, hosts, and devices
+// in a hierarchical structure stored in etcd. It provides functionality for:
+//   - Cluster initialization and management
+//   - Host and GPU registration
+//   - Telemetry data storage and retrieval
+//   - Real-time status updates and monitoring
+//   - Watch API for change notifications
+//
+// The service uses etcd's key-value store to maintain the telemetry hierarchy and
+// provides a Nexus-like API for managing distributed GPU telemetry data.
 package nexus
 
 import (
@@ -10,8 +22,11 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// TelemetryService integrates telemetry pipeline with Nexus-like patterns
-// This uses etcd directly instead of the full Nexus framework for simplicity
+// TelemetryService integrates telemetry pipeline with Nexus-like patterns.
+//
+// This service uses etcd directly instead of the full Nexus framework for simplicity
+// while providing similar hierarchical data organization and watch capabilities.
+// It manages clusters, hosts, GPUs, and telemetry data in a structured format.
 type TelemetryService struct {
 	etcdClient *clientv3.Client
 	config     *ServiceConfig
@@ -19,7 +34,10 @@ type TelemetryService struct {
 	cancel     context.CancelFunc
 }
 
-// ServiceConfig holds configuration for the telemetry service
+// ServiceConfig holds configuration parameters for the telemetry service.
+//
+// This configuration defines how the service connects to etcd, identifies itself
+// within the cluster, and manages data processing parameters.
 type ServiceConfig struct {
 	EtcdEndpoints  []string
 	ClusterID      string
@@ -29,7 +47,11 @@ type ServiceConfig struct {
 	// WatchAPI is now enabled by default
 }
 
-// TelemetryCluster represents the root telemetry cluster
+// TelemetryCluster represents the root telemetry cluster in the hierarchy.
+//
+// A cluster is the top-level organizational unit that contains multiple hosts
+// and their associated GPU devices. It maintains metadata about the overall
+// cluster state and configuration.
 type TelemetryCluster struct {
 	ClusterID   string            `json:"cluster_id"`
 	ClusterName string            `json:"cluster_name"`
@@ -41,7 +63,11 @@ type TelemetryCluster struct {
 	Metadata    ClusterMetadata   `json:"metadata"`
 }
 
-// TelemetryHost represents a host in the cluster
+// TelemetryHost represents a physical or virtual host machine within a cluster.
+//
+// Each host can contain multiple GPU devices and maintains its own status
+// and health information. Hosts are registered with the cluster and tracked
+// for availability and performance monitoring.
 type TelemetryHost struct {
 	HostID    string            `json:"host_id"`
 	Hostname  string            `json:"hostname"`
@@ -53,7 +79,11 @@ type TelemetryHost struct {
 	Status    HostStatus        `json:"status"`
 }
 
-// TelemetryGPU represents a GPU device
+// TelemetryGPU represents a GPU device attached to a host.
+//
+// Each GPU maintains detailed hardware information, status, and performance
+// characteristics. GPUs are uniquely identified both locally (within a host)
+// and globally (across the entire cluster).
 type TelemetryGPU struct {
 	GPUID         string            `json:"gpu_id"`      // Host-specific GPU ID (0, 1, 2, 3...)
 	UUID          string            `json:"uuid"`        // Globally unique GPU identifier
@@ -68,7 +98,11 @@ type TelemetryGPU struct {
 	Status        GPUStatus         `json:"status"`
 }
 
-// TelemetryData represents individual GPU telemetry data points
+// TelemetryData represents individual GPU telemetry data points collected over time.
+//
+// This structure contains performance metrics, utilization data, and environmental
+// information for a specific GPU at a specific point in time. It includes both
+// standard metrics and extensible custom metrics.
 type TelemetryData struct {
 	TelemetryID string    `json:"telemetry_id"`
 	Timestamp   time.Time `json:"timestamp"`
@@ -98,7 +132,10 @@ type TelemetryData struct {
 	BatchID     string    `json:"batch_id"`
 }
 
-// GPUStatus represents current GPU status
+// GPUStatus represents the current operational status of a GPU device.
+//
+// This structure tracks real-time performance metrics, health indicators,
+// and operational state to provide monitoring and alerting capabilities.
 type GPUStatus struct {
 	State              string    `json:"state"` // active, idle, error, maintenance
 	UtilizationPercent float32   `json:"utilization_percent"`
@@ -109,7 +146,10 @@ type GPUStatus struct {
 	LastUpdated        time.Time `json:"last_updated"`
 }
 
-// HostStatus represents current host status
+// HostStatus represents the current operational status of a host machine.
+//
+// This structure tracks host availability, health checks, and connectivity
+// to ensure proper cluster operation and monitoring.
 type HostStatus struct {
 	State        string            `json:"state"` // active, inactive, maintenance
 	Healthy      bool              `json:"healthy"`
@@ -117,7 +157,10 @@ type HostStatus struct {
 	HealthChecks map[string]string `json:"health_checks"`
 }
 
-// ClusterMetadata represents cluster metadata
+// ClusterMetadata represents aggregate metadata and statistics for a cluster.
+//
+// This structure maintains counts of hosts and GPUs, their operational status,
+// and cluster-wide configuration settings for monitoring and management.
 type ClusterMetadata struct {
 	TotalHosts    int32             `json:"total_hosts"`
 	TotalGPUs     int32             `json:"total_gpus"`
@@ -127,7 +170,19 @@ type ClusterMetadata struct {
 	Configuration map[string]string `json:"configuration"`
 }
 
-// NewTelemetryService creates a new Nexus-style telemetry service
+// NewTelemetryService creates a new Nexus-style telemetry service with etcd backend.
+//
+// This function initializes the telemetry service, establishes connection to etcd,
+// and sets up the cluster structure. The service is ready to register hosts and GPUs
+// and begin collecting telemetry data.
+//
+// Parameters:
+//   - ctx: Context for the service lifecycle
+//   - config: Service configuration including etcd endpoints and cluster settings
+//
+// Returns:
+//   - *TelemetryService: Initialized telemetry service instance
+//   - error: nil on success, error describing the failure otherwise
 func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*TelemetryService, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -161,7 +216,13 @@ func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*Telemetry
 	return service, nil
 }
 
-// initializeCluster creates or updates the cluster node in etcd
+// initializeCluster creates or updates the cluster node in etcd.
+//
+// This method sets up the root cluster entry with initial metadata and configuration.
+// It's called during service initialization to ensure the cluster exists in etcd.
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) initializeCluster() error {
 	cluster := &TelemetryCluster{
 		ClusterID:   ts.config.ClusterID,
@@ -204,7 +265,16 @@ func (ts *TelemetryService) initializeCluster() error {
 	return nil
 }
 
-// RegisterHost registers a new host in the telemetry cluster
+// RegisterHost registers a new host in the telemetry cluster.
+//
+// This method adds a host to the cluster, initializes its status, and updates
+// cluster metadata. The host becomes available for GPU registration and monitoring.
+//
+// Parameters:
+//   - hostInfo: Host information including ID, hostname, and network details
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) RegisterHost(hostInfo *TelemetryHost) error {
 	hostInfo.CreatedAt = time.Now()
 	hostInfo.UpdatedAt = time.Now()
@@ -240,7 +310,17 @@ func (ts *TelemetryService) RegisterHost(hostInfo *TelemetryHost) error {
 	return nil
 }
 
-// RegisterGPU registers a new GPU device for a host
+// RegisterGPU registers a new GPU device for a specific host.
+//
+// This method adds a GPU to a host, initializes its status, and updates cluster
+// metadata. The GPU becomes available for telemetry data collection and monitoring.
+//
+// Parameters:
+//   - hostID: ID of the host that contains the GPU
+//   - gpuInfo: GPU information including device details and capabilities
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) RegisterGPU(hostID string, gpuInfo *TelemetryGPU) error {
 	gpuInfo.CreatedAt = time.Now()
 	gpuInfo.UpdatedAt = time.Now()
@@ -277,7 +357,18 @@ func (ts *TelemetryService) RegisterGPU(hostID string, gpuInfo *TelemetryGPU) er
 	return nil
 }
 
-// StoreTelemetryData stores GPU telemetry data in etcd
+// StoreTelemetryData stores GPU telemetry data in etcd and updates GPU status.
+//
+// This method persists telemetry data for a specific GPU and automatically updates
+// the GPU's current status based on the latest metrics.
+//
+// Parameters:
+//   - hostID: ID of the host containing the GPU
+//   - gpuID: ID of the GPU device
+//   - telemetryData: Telemetry data to store
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) StoreTelemetryData(hostID, gpuID string, telemetryData *TelemetryData) error {
 	telemetryData.CollectedAt = time.Now()
 	telemetryData.ProcessedAt = time.Now()
@@ -304,7 +395,18 @@ func (ts *TelemetryService) StoreTelemetryData(hostID, gpuID string, telemetryDa
 	return nil
 }
 
-// updateGPUStatus updates the current status of a GPU based on latest telemetry
+// updateGPUStatus updates the current status of a GPU based on latest telemetry data.
+//
+// This method calculates health status and updates the GPU record with current
+// performance metrics and operational state.
+//
+// Parameters:
+//   - hostID: ID of the host containing the GPU
+//   - gpuID: ID of the GPU device
+//   - data: Latest telemetry data for status calculation
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) updateGPUStatus(hostID, gpuID string, data *TelemetryData) error {
 	status := &GPUStatus{
 		State:              "active",
@@ -352,7 +454,13 @@ func (ts *TelemetryService) updateGPUStatus(hostID, gpuID string, data *Telemetr
 	return nil
 }
 
-// updateClusterMetadata updates cluster-level statistics
+// updateClusterMetadata updates cluster-level statistics and metadata.
+//
+// This method recalculates cluster-wide statistics including total and active
+// host/GPU counts by querying the current state from etcd.
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) updateClusterMetadata() error {
 	// Query current hosts and GPUs count from etcd
 	hostsKey := fmt.Sprintf("/telemetry/clusters/%s/hosts/", ts.config.ClusterID)
@@ -452,7 +560,14 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 	return nil
 }
 
-// GetClusterInfo retrieves cluster information from etcd
+// GetClusterInfo retrieves cluster information from etcd.
+//
+// This method fetches the current cluster configuration and metadata
+// including host/GPU counts and operational status.
+//
+// Returns:
+//   - *TelemetryCluster: Cluster information if found
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) GetClusterInfo() (*TelemetryCluster, error) {
 	key := fmt.Sprintf("/telemetry/clusters/%s", ts.config.ClusterID)
 
@@ -473,7 +588,17 @@ func (ts *TelemetryService) GetClusterInfo() (*TelemetryCluster, error) {
 	return &cluster, nil
 }
 
-// GetHostInfo retrieves host information from etcd
+// GetHostInfo retrieves host information from etcd.
+//
+// This method fetches detailed information about a specific host including
+// its status, configuration, and metadata.
+//
+// Parameters:
+//   - hostID: ID of the host to retrieve
+//
+// Returns:
+//   - *TelemetryHost: Host information if found
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) GetHostInfo(hostID string) (*TelemetryHost, error) {
 	key := fmt.Sprintf("/telemetry/clusters/%s/hosts/%s", ts.config.ClusterID, hostID)
 
@@ -494,7 +619,21 @@ func (ts *TelemetryService) GetHostInfo(hostID string) (*TelemetryHost, error) {
 	return &host, nil
 }
 
-// GetGPUTelemetryData retrieves GPU telemetry data from etcd with filtering
+// GetGPUTelemetryData retrieves GPU telemetry data from etcd with time-based filtering.
+//
+// This method fetches historical telemetry data for a specific GPU with optional
+// time range filtering and result limiting for efficient data retrieval.
+//
+// Parameters:
+//   - hostID: ID of the host containing the GPU
+//   - gpuID: ID of the GPU device
+//   - startTime: Optional start time for filtering (nil for no start limit)
+//   - endTime: Optional end time for filtering (nil for no end limit)
+//   - limit: Maximum number of records to return (0 for no limit)
+//
+// Returns:
+//   - []*TelemetryData: Filtered telemetry data records
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) GetGPUTelemetryData(hostID, gpuID string, startTime, endTime *time.Time, limit int) ([]*TelemetryData, error) {
 	key := fmt.Sprintf("/telemetry/clusters/%s/hosts/%s/gpus/%s/data/", ts.config.ClusterID, hostID, gpuID)
 
@@ -532,7 +671,16 @@ func (ts *TelemetryService) GetGPUTelemetryData(hostID, gpuID string, startTime,
 	return telemetryData, nil
 }
 
-// WatchTelemetryChanges sets up a watch for telemetry data changes using etcd watch
+// WatchTelemetryChanges sets up a watch for telemetry data changes using etcd watch API.
+//
+// This method establishes a watch on the cluster's telemetry data and calls the
+// provided callback function for each change event (create, update, delete).
+//
+// Parameters:
+//   - callback: Function to call for each change event with (eventType, data, key)
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) WatchTelemetryChanges(callback func(string, []byte, string)) error {
 
 	watchKey := fmt.Sprintf("/telemetry/clusters/%s/", ts.config.ClusterID)
@@ -565,18 +713,36 @@ func (ts *TelemetryService) WatchTelemetryChanges(callback func(string, []byte, 
 	return nil
 }
 
-// Start starts the telemetry service
+// Start starts the telemetry service and begins operation.
+//
+// This method initializes any background processes and prepares the service
+// for handling telemetry data and requests.
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) Start() error {
 	logging.Infof("Nexus-style telemetry service started")
 	return nil
 }
 
-// Stop stops the telemetry service
+// Stop stops the telemetry service gracefully.
+//
+// This method is an alias for Close() to provide a consistent interface
+// for service lifecycle management.
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (ts *TelemetryService) Stop() error {
 	return ts.Close()
 }
 
-// Close closes the telemetry service and cleans up resources
+// Close closes the telemetry service and cleans up all resources.
+//
+// This method cancels the service context, closes the etcd client connection,
+// and performs cleanup to ensure proper shutdown.
+//
+// Returns:
+//   - error: Always returns nil (kept for interface compatibility)
 func (ts *TelemetryService) Close() error {
 	ts.cancel()
 
@@ -590,7 +756,16 @@ func (ts *TelemetryService) Close() error {
 
 // Helper functions
 
-// isGPUKey checks if an etcd key represents a GPU entry
+// isGPUKey checks if an etcd key represents a GPU entry.
+//
+// This function analyzes the key structure to determine if it points to
+// a GPU device record (not telemetry data).
+//
+// Parameters:
+//   - key: The etcd key to analyze
+//
+// Returns:
+//   - bool: true if the key represents a GPU entry, false otherwise
 func isGPUKey(key string) bool {
 	if len(key) == 0 {
 		return false
@@ -616,12 +791,31 @@ func isGPUKey(key string) bool {
 	return true
 }
 
-// isTelemetryDataKey checks if an etcd key represents telemetry data
+// isTelemetryDataKey checks if an etcd key represents telemetry data.
+//
+// This function analyzes the key structure to determine if it points to
+// actual telemetry data records.
+//
+// Parameters:
+//   - key: The etcd key to analyze
+//
+// Returns:
+//   - bool: true if the key represents telemetry data, false otherwise
 func isTelemetryDataKey(key string) bool {
 	return contains(key, "/data/")
 }
 
-// contains checks if a string contains a substring
+// contains checks if a string contains a substring.
+//
+// This is a helper function that implements substring search with
+// specific behavior for empty strings.
+//
+// Parameters:
+//   - s: The string to search in
+//   - substr: The substring to search for
+//
+// Returns:
+//   - bool: true if substr is found in s, false otherwise
 func contains(s, substr string) bool {
 	// Empty substring should return false based on test expectations
 	if len(substr) == 0 {
@@ -636,7 +830,17 @@ func contains(s, substr string) bool {
 	return indexOfSubstring(s, substr) >= 0
 }
 
-// indexOfSubstring finds the index of a substring in a string
+// indexOfSubstring finds the index of a substring in a string.
+//
+// This helper function implements substring search and returns the
+// first occurrence index or -1 if not found.
+//
+// Parameters:
+//   - s: The string to search in
+//   - substr: The substring to search for
+//
+// Returns:
+//   - int: Index of first occurrence, or -1 if not found
 func indexOfSubstring(s, substr string) int {
 	// Empty substring should return 0 (found at beginning) based on test expectations
 	if len(substr) == 0 {

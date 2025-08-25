@@ -1,3 +1,16 @@
+// Package messagequeue provides etcd-based message queue functionality with List & Watch patterns.
+//
+// This package implements a distributed message queue using etcd as the backend storage,
+// supporting features like:
+//   - Message publishing and consumption with TTL
+//   - List & Watch pattern for real-time message processing
+//   - Atomic work claiming to prevent duplicate processing
+//   - Orphaned work recovery for fault tolerance
+//   - Topic-based message organization
+//   - Message acknowledgment and cleanup
+//
+// The implementation provides reliable message delivery with at-least-once semantics
+// and supports horizontal scaling with multiple consumers.
 package messagequeue
 
 import (
@@ -14,7 +27,11 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// EtcdBackend provides etcd-based message queue functionality with List & Watch patterns
+// EtcdBackend provides etcd-based message queue functionality with List & Watch patterns.
+//
+// The backend uses etcd's key-value store and watch capabilities to implement a distributed
+// message queue with features like atomic work claiming, message TTL, and fault tolerance.
+// Messages are stored with unique keys that include timestamps for ordering.
 type EtcdBackend struct {
 	client      *clientv3.Client
 	queuePrefix string
@@ -22,7 +39,18 @@ type EtcdBackend struct {
 	watchersMu  sync.RWMutex
 }
 
-// NewEtcdBackend creates a new etcd backend if ETCD_ENDPOINTS is set
+// NewEtcdBackend creates a new etcd backend for message queue operations.
+//
+// The function reads configuration from environment variables:
+//   - ETCD_ENDPOINTS: Comma-separated list of etcd endpoints (required)
+//   - MESSAGE_QUEUE_PREFIX: Key prefix for message storage (default: "/telemetry/queue")
+//
+// Parameters:
+//   - ctx: Context for the initialization operation
+//
+// Returns:
+//   - *EtcdBackend: A new etcd backend instance
+//   - error: nil on success, error describing the failure otherwise
 func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 	etcdEndpoints := os.Getenv("ETCD_ENDPOINTS")
 	if etcdEndpoints == "" {
@@ -66,7 +94,19 @@ func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 	}, nil
 }
 
-// PublishMessage publishes a message to etcd
+// PublishMessage publishes a message to the specified topic in etcd.
+//
+// The message is stored with a unique key that includes timestamp and message ID
+// for ordering and uniqueness. A TTL lease is created based on the message
+// expiration time to automatically clean up expired messages.
+//
+// Parameters:
+//   - ctx: Context for the publish operation
+//   - topic: The topic to publish the message to
+//   - message: The message to publish
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message *Message) error {
 	// Create unique key for the message
 	messageKey := fmt.Sprintf("%s/%s/%d_%s_%d",
@@ -87,7 +127,7 @@ func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message
 	defer cancel()
 
 	// Calculate TTL based on message expiration
-	ttl := int64(message.ExpiresAt.Sub(time.Now()).Seconds())
+	ttl := int64(time.Until(message.ExpiresAt).Seconds())
 	if ttl <= 0 {
 		ttl = 3600 // Default 1 hour TTL
 	}
@@ -108,7 +148,21 @@ func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message
 	return nil
 }
 
-// ConsumeMessages consumes messages from etcd
+// ConsumeMessages consumes messages from the specified topic in etcd.
+//
+// This method retrieves messages in chronological order (oldest first) and
+// automatically filters out expired messages. The messages are not removed
+// from etcd until explicitly acknowledged.
+//
+// Parameters:
+//   - ctx: Context for the consume operation
+//   - topic: The topic to consume messages from
+//   - maxMessages: Maximum number of messages to retrieve
+//   - timeoutSeconds: Timeout for the operation in seconds
+//
+// Returns:
+//   - []*Message: A slice of consumed messages
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) ConsumeMessages(ctx context.Context, topic string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	var messages []*Message
@@ -154,7 +208,14 @@ func (eb *EtcdBackend) ConsumeMessages(ctx context.Context, topic string, maxMes
 	return messages, nil
 }
 
-// TopicExists checks if a topic exists (has messages)
+// TopicExists checks if a topic exists by verifying if it has any messages.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - topic: The topic name to check
+//
+// Returns:
+//   - bool: true if the topic exists and has messages, false otherwise
 func (eb *EtcdBackend) TopicExists(ctx context.Context, topic string) bool {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
@@ -168,7 +229,15 @@ func (eb *EtcdBackend) TopicExists(ctx context.Context, topic string) bool {
 	return err == nil && resp.Count > 0
 }
 
-// GetTopicStats returns statistics for a topic
+// GetTopicStats returns the number of messages in the specified topic.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - topic: The topic to get statistics for
+//
+// Returns:
+//   - int64: The number of messages in the topic
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) GetTopicStats(ctx context.Context, topic string) (int64, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
@@ -185,7 +254,20 @@ func (eb *EtcdBackend) GetTopicStats(ctx context.Context, topic string) (int64, 
 	return resp.Count, nil
 }
 
-// AcknowledgeMessages acknowledges processed messages by deleting them from etcd
+// AcknowledgeMessages acknowledges processed messages by deleting them from etcd.
+//
+// This method searches for messages by their IDs across all topics and removes them.
+// It's less efficient than AcknowledgeMessagesByKeys but works when only message IDs are available.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - consumerID: ID of the consumer acknowledging the messages
+//   - messageIDs: Slice of message IDs to acknowledge
+//
+// Returns:
+//   - []string: Successfully acknowledged message IDs
+//   - []string: Failed message IDs
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) AcknowledgeMessages(ctx context.Context, consumerID string, messageIDs []string) ([]string, []string, error) {
 	var acked []string
 	var failed []string
@@ -207,7 +289,20 @@ func (eb *EtcdBackend) AcknowledgeMessages(ctx context.Context, consumerID strin
 	return acked, failed, nil
 }
 
-// AcknowledgeMessagesByKeys acknowledges processed messages by their etcd keys
+// AcknowledgeMessagesByKeys acknowledges processed messages using their etcd keys.
+//
+// This method is more efficient than AcknowledgeMessages as it uses the stored
+// etcd keys directly. It performs atomic deletion using etcd transactions.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - consumerID: ID of the consumer acknowledging the messages
+//   - messages: Slice of messages with their etcd keys to acknowledge
+//
+// Returns:
+//   - []string: Successfully acknowledged message IDs
+//   - []string: Failed message IDs
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) AcknowledgeMessagesByKeys(ctx context.Context, consumerID string, messages []*Message) ([]string, []string, error) {
 	var acked []string
 	var failed []string
@@ -248,7 +343,17 @@ func (eb *EtcdBackend) AcknowledgeMessagesByKeys(ctx context.Context, consumerID
 	return acked, failed, nil
 }
 
-// deleteMessageByID finds and deletes a message by its ID
+// deleteMessageByID finds and deletes a message by its ID.
+//
+// This method searches across all topics to find a message with the specified ID
+// and removes it from etcd. It's used internally by AcknowledgeMessages.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - messageID: The ID of the message to delete
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) deleteMessageByID(ctx context.Context, messageID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -280,7 +385,17 @@ func (eb *EtcdBackend) deleteMessageByID(ctx context.Context, messageID string) 
 	return fmt.Errorf("message %s not found", messageID)
 }
 
-// ListTopics returns all topics that have messages
+// ListTopics returns all topics that currently have messages.
+//
+// This method scans the etcd keyspace to find all unique topic names
+// that have at least one message.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//
+// Returns:
+//   - []string: A slice of topic names
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) ListTopics(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -315,13 +430,36 @@ func (eb *EtcdBackend) ListTopics(ctx context.Context) ([]string, error) {
 	return topics, nil
 }
 
-// Watch watches for changes in a topic
+// Watch creates a watch channel for changes in the specified topic.
+//
+// The returned channel receives etcd watch events for all message operations
+// (PUT/DELETE) in the topic.
+//
+// Parameters:
+//   - ctx: Context for the watch operation
+//   - topic: The topic to watch for changes
+//
+// Returns:
+//   - clientv3.WatchChan: A channel that receives watch events
 func (eb *EtcdBackend) Watch(ctx context.Context, topic string) clientv3.WatchChan {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	return eb.client.Watch(ctx, topicPrefix, clientv3.WithPrefix())
 }
 
-// ConsumeWithListWatch implements the List & Watch pattern for real-time message processing
+// ConsumeWithListWatch implements the List & Watch pattern for real-time message processing.
+//
+// This method provides a continuous stream of messages by first listing existing messages
+// and then watching for new ones. It ensures no messages are missed during the transition
+// from list to watch by using etcd revision numbers.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - topic: The topic to consume messages from
+//   - consumerID: ID of the consumer (for logging purposes)
+//
+// Returns:
+//   - <-chan *Message: A receive-only channel that streams messages
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) ConsumeWithListWatch(ctx context.Context, topic string, consumerID string) (<-chan *Message, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	messageChan := make(chan *Message, 1000)
@@ -407,7 +545,21 @@ func (eb *EtcdBackend) ConsumeWithListWatch(ctx context.Context, topic string, c
 	return messageChan, nil
 }
 
-// AtomicWorkClaim claims work atomically to prevent duplicate processing
+// AtomicWorkClaim atomically claims work to prevent duplicate processing by multiple consumers.
+//
+// This method uses etcd transactions to atomically move messages from the work queue
+// to a processing queue, ensuring that each message is processed by only one consumer.
+// The claimed messages are moved to a consumer-specific processing key.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - topic: The topic to claim work from
+//   - consumerID: ID of the consumer claiming the work
+//   - maxMessages: Maximum number of messages to claim
+//
+// Returns:
+//   - []*Message: Successfully claimed messages
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) AtomicWorkClaim(ctx context.Context, topic, consumerID string, maxMessages int) ([]*Message, error) {
 	workPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	processingPrefix := fmt.Sprintf("/processing/%s/", consumerID)
@@ -465,7 +617,17 @@ func (eb *EtcdBackend) AtomicWorkClaim(ctx context.Context, topic, consumerID st
 	return messages, nil
 }
 
-// parseMessage safely parses a message from etcd key-value pair
+// parseMessage safely parses a message from an etcd key-value pair.
+//
+// This method deserializes the message JSON, checks for expiration,
+// and automatically cleans up invalid or expired messages.
+//
+// Parameters:
+//   - ctx: Context for cleanup operations
+//   - kv: The etcd key-value pair containing the message
+//
+// Returns:
+//   - *Message: The parsed message, or nil if invalid/expired
 func (eb *EtcdBackend) parseMessage(ctx context.Context, kv *mvccpb.KeyValue) *Message {
 	var message Message
 	err := json.Unmarshal(kv.Value, &message)
@@ -489,7 +651,18 @@ func (eb *EtcdBackend) parseMessage(ctx context.Context, kv *mvccpb.KeyValue) *M
 	return &message
 }
 
-// RecoverOrphanedWork recovers work from dead consumers
+// RecoverOrphanedWork recovers work from dead consumers by moving old processing entries back to the work queue.
+//
+// This method scans the processing queue for messages older than the specified age
+// and moves them back to the work queue for reprocessing. This provides fault tolerance
+// when consumers crash or become unresponsive.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - maxAge: Maximum age of processing entries before they're considered orphaned
+//
+// Returns:
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) RecoverOrphanedWork(ctx context.Context, maxAge time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -534,7 +707,18 @@ func (eb *EtcdBackend) RecoverOrphanedWork(ctx context.Context, maxAge time.Dura
 	return nil
 }
 
-// GetQueueDepth returns the number of pending messages in a topic
+// GetQueueDepth returns the number of pending messages in the specified topic.
+//
+// This method provides queue monitoring capabilities by counting the number
+// of messages currently waiting to be processed in a topic.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - topic: The topic to get queue depth for
+//
+// Returns:
+//   - int64: The number of pending messages
+//   - error: nil on success, error describing the failure otherwise
 func (eb *EtcdBackend) GetQueueDepth(ctx context.Context, topic string) (int64, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
@@ -551,7 +735,13 @@ func (eb *EtcdBackend) GetQueueDepth(ctx context.Context, topic string) (int64, 
 	return resp.Count, nil
 }
 
-// Close closes the etcd connection
+// Close gracefully shuts down the etcd backend.
+//
+// This method closes all active watchers and the etcd client connection,
+// cleaning up resources and ensuring proper shutdown.
+//
+// Returns:
+//   - error: nil on success, error from closing the etcd client otherwise
 func (eb *EtcdBackend) Close() error {
 	// Close all watchers
 	eb.watchersMu.Lock()

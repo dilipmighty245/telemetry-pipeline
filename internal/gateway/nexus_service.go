@@ -1,3 +1,13 @@
+// Package gateway provides the Nexus Gateway service for serving telemetry data via REST, GraphQL, and WebSocket APIs.
+//
+// The gateway is responsible for:
+//   - Serving REST API endpoints for GPU and telemetry data queries
+//   - Supporting WebSocket connections for real-time data streaming
+//   - Auto-generating OpenAPI documentation via Swagger
+//   - Health monitoring and metrics collection
+//
+// The gateway supports horizontal scaling up to 5 instances with load balancing
+// and provides comprehensive API documentation and interactive testing interfaces.
 package gateway
 
 import (
@@ -31,7 +41,11 @@ const (
 	httpTimeout = 3 * time.Second // timeouts used to protect the server
 )
 
-// NexusGatewayService represents the API Gateway component of the telemetry pipeline
+// NexusGatewayService represents the API Gateway component of the telemetry pipeline.
+//
+// This service provides the main HTTP server functionality including REST endpoints,
+// WebSocket support, and integration with the Nexus telemetry service for data access.
+// It supports multiple API interfaces and comprehensive monitoring capabilities.
 type NexusGatewayService struct {
 	port         int
 	etcdClient   *clientv3.Client
@@ -43,7 +57,11 @@ type NexusGatewayService struct {
 	config       *GatewayConfig
 }
 
-// GatewayConfig holds configuration for the Nexus gateway
+// GatewayConfig holds configuration for the Nexus gateway service.
+//
+// This configuration structure defines all the settings needed to run a gateway instance,
+// including server ports, etcd connection details, and feature flags for WebSocket
+// and CORS support.
 type GatewayConfig struct {
 	Port            int
 	PprofPort       int
@@ -54,7 +72,10 @@ type GatewayConfig struct {
 	LogLevel        string
 }
 
-// TelemetryData represents telemetry data structure
+// TelemetryData represents telemetry data structure for API responses.
+//
+// This structure contains all the GPU telemetry metrics that are returned
+// by the REST API endpoints and used in WebSocket streaming.
 type TelemetryData struct {
 	Timestamp         string  `json:"timestamp"`
 	GPUID             string  `json:"gpu_id"`
@@ -69,7 +90,22 @@ type TelemetryData struct {
 	MemoryClockMHz    float32 `json:"memory_clock_mhz"`
 }
 
-// Run is the main entry point for the gateway service
+// Run is the main entry point for the gateway service.
+//
+// This method parses the command-line arguments, sets up logging, creates the gateway
+// service instance, and starts the HTTP server. It handles graceful shutdown when
+// the context is canceled.
+//
+// Parameters:
+//   - ctx: Context for cancellation and shutdown signaling
+//   - args: Command-line arguments for configuration
+//   - stdout: Output writer for logging and status messages
+//
+// Returns:
+//   - error: Any error that occurred during service execution
+//
+// The method blocks until the context is canceled, at which point it initiates
+// graceful shutdown of the HTTP server and all active connections.
 func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io.Writer) error {
 	config, err := ng.parseConfig(args)
 	if err != nil {
@@ -102,6 +138,32 @@ func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io
 	return nil
 }
 
+// parseConfig parses command-line arguments and environment variables to create gateway configuration.
+//
+// This method processes both command-line flags and environment variables to configure
+// the gateway service, with environment variables taking precedence over command-line arguments.
+//
+// Parameters:
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - *GatewayConfig: Parsed configuration with all settings
+//   - error: Any error that occurred during configuration parsing
+//
+// Supported command-line flags:
+//   - --port=8080: HTTP server port
+//   - --pprof-port=8082: pprof debugging port
+//   - --cluster-id=cluster: Nexus cluster identifier
+//   - --log-level=info: Logging level
+//   - --disable-websocket: Disable WebSocket support
+//   - --disable-cors: Disable CORS support
+//
+// Environment variables (take precedence):
+//   - PORT: HTTP server port
+//   - PPROF_PORT: pprof debugging port
+//   - CLUSTER_ID: Nexus cluster identifier
+//   - LOG_LEVEL: Logging level
+//   - ETCD_ENDPOINTS: Comma-separated etcd endpoints
 func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error) {
 	config := &GatewayConfig{
 		Port:            8080,
@@ -169,7 +231,26 @@ func (ng *NexusGatewayService) parseConfig(args []string) (*GatewayConfig, error
 	return config, nil
 }
 
-// NewNexusGatewayService creates a new Nexus gateway service
+// NewNexusGatewayService creates a new Nexus gateway service with the provided configuration.
+//
+// This function initializes all the components needed for the gateway including:
+//   - etcd client for data access
+//   - Nexus telemetry service for GPU and telemetry data
+//   - Message queue service for real-time updates
+//   - Echo HTTP server with middleware
+//   - WebSocket upgrader for real-time connections
+//   - Route setup and Swagger documentation
+//
+// Parameters:
+//   - ctx: Context for initialization and connection testing
+//   - config: Configuration settings for the gateway service
+//
+// Returns:
+//   - *NexusGatewayService: Initialized gateway service ready to start
+//   - error: Any error that occurred during initialization
+//
+// The function validates etcd connectivity and sets up all necessary components
+// before returning the service instance.
 func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusGatewayService, error) {
 	// Create etcd client
 	etcdClient, err := clientv3.New(clientv3.Config{
@@ -203,10 +284,6 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		}
 		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 	}
-
-	// Create Nexus GraphQL client (would connect to Nexus GraphQL server)
-	// For now, we'll use a mock/placeholder as we're integrating with existing Nexus
-	// var nexusGraphQLClient nexusgraphql.ServerClient
 
 	// Create message queue service
 	messageQueue, err := messagequeue.NewMessageQueueService(ctx)
@@ -244,7 +321,20 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	return gateway, nil
 }
 
-// Start starts the gateway service
+// Start starts the gateway service with HTTP server and all configured features.
+//
+// This method starts the HTTP server with graceful shutdown support and manages
+// the server lifecycle using errgroup for proper coordination.
+//
+// Parameters:
+//   - ctx: Context for cancellation and shutdown coordination
+//
+// Returns:
+//   - error: Any error that occurred during server startup or shutdown
+//
+// The method configures the HTTP server with appropriate timeouts and handles
+// graceful shutdown when the context is canceled, ensuring all active connections
+// are properly closed.
 func (ng *NexusGatewayService) Start(ctx context.Context) error {
 	g, gCtx := errgroup.WithContext(ctx)
 

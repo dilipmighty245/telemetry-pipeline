@@ -1,3 +1,14 @@
+// Package collector provides the Nexus Collector service for consuming and processing telemetry messages.
+//
+// The collector is responsible for:
+//   - Consuming telemetry messages from the etcd-based message queue
+//   - Processing and validating telemetry data
+//   - Registering hosts and GPUs in the Nexus system
+//   - Storing processed data using the Nexus telemetry service
+//   - Supporting enhanced features like streaming, circuit breakers, and adaptive batching
+//
+// The collector supports horizontal scaling up to 10 instances and provides
+// comprehensive monitoring and fault tolerance capabilities.
 package collector
 
 import (
@@ -22,7 +33,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// NexusCollectorConfig holds configuration for the Nexus-enhanced collector
+// NexusCollectorConfig holds configuration for the Nexus-enhanced collector.
+//
+// This configuration structure defines all the settings needed to run a collector instance,
+// including etcd connection details, processing parameters, and feature flags for enhanced
+// capabilities like streaming, circuit breaking, and adaptive batching.
 type NexusCollectorConfig struct {
 	// Nexus configuration
 	EtcdEndpoints []string
@@ -55,14 +70,22 @@ type NexusCollectorConfig struct {
 	LogLevel string
 }
 
-// CircuitBreakerConfig configures circuit breaker behavior
+// CircuitBreakerConfig configures circuit breaker behavior for fault tolerance.
+//
+// The circuit breaker pattern helps prevent cascading failures by temporarily
+// stopping requests to a failing service and allowing it time to recover.
 type CircuitBreakerConfig struct {
 	FailureThreshold int           `json:"failure_threshold"`
 	RecoveryTimeout  time.Duration `json:"recovery_timeout"`
 	HalfOpenRequests int           `json:"half_open_requests"`
 }
 
-// CircuitBreakerState represents circuit breaker states
+// CircuitBreakerState represents the current state of a circuit breaker.
+//
+// The circuit breaker can be in one of three states:
+//   - Closed: Normal operation, requests are allowed through
+//   - Open: Failure threshold exceeded, requests are blocked
+//   - HalfOpen: Testing if the service has recovered
 type CircuitBreakerState int
 
 const (
@@ -71,7 +94,11 @@ const (
 	HalfOpen
 )
 
-// CircuitBreaker implements circuit breaker pattern for fault tolerance
+// CircuitBreaker implements the circuit breaker pattern for fault tolerance.
+//
+// It tracks failures and automatically opens the circuit when the failure threshold
+// is exceeded, preventing further requests until a recovery timeout has passed.
+// It then enters a half-open state to test if the service has recovered.
 type CircuitBreaker struct {
 	config       *CircuitBreakerConfig
 	state        CircuitBreakerState
@@ -81,7 +108,11 @@ type CircuitBreaker struct {
 	mu           sync.RWMutex
 }
 
-// CollectorWorker handles parallel processing
+// CollectorWorker handles parallel processing of telemetry records.
+//
+// Each worker runs in its own goroutine and processes records from the shared
+// processing channel. Workers can be dynamically started and stopped for
+// load balancing purposes.
 type CollectorWorker struct {
 	id       int
 	service  *NexusCollectorService
@@ -91,7 +122,11 @@ type CollectorWorker struct {
 	mu       sync.RWMutex
 }
 
-// AdaptiveBatcher dynamically adjusts batch sizes based on load
+// AdaptiveBatcher dynamically adjusts batch sizes based on current system load.
+//
+// It monitors processing metrics and automatically increases batch sizes during
+// high load periods and decreases them during low load periods to optimize
+// throughput and resource utilization.
 type AdaptiveBatcher struct {
 	config           *NexusCollectorConfig
 	currentBatchSize int
@@ -100,7 +135,10 @@ type AdaptiveBatcher struct {
 	mu               sync.RWMutex
 }
 
-// TelemetryRecord represents a telemetry data record from message queue
+// TelemetryRecord represents a telemetry data record consumed from the message queue.
+//
+// This structure contains all the GPU telemetry metrics that are extracted from
+// CSV files by the streamer and consumed by the collector for processing and storage.
 type TelemetryRecord struct {
 	Timestamp         string  `json:"timestamp"`
 	GPUID             string  `json:"gpu_id"`     // Host-specific GPU ID (0, 1, 2, 3...)
@@ -118,7 +156,11 @@ type TelemetryRecord struct {
 	MemoryClockMHz    float32 `json:"memory_clock_mhz"`
 }
 
-// NexusCollectorService integrates the existing collector with enhanced etcd features
+// NexusCollectorService integrates the collector with enhanced etcd features and Nexus capabilities.
+//
+// This service provides the main collector functionality including message consumption,
+// data processing, host/GPU registration, and enhanced features like streaming,
+// circuit breaking, and adaptive batching for high-performance telemetry processing.
 type NexusCollectorService struct {
 	config       *NexusCollectorConfig
 	nexusService *nexus.TelemetryService
@@ -146,7 +188,26 @@ type NexusCollectorService struct {
 	startTime      time.Time
 }
 
-// NewNexusCollectorService creates a new Nexus-enhanced collector service
+// NewNexusCollectorService creates a new Nexus-enhanced collector service with the provided configuration.
+//
+// This function initializes all the components needed for the collector including:
+//   - Streaming adapter for enhanced data processing
+//   - Circuit breaker for fault tolerance (if enabled)
+//   - Adaptive batcher for dynamic batch size adjustment (if enabled)
+//   - Worker pool for parallel processing
+//   - Nexus telemetry service for data storage
+//   - etcd client for message queue operations
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeouts
+//   - config: Configuration settings for the collector service
+//
+// Returns:
+//   - *NexusCollectorService: Initialized collector service ready to start
+//   - error: Any error that occurred during initialization
+//
+// The function sets up default configurations for enhanced features if not provided
+// and validates the etcd connection before returning the service instance.
 func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig) (*NexusCollectorService, error) {
 	// Set defaults for enhanced features
 	if config.StreamingConfig == nil {
@@ -263,7 +324,22 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	return collector, nil
 }
 
-// Run is the main entry point for the collector service
+// Run is the main entry point for the collector service.
+//
+// This method parses the command-line arguments, sets up logging, creates the collector
+// service instance, and starts the processing loop. It handles graceful shutdown when
+// the context is canceled.
+//
+// Parameters:
+//   - ctx: Context for cancellation and shutdown signaling
+//   - args: Command-line arguments for configuration
+//   - _: Output writer (unused in current implementation)
+//
+// Returns:
+//   - error: Any error that occurred during service execution
+//
+// The method blocks until the context is canceled, at which point it initiates
+// graceful shutdown of all collector components.
 func (nc *NexusCollectorService) Run(ctx context.Context, args []string, _ io.Writer) error {
 	config, err := nc.parseConfig(args)
 	if err != nil {
@@ -298,7 +374,22 @@ func (nc *NexusCollectorService) Run(ctx context.Context, args []string, _ io.Wr
 	return nil
 }
 
-// Start starts the collector processing
+// Start starts the collector processing with all configured workers and components.
+//
+// This method initializes and starts:
+//   - Streaming adapter for enhanced data processing
+//   - Watch API for real-time telemetry change notifications
+//   - Worker goroutines for parallel message processing
+//   - Message queue consumer for etcd-based message consumption
+//
+// Parameters:
+//   - ctx: Context for cancellation and coordination
+//
+// Returns:
+//   - error: Any error that occurred during startup or processing
+//
+// The method uses errgroup to manage multiple goroutines and ensures proper
+// cleanup on context cancellation or error conditions.
 func (nc *NexusCollectorService) Start(ctx context.Context) error {
 	logging.Infof("Starting enhanced Nexus collector processing")
 
@@ -352,7 +443,20 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 	return nil
 }
 
-// setupWatchAPI sets up the Nexus Watch API for real-time notifications
+// setupWatchAPI sets up the Nexus Watch API for real-time telemetry change notifications.
+//
+// This method configures a watch callback that receives notifications when telemetry
+// data changes in the Nexus system, enabling real-time processing and immediate
+// response to data updates.
+//
+// Parameters:
+//   - ctx: Context for the watch operation
+//
+// Returns:
+//   - error: Any error that occurred during watch setup
+//
+// The watch callback logs debug information about received events and can be
+// extended to trigger immediate processing or send notifications.
 func (nc *NexusCollectorService) setupWatchAPI(ctx context.Context) error {
 	return nc.nexusService.WatchTelemetryChanges(func(eventType string, data []byte, key string) {
 		logging.Debugf("Received telemetry change event: %s for key %s", eventType, key)
@@ -361,7 +465,20 @@ func (nc *NexusCollectorService) setupWatchAPI(ctx context.Context) error {
 	})
 }
 
-// messageQueueConsumer consumes messages directly from etcd and feeds them to processing workers
+// messageQueueConsumer consumes messages directly from etcd and feeds them to processing workers.
+//
+// This method runs in a separate goroutine and continuously polls the etcd message queue
+// for new telemetry messages. It retrieves messages in batches and forwards them to
+// the processing workers through a buffered channel.
+//
+// Parameters:
+//   - ctx: Context for cancellation and shutdown
+//
+// Returns:
+//   - error: Any error that occurred during message consumption
+//
+// The consumer uses a ticker to poll at regular intervals and handles graceful
+// shutdown when the context is canceled.
 func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error {
 	logging.Infof("Starting message queue consumer (direct etcd consumption)")
 
@@ -381,7 +498,20 @@ func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error
 	}
 }
 
-// consumeFromQueue consumes messages directly from etcd message queue
+// consumeFromQueue consumes a batch of messages directly from the etcd message queue.
+//
+// This method retrieves messages from etcd using a prefix scan, unmarshals them into
+// TelemetryRecord structures, and forwards them to the processing channel. It also
+// handles message acknowledgment by deleting processed messages from etcd.
+//
+// Parameters:
+//   - ctx: Context for the etcd operations
+//
+// Returns:
+//   - error: Any error that occurred during message retrieval or processing
+//
+// The method processes messages in batches for efficiency and includes error handling
+// for malformed messages, automatically cleaning them up from the queue.
 func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
 	queueKey := nc.config.MessageQueuePrefix + "/telemetry"
 
@@ -434,7 +564,21 @@ func (nc *NexusCollectorService) consumeFromQueue(ctx context.Context) error {
 	return nil
 }
 
-// processingWorker runs a worker goroutine for processing telemetry data
+// processingWorker runs a worker goroutine for processing telemetry data from the processing channel.
+//
+// Each worker continuously reads TelemetryRecord instances from the shared processing channel
+// and processes them through the complete pipeline including validation, registration,
+// and storage operations.
+//
+// Parameters:
+//   - ctx: Context for cancellation and shutdown
+//   - workerID: Unique identifier for this worker (used for logging)
+//
+// Returns:
+//   - error: Any error that occurred during worker execution
+//
+// The worker runs until the context is canceled or the processing channel is closed.
+// It handles individual record processing errors gracefully without stopping the worker.
 func (nc *NexusCollectorService) processingWorker(ctx context.Context, workerID int) error {
 	logging.Infof("Starting processing worker %d", workerID)
 
@@ -451,7 +595,23 @@ func (nc *NexusCollectorService) processingWorker(ctx context.Context, workerID 
 	}
 }
 
-// processRecord processes a single telemetry record with enhanced features
+// processRecord processes a single telemetry record with enhanced features including circuit breaking and streaming.
+//
+// This method performs the complete processing pipeline for a telemetry record:
+//   - Circuit breaker check for fault tolerance
+//   - Optional streaming to external systems
+//   - Host and GPU registration in Nexus
+//   - Data storage in the Nexus telemetry service
+//
+// Parameters:
+//   - ctx: Context for the processing operations
+//   - record: The telemetry record to process
+//
+// Returns:
+//   - error: Any error that occurred during record processing
+//
+// The method includes comprehensive error handling and fallback mechanisms
+// to ensure data is not lost even if some processing steps fail.
 func (nc *NexusCollectorService) processRecord(ctx context.Context, record *TelemetryRecord) error {
 	// Check circuit breaker
 	if nc.circuitBreaker != nil && !nc.circuitBreaker.canExecute() {
@@ -539,7 +699,21 @@ func (nc *NexusCollectorService) processRecord(ctx context.Context, record *Tele
 	return nil
 }
 
-// ensureHostRegistered ensures a host is registered in Nexus
+// ensureHostRegistered ensures a host is registered in the Nexus system.
+//
+// This method checks the local registry cache first to avoid redundant registration
+// attempts. If the host is not already registered, it creates a new TelemetryHost
+// record and registers it with the Nexus service.
+//
+// Parameters:
+//   - ctx: Context for the registration operation
+//   - hostname: The hostname to register
+//
+// Returns:
+//   - error: Any error that occurred during host registration
+//
+// The method uses read/write locks to ensure thread-safe access to the local
+// registry cache and includes collector metadata in the host registration.
 func (nc *NexusCollectorService) ensureHostRegistered(ctx context.Context, hostname string) error {
 
 	// Check local registry first (with read lock)
@@ -573,7 +747,22 @@ func (nc *NexusCollectorService) ensureHostRegistered(ctx context.Context, hostn
 	return nil
 }
 
-// ensureGPURegistered ensures a GPU is registered in Nexus
+// ensureGPURegistered ensures a GPU is registered in the Nexus system for the specified host.
+//
+// This method checks the local registry cache using a composite key (hostname:gpuid)
+// to avoid redundant registration attempts. If the GPU is not already registered,
+// it creates a new TelemetryGPU record with all available metadata from the telemetry record.
+//
+// Parameters:
+//   - ctx: Context for the registration operation
+//   - hostname: The hostname where the GPU is located
+//   - record: The telemetry record containing GPU metadata
+//
+// Returns:
+//   - error: Any error that occurred during GPU registration
+//
+// The method extracts GPU information including UUID, device name, and model name
+// from the telemetry record and includes collector metadata in the registration.
 func (nc *NexusCollectorService) ensureGPURegistered(ctx context.Context, hostname string, record *TelemetryRecord) error {
 
 	gpuKey := fmt.Sprintf("%s:%s", hostname, record.GPUID)
@@ -612,7 +801,21 @@ func (nc *NexusCollectorService) ensureGPURegistered(ctx context.Context, hostna
 	return nil
 }
 
-// storeInNexus stores telemetry data in Nexus
+// storeInNexus stores telemetry data in the Nexus telemetry service.
+//
+// This method converts a TelemetryRecord into a Nexus TelemetryData structure
+// and stores it using the Nexus service. It handles timestamp parsing with
+// fallback to alternative formats and current time if parsing fails.
+//
+// Parameters:
+//   - ctx: Context for the storage operation
+//   - record: The telemetry record to store
+//
+// Returns:
+//   - error: Any error that occurred during data storage
+//
+// The method creates a unique telemetry ID based on hostname, GPU ID, and timestamp,
+// and includes all telemetry metrics along with collector metadata.
 func (nc *NexusCollectorService) storeInNexus(ctx context.Context, record *TelemetryRecord) error {
 	timestamp, err := time.Parse(time.RFC3339, record.Timestamp)
 	if err != nil {
@@ -647,7 +850,19 @@ func (nc *NexusCollectorService) storeInNexus(ctx context.Context, record *Telem
 	return nc.nexusService.StoreTelemetryData(record.Hostname, record.GPUID, telemetryData)
 }
 
-// Close closes the collector and cleans up resources
+// Close closes the collector and cleans up all allocated resources.
+//
+// This method performs graceful shutdown of all collector components:
+//   - Stops streaming adapter and enhanced features
+//   - Closes etcd client connection
+//   - Closes Nexus service connection
+//   - Cleans up worker pools and channels
+//
+// Returns:
+//   - error: Any error that occurred during cleanup (currently always returns nil)
+//
+// The method should be called when the collector is no longer needed to prevent
+// resource leaks and ensure proper cleanup of all connections and goroutines.
 func (nc *NexusCollectorService) Close() error {
 	logging.Infof("Closing enhanced Nexus collector")
 
@@ -668,7 +883,26 @@ func (nc *NexusCollectorService) Close() error {
 	return nil
 }
 
-// parseConfig parses command line flags and environment variables
+// parseConfig parses command line flags and environment variables to create collector configuration.
+//
+// This method reads configuration from environment variables with sensible defaults
+// for all collector settings including etcd endpoints, processing parameters,
+// and feature flags.
+//
+// Parameters:
+//   - args: Command-line arguments (currently unused, reserved for future flag parsing)
+//
+// Returns:
+//   - *NexusCollectorConfig: Parsed configuration with all settings
+//   - error: Any error that occurred during configuration parsing
+//
+// Environment variables supported:
+//   - CLUSTER_ID: Nexus cluster identifier
+//   - COLLECTOR_ID: Unique collector instance identifier
+//   - ETCD_ENDPOINTS: Comma-separated list of etcd endpoints
+//   - MESSAGE_QUEUE_PREFIX: Prefix for message queue keys in etcd
+//   - BATCH_SIZE: Number of records to process in each batch
+//   - WORKERS: Number of worker goroutines for parallel processing
 func (nc *NexusCollectorService) parseConfig(args []string) (*NexusCollectorConfig, error) {
 	config := &NexusCollectorConfig{}
 
@@ -698,7 +932,14 @@ func (nc *NexusCollectorService) parseConfig(args []string) (*NexusCollectorConf
 	return config, nil
 }
 
-// Utility functions for environment variable parsing
+// getEnv retrieves an environment variable value with a fallback default.
+//
+// Parameters:
+//   - key: The environment variable name to retrieve
+//   - defaultValue: The default value to return if the environment variable is not set
+//
+// Returns:
+//   - string: The environment variable value or the default value
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -706,6 +947,14 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// getEnvInt retrieves an environment variable as an integer with a fallback default.
+//
+// Parameters:
+//   - key: The environment variable name to retrieve
+//   - defaultValue: The default integer value to return if parsing fails or variable is not set
+//
+// Returns:
+//   - int: The parsed integer value or the default value
 func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
@@ -715,6 +964,14 @@ func getEnvInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+// getEnvBool retrieves an environment variable as a boolean with a fallback default.
+//
+// Parameters:
+//   - key: The environment variable name to retrieve
+//   - defaultValue: The default boolean value to return if parsing fails or variable is not set
+//
+// Returns:
+//   - bool: The parsed boolean value or the default value
 func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		if boolValue, err := strconv.ParseBool(value); err == nil {
@@ -724,6 +981,14 @@ func getEnvBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
+// getEnvDuration retrieves an environment variable as a time.Duration with a fallback default.
+//
+// Parameters:
+//   - key: The environment variable name to retrieve
+//   - defaultValue: The default duration value to return if parsing fails or variable is not set
+//
+// Returns:
+//   - time.Duration: The parsed duration value or the default value
 func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
@@ -735,7 +1000,13 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 
 // Enhanced methods for streaming capabilities
 
-// getBatchSize returns the current batch size (adaptive or fixed)
+// getBatchSize returns the current batch size, either adaptive or fixed based on configuration.
+//
+// If adaptive batching is enabled, this method would return the dynamically adjusted
+// batch size. Currently returns the configured fixed batch size.
+//
+// Returns:
+//   - int: The current batch size to use for processing
 func (nc *NexusCollectorService) getBatchSize() int {
 	if nc.config.EnableAdaptiveBatch {
 		// Would return adaptive batch size
@@ -744,7 +1015,21 @@ func (nc *NexusCollectorService) getBatchSize() int {
 	return nc.config.BatchSize
 }
 
-// GetEnhancedMetrics returns comprehensive metrics including streaming
+// GetEnhancedMetrics returns comprehensive metrics including streaming, circuit breaker, and adaptive batching status.
+//
+// This method provides detailed operational metrics for monitoring and debugging
+// the collector service performance and health status.
+//
+// Returns:
+//   - map[string]interface{}: A map containing various metrics including:
+//     - is_enhanced: Whether enhanced features are enabled
+//     - message_count: Total number of messages processed
+//     - uptime: Service uptime duration
+//     - collector_id: Unique collector identifier
+//     - cluster_id: Nexus cluster identifier
+//     - streaming_metrics: Streaming adapter metrics (if available)
+//     - circuit_breaker: Circuit breaker status (if enabled)
+//     - adaptive_batcher: Adaptive batching status (if enabled)
 func (nc *NexusCollectorService) GetEnhancedMetrics() map[string]interface{} {
 	enhanced := map[string]interface{}{
 		"is_enhanced":   nc.isEnhanced,
@@ -775,6 +1060,10 @@ func (nc *NexusCollectorService) GetEnhancedMetrics() map[string]interface{} {
 
 // CollectorWorker methods
 
+// start activates the collector worker and marks it as active.
+//
+// This method sets the worker's active status to true and logs the startup.
+// It should be called before the worker begins processing records.
 func (cw *CollectorWorker) start() {
 	cw.mu.Lock()
 	cw.isActive = true
@@ -783,6 +1072,10 @@ func (cw *CollectorWorker) start() {
 	logging.Infof("Started collector worker %d", cw.id)
 }
 
+// stop deactivates the collector worker and performs cleanup.
+//
+// This method cancels the worker's context, waits for any in-flight work to complete,
+// and marks the worker as inactive. It ensures graceful shutdown of the worker.
 func (cw *CollectorWorker) stop() {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
@@ -800,6 +1093,15 @@ func (cw *CollectorWorker) stop() {
 
 // Circuit breaker methods
 
+// canExecute determines whether the circuit breaker allows execution based on its current state.
+//
+// Returns:
+//   - bool: true if execution is allowed, false if the circuit is open
+//
+// The method implements the circuit breaker state machine:
+//   - Closed: Always allows execution
+//   - Open: Blocks execution until recovery timeout expires
+//   - HalfOpen: Allows limited execution to test service recovery
 func (cb *CircuitBreaker) canExecute() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -825,6 +1127,10 @@ func (cb *CircuitBreaker) canExecute() bool {
 	}
 }
 
+// recordSuccess records a successful operation and potentially closes the circuit.
+//
+// This method resets the failure counter and transitions from HalfOpen to Closed
+// state if the circuit breaker was testing service recovery.
 func (cb *CircuitBreaker) recordSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -835,6 +1141,11 @@ func (cb *CircuitBreaker) recordSuccess() {
 	}
 }
 
+// recordFailure records a failed operation and potentially opens the circuit.
+//
+// This method increments the failure counter and opens the circuit if the
+// failure threshold is exceeded. In HalfOpen state, any failure immediately
+// opens the circuit.
 func (cb *CircuitBreaker) recordFailure() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -849,13 +1160,26 @@ func (cb *CircuitBreaker) recordFailure() {
 	}
 }
 
-// Adaptive batcher methods
+// getCurrentBatchSize returns the current batch size from the adaptive batcher.
+//
+// Returns:
+//   - int: The current batch size being used for processing
+//
+// This method is thread-safe and uses a read lock to access the current batch size.
 func (ab *AdaptiveBatcher) getCurrentBatchSize() int {
 	ab.mu.RLock()
 	defer ab.mu.RUnlock()
 	return ab.currentBatchSize
 }
 
+// updateMetrics updates the adaptive batcher's performance metrics.
+//
+// Parameters:
+//   - recordsProcessed: Number of records processed in the last batch
+//   - processingTime: Time taken to process the batch
+//
+// This method calculates a simple load average based on throughput and updates
+// the internal metrics used for batch size adjustment decisions.
 func (ab *AdaptiveBatcher) updateMetrics(recordsProcessed int, processingTime time.Duration) {
 	ab.mu.Lock()
 	defer ab.mu.Unlock()
@@ -865,6 +1189,12 @@ func (ab *AdaptiveBatcher) updateMetrics(recordsProcessed int, processingTime ti
 	ab.loadAverage = (ab.loadAverage + newLoad) / 2
 }
 
+// adjustBatchSize dynamically adjusts the batch size based on current load metrics.
+//
+// This method increases batch size during high load periods and decreases it
+// during low load periods to optimize throughput and resource utilization.
+// Adjustments are limited by configured minimum and maximum batch sizes and
+// are performed at most once per minute to avoid oscillation.
 func (ab *AdaptiveBatcher) adjustBatchSize() {
 	ab.mu.Lock()
 	defer ab.mu.Unlock()
@@ -890,7 +1220,18 @@ func (ab *AdaptiveBatcher) adjustBatchSize() {
 	logging.Infof("Adjusted batch size to %d (load average: %.2f)", ab.currentBatchSize, ab.loadAverage)
 }
 
-// StopStreaming stops enhanced collector service features
+// StopStreaming stops enhanced collector service features including streaming and load balancing.
+//
+// This method gracefully shuts down:
+//   - Streaming adapter and all its workers
+//   - Load balancing worker pools
+//   - Any other enhanced features that were started
+//
+// Returns:
+//   - error: Any error that occurred during shutdown (currently always returns nil)
+//
+// The method logs the shutdown process and handles errors gracefully to ensure
+// proper cleanup even if some components fail to stop cleanly.
 func (nc *NexusCollectorService) StopStreaming() error {
 	// Stop streaming adapter
 	if nc.streamAdapter != nil {

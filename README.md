@@ -304,12 +304,22 @@ make k8s-undeploy-nexus   # Remove deployment
 
 ## 📚 Documentation
 
+### Core Documentation
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and components
 - **[API Specification](docs/API_SPECIFICATION.md)** - REST API documentation
 - **[etcd Message Queue](docs/ETCD_MESSAGE_QUEUE.md)** - Message queue implementation
 - **[Scaling Guide](docs/SCALING_AND_KUBERNETES.md)** - Kubernetes deployment and scaling
 - **[Debugging Guide](docs/DEBUGGING.md)** - Troubleshooting and monitoring
-- **[Testing Guide](TESTING.md)** - Test execution and coverage
+
+### Development & Operations
+- **[Testing Guide](docs/TESTING.md)** - Test execution and coverage
+- **[Project Summary](docs/PROJECT_SUMMARY.md)** - High-level project overview
+- **[Architecture Updates](docs/ARCHITECTURE_UPDATE.md)** - Recent architectural changes
+
+### Advanced Features
+- **[Nexus Integration Guide](docs/NEXUS_INTEGRATION_GUIDE.md)** - Enhanced Nexus features
+- **[Multi-Cluster Configuration](docs/MULTI_CLUSTER_CONFIGURATION.md)** - Multi-cluster deployment
+- **[Timestamp Handling Guide](docs/TIMESTAMP_HANDLING_GUIDE.md)** - Time synchronization and handling
 
 ## 🧪 Testing
 
