@@ -139,8 +139,6 @@ func TestNewCollectorService(t *testing.T) {
 
 	assert.NotNil(t, service)
 	assert.Equal(t, config, service.config)
-	assert.NotNil(t, service.ctx)
-	assert.NotNil(t, service.cancel)
 	assert.NotNil(t, service.metrics)
 	assert.False(t, service.isRunning)
 	assert.Equal(t, int64(0), service.totalCollected)

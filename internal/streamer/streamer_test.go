@@ -73,12 +73,12 @@ func TestStreamerService_Lifecycle(t *testing.T) {
 	assert.False(t, service.IsRunning())
 
 	// Test start
-	err := service.Start()
+	err := service.Start(ctx)
 	assert.NoError(t, err)
 	assert.True(t, service.IsRunning())
 
 	// Test double start (should not error)
-	err = service.Start()
+	err = service.Start(ctx)
 	assert.NoError(t, err)
 
 	// Test stop
@@ -194,7 +194,7 @@ func TestNewNexusStreamerService(t *testing.T) {
 	service, err := NewNexusStreamerService(context.Background(), config)
 	assert.NoError(t, err, "Should create streamer service with embedded etcd")
 	if service != nil {
-		defer service.Close()
+		defer service.Close(context.Background())
 	}
 
 	// Test that defaults were set
@@ -227,7 +227,7 @@ func TestNexusStreamerService_DefaultConfigs(t *testing.T) {
 	service, err := NewNexusStreamerService(context.Background(), config)
 	assert.NoError(t, err, "Should create streamer service with embedded etcd")
 	if service != nil {
-		defer service.Close()
+		defer service.Close(context.Background())
 	}
 
 	// Test default values were set
@@ -347,7 +347,7 @@ func TestNexusStreamerService_GetMetrics(t *testing.T) {
 	// Create a real service with embedded etcd
 	service, err := NewNexusStreamerService(context.Background(), config)
 	require.NoError(t, err, "Should create streamer service")
-	defer service.Close()
+	defer service.Close(context.Background())
 
 	// Set some test values
 	service.messageCount = 100
@@ -382,7 +382,7 @@ func TestNexusStreamerService_StreamDirectly(t *testing.T) {
 	// Create a service with streaming enabled (always enabled now)
 	service, err := NewNexusStreamerService(context.Background(), config)
 	require.NoError(t, err, "Should create streamer service")
-	defer service.Close()
+	defer service.Close(context.Background())
 
 	// Create test data using TelemetryRecord (the type used by NexusStreamerService)
 	testData := []*TelemetryRecord{

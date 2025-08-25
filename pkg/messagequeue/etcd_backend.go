@@ -23,7 +23,7 @@ type EtcdBackend struct {
 }
 
 // NewEtcdBackend creates a new etcd backend if ETCD_ENDPOINTS is set
-func NewEtcdBackend() (*EtcdBackend, error) {
+func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 	etcdEndpoints := os.Getenv("ETCD_ENDPOINTS")
 	if etcdEndpoints == "" {
 		return nil, fmt.Errorf("ETCD_ENDPOINTS environment variable not set")
@@ -47,11 +47,9 @@ func NewEtcdBackend() (*EtcdBackend, error) {
 		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 
-	ctx := context.Background()
-
 	// Test connection
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	_, err = client.Status(ctx, endpoints[0])
+	childCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err = client.Status(childCtx, endpoints[0])
 	cancel()
 	if err != nil {
 		client.Close()

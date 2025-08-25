@@ -28,8 +28,6 @@ type CollectorService struct {
 	config       *CollectorConfig
 	messageQueue *messagequeue.MessageQueueService
 
-	ctx            context.Context
-	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	isRunning      bool
 	mu             sync.RWMutex
@@ -78,13 +76,9 @@ func NewCollectorService(config *CollectorConfig, mqService *messagequeue.Messag
 		config.BufferSize = 1000
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	service := &CollectorService{
 		config:       config,
 		messageQueue: mqService,
-		ctx:          ctx,
-		cancel:       cancel,
 		metrics: &CollectorMetrics{
 			StartTime: time.Now(),
 		},
@@ -96,7 +90,7 @@ func NewCollectorService(config *CollectorConfig, mqService *messagequeue.Messag
 }
 
 // Start starts the collector service
-func (cs *CollectorService) Start() error {
+func (cs *CollectorService) Start(ctx context.Context) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
@@ -107,8 +101,8 @@ func (cs *CollectorService) Start() error {
 	cs.isRunning = true
 	cs.wg.Add(2) // Collection and persistence loops
 
-	go cs.collectionLoop()
-	go cs.persistenceLoop()
+	go cs.collectionLoop(ctx)
+	go cs.persistenceLoop(ctx)
 
 	logging.Infof("Started collector service %s", cs.config.CollectorID)
 	return nil
@@ -124,16 +118,11 @@ func (cs *CollectorService) Stop() error {
 	}
 
 	cs.isRunning = false
-	cs.cancel()
-
 	// Wait for loops to finish
 	cs.wg.Wait()
 
 	// Flush remaining buffer
 	cs.flushBuffer()
-
-	// Database connections are handled by individual components
-	// No database cleanup needed in this service
 
 	logging.Infof("Stopped collector service %s", cs.config.CollectorID)
 	return nil
@@ -183,7 +172,7 @@ func (cs *CollectorService) GetTotalCollected() int64 {
 }
 
 // collectionLoop is the main collection loop
-func (cs *CollectorService) collectionLoop() {
+func (cs *CollectorService) collectionLoop(ctx context.Context) {
 	defer cs.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
@@ -198,20 +187,20 @@ func (cs *CollectorService) collectionLoop() {
 
 	for {
 		select {
-		case <-cs.ctx.Done():
+		case <-ctx.Done():
 			logging.Infof("Collection loop stopped for service %s", cs.config.CollectorID)
 			return
 		case <-ticker.C:
 			// Check context again before processing to ensure quick shutdown
-			if cs.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				logging.Infof("Context cancelled, stopping collection loop for service %s", cs.config.CollectorID)
 				return
 			}
 
-			err := cs.collectBatch()
+			err := cs.collectBatch(ctx)
 			if err != nil {
 				// Don't log context cancellation as an error
-				if cs.ctx.Err() != nil {
+				if ctx.Err() != nil {
 					logging.Infof("Collection stopped due to context cancellation")
 					return
 				}
@@ -227,7 +216,7 @@ func (cs *CollectorService) collectionLoop() {
 }
 
 // persistenceLoop handles persisting collected data to database
-func (cs *CollectorService) persistenceLoop() {
+func (cs *CollectorService) persistenceLoop(ctx context.Context) {
 	defer cs.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
@@ -242,14 +231,14 @@ func (cs *CollectorService) persistenceLoop() {
 
 	for {
 		select {
-		case <-cs.ctx.Done():
+		case <-ctx.Done():
 			logging.Infof("Persistence loop stopped for service %s", cs.config.CollectorID)
 			// Flush any remaining data before stopping
 			cs.flushBuffer()
 			return
 		case <-ticker.C:
 			// Check context before flushing to ensure quick shutdown
-			if cs.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				logging.Infof("Context cancelled, stopping persistence loop for service %s", cs.config.CollectorID)
 				// Flush any remaining data before stopping
 				cs.flushBuffer()
@@ -261,9 +250,10 @@ func (cs *CollectorService) persistenceLoop() {
 }
 
 // collectBatch collects a batch of telemetry data from the message queue
-func (cs *CollectorService) collectBatch() error {
+func (cs *CollectorService) collectBatch(ctx context.Context) error {
 	// Consume messages from message queue
 	messages, err := cs.messageQueue.ConsumeTelemetry(
+		ctx,
 		cs.config.ConsumerGroup,
 		cs.config.CollectorID,
 		cs.config.BatchSize,
@@ -283,9 +273,9 @@ func (cs *CollectorService) collectBatch() error {
 	// Parse messages
 	for _, msg := range messages {
 		// Check context before processing each message for quick shutdown
-		if cs.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			logging.Infof("Context cancelled during message processing, stopping")
-			return cs.ctx.Err()
+			return ctx.Err()
 		}
 
 		var data models.TelemetryData
@@ -307,7 +297,7 @@ func (cs *CollectorService) collectBatch() error {
 	cs.addToBuffer(telemetryData)
 
 	// Acknowledge processed messages
-	err = cs.messageQueue.AcknowledgeMessages(context.Background(), cs.config.ConsumerGroup, messages)
+	err = cs.messageQueue.AcknowledgeMessages(ctx, cs.config.ConsumerGroup, messages)
 	if err != nil {
 		logging.Errorf("Failed to acknowledge messages: %v", err)
 		// Don't return error here as data is already collected

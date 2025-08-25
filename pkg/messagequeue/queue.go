@@ -102,7 +102,7 @@ type TopicStats struct {
 }
 
 // NewMessageQueue creates a new message queue instance
-func NewMessageQueue() (*MessageQueue, error) {
+func NewMessageQueue(ctx context.Context) (*MessageQueue, error) {
 	mq := &MessageQueue{
 		topics: make(map[string]*Topic),
 		stats: &QueueStats{
@@ -112,7 +112,7 @@ func NewMessageQueue() (*MessageQueue, error) {
 
 	// Initialize etcd backend - required for distributed systems
 	logging.Infof("Initializing etcd backend...")
-	etcdBackend, err := NewEtcdBackend()
+	etcdBackend, err := NewEtcdBackend(ctx)
 	if err != nil {
 		logging.Errorf("Failed to initialize etcd backend: %v", err)
 		logging.Errorf("etcd backend is required - application cannot start without it")

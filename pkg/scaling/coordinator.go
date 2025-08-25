@@ -56,14 +56,12 @@ type ScalingRules struct {
 // It collects metrics from service instances, analyzes load patterns, and makes
 // scaling recommendations while coordinating with other coordinators to avoid conflicts.
 type ScalingCoordinator struct {
-	client      *clientv3.Client   // etcd client for coordination and data storage
-	serviceType string             // Type of service this coordinator manages
-	instanceID  string             // Unique ID of this coordinator instance
-	rules       *ScalingRules      // Scaling rules and thresholds
-	leaseID     clientv3.LeaseID   // etcd lease ID for this coordinator
-	mu          sync.RWMutex       // Mutex for thread-safe access
-	ctx         context.Context    // Context for cancellation
-	cancel      context.CancelFunc // Cancel function for graceful shutdown
+	client      *clientv3.Client // etcd client for coordination and data storage
+	serviceType string           // Type of service this coordinator manages
+	instanceID  string           // Unique ID of this coordinator instance
+	rules       *ScalingRules    // Scaling rules and thresholds
+	leaseID     clientv3.LeaseID // etcd lease ID for this coordinator
+	mu          sync.RWMutex     // Mutex for thread-safe access
 }
 
 // NewScalingCoordinator creates a new scaling coordinator for the specified service type.
@@ -78,8 +76,6 @@ type ScalingCoordinator struct {
 // Returns:
 //   - *ScalingCoordinator: A new scaling coordinator instance
 func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID string, rules *ScalingRules) *ScalingCoordinator {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	if rules == nil {
 		rules = &ScalingRules{
 			MinInstances:       1,
@@ -100,8 +96,6 @@ func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID stri
 		serviceType: serviceType,
 		instanceID:  instanceID,
 		rules:       rules,
-		ctx:         ctx,
-		cancel:      cancel,
 	}
 }
 
@@ -111,17 +105,17 @@ func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID stri
 //
 // Returns:
 //   - error: nil on success, error describing the failure otherwise
-func (sc *ScalingCoordinator) Start() error {
+func (sc *ScalingCoordinator) Start(ctx context.Context) error {
 	// Create initial lease for metrics reporting
-	if err := sc.recreateLease(sc.ctx); err != nil {
+	if err := sc.recreateLease(ctx); err != nil {
 		return fmt.Errorf("failed to create initial lease: %w", err)
 	}
 
 	// Start metrics reporting
-	go sc.startMetricsReporting()
+	go sc.startMetricsReporting(ctx)
 
 	// Start scaling decision making (only one coordinator should do this)
-	go sc.startScalingDecisionMaking()
+	go sc.startScalingDecisionMaking(ctx)
 
 	logging.Infof("Scaling coordinator started for %s/%s", sc.serviceType, sc.instanceID)
 	return nil
@@ -136,7 +130,7 @@ func (sc *ScalingCoordinator) Start() error {
 //
 // Returns:
 //   - error: nil on success, error describing the failure otherwise
-func (sc *ScalingCoordinator) ReportMetrics(metrics InstanceMetrics) error {
+func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics InstanceMetrics) error {
 	metrics.InstanceID = sc.instanceID
 	metrics.ServiceType = sc.serviceType
 	metrics.Timestamp = time.Now()
@@ -148,7 +142,7 @@ func (sc *ScalingCoordinator) ReportMetrics(metrics InstanceMetrics) error {
 
 	metricsKey := fmt.Sprintf("/metrics/%s/%s", sc.serviceType, sc.instanceID)
 
-	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Check if lease is still valid
@@ -227,7 +221,7 @@ func (sc *ScalingCoordinator) recreateLease(ctx context.Context) error {
 	sc.leaseID = lease.ID
 
 	// Start keep-alive for the new lease
-	ch, err := sc.client.KeepAlive(sc.ctx, sc.leaseID)
+	ch, err := sc.client.KeepAlive(ctx, sc.leaseID)
 	if err != nil {
 		return fmt.Errorf("failed to start keep alive: %w", err)
 	}
@@ -256,8 +250,8 @@ func (sc *ScalingCoordinator) recreateLease(ctx context.Context) error {
 // Returns:
 //   - *ScalingDecision: The scaling decision with action, counts, and rationale
 //   - error: nil on success, error describing the failure otherwise
-func (sc *ScalingCoordinator) GetScalingDecision() (*ScalingDecision, error) {
-	ctx, cancel := context.WithTimeout(sc.ctx, 10*time.Second)
+func (sc *ScalingCoordinator) GetScalingDecision(ctx context.Context) (*ScalingDecision, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Get all metrics for this service type
@@ -318,7 +312,7 @@ func (sc *ScalingCoordinator) GetScalingDecision() (*ScalingDecision, error) {
 	currentCount := len(allMetrics)
 
 	// Check cooldown period
-	if sc.isInCooldownPeriod() {
+	if sc.isInCooldownPeriod(ctx) {
 		return &ScalingDecision{
 			ServiceType:      sc.serviceType,
 			Action:           "no_action",
@@ -389,8 +383,8 @@ func (sc *ScalingCoordinator) calculateAggregateLoad(metrics []InstanceMetrics) 
 //
 // Returns:
 //   - bool: true if in cooldown period, false otherwise
-func (sc *ScalingCoordinator) isInCooldownPeriod() bool {
-	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
+func (sc *ScalingCoordinator) isInCooldownPeriod(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Check for recent scaling decisions
@@ -425,7 +419,7 @@ func (sc *ScalingCoordinator) isInCooldownPeriod() bool {
 //
 // Returns:
 //   - error: nil on success, error describing the failure otherwise
-func (sc *ScalingCoordinator) PublishScalingDecision(decision *ScalingDecision) error {
+func (sc *ScalingCoordinator) PublishScalingDecision(ctx context.Context, decision *ScalingDecision) error {
 	data, err := json.Marshal(decision)
 	if err != nil {
 		return fmt.Errorf("failed to marshal scaling decision: %w", err)
@@ -433,7 +427,7 @@ func (sc *ScalingCoordinator) PublishScalingDecision(decision *ScalingDecision) 
 
 	decisionKey := fmt.Sprintf("/scaling/decisions/%s", sc.serviceType)
 
-	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	_, err = sc.client.Put(ctx, decisionKey, string(data))
@@ -447,7 +441,7 @@ func (sc *ScalingCoordinator) PublishScalingDecision(decision *ScalingDecision) 
 }
 
 // startMetricsReporting starts periodic metrics reporting
-func (sc *ScalingCoordinator) startMetricsReporting() {
+func (sc *ScalingCoordinator) startMetricsReporting(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -465,17 +459,17 @@ func (sc *ScalingCoordinator) startMetricsReporting() {
 				Health:         "healthy",
 			}
 
-			if err := sc.ReportMetrics(metrics); err != nil {
+			if err := sc.ReportMetrics(ctx, metrics); err != nil {
 				logging.Errorf("Failed to report metrics: %v", err)
 			}
-		case <-sc.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
 // startScalingDecisionMaking starts the scaling decision making process
-func (sc *ScalingCoordinator) startScalingDecisionMaking() {
+func (sc *ScalingCoordinator) startScalingDecisionMaking(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -483,28 +477,28 @@ func (sc *ScalingCoordinator) startScalingDecisionMaking() {
 		select {
 		case <-ticker.C:
 			// Only the leader should make scaling decisions
-			if sc.tryAcquireLeadership() {
-				decision, err := sc.GetScalingDecision()
+			if sc.tryAcquireLeadership(ctx) {
+				decision, err := sc.GetScalingDecision(ctx)
 				if err != nil {
 					logging.Errorf("Failed to get scaling decision: %v", err)
 					continue
 				}
 
-				if err := sc.PublishScalingDecision(decision); err != nil {
+				if err := sc.PublishScalingDecision(ctx, decision); err != nil {
 					logging.Errorf("Failed to publish scaling decision: %v", err)
 				}
 			}
-		case <-sc.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
 // tryAcquireLeadership tries to acquire leadership for scaling decisions
-func (sc *ScalingCoordinator) tryAcquireLeadership() bool {
+func (sc *ScalingCoordinator) tryAcquireLeadership(ctx context.Context) bool {
 	leaderKey := fmt.Sprintf("/scaling/leader/%s", sc.serviceType)
 
-	ctx, cancel := context.WithTimeout(sc.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Try to acquire leadership with a lease
@@ -534,11 +528,9 @@ func (sc *ScalingCoordinator) tryAcquireLeadership() bool {
 //
 // Returns:
 //   - error: Always returns nil (errors are logged but not returned)
-func (sc *ScalingCoordinator) Stop() error {
-	sc.cancel()
-
+func (sc *ScalingCoordinator) Stop(ctx context.Context) error {
 	if sc.leaseID != 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if _, err := sc.client.Revoke(ctx, sc.leaseID); err != nil {
 			logging.Errorf("Failed to revoke lease during coordinator stop: %v", err)

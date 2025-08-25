@@ -117,7 +117,7 @@ func TestNewMessageQueueBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, mq)
 	assert.NotNil(t, mq.topics)
@@ -131,7 +131,7 @@ func TestCreateTopicBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 
 	config := map[string]string{
@@ -151,7 +151,7 @@ func TestListTopicsBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -166,7 +166,7 @@ func TestGetStatsBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 
 	stats := mq.GetStats()
@@ -184,7 +184,7 @@ func TestCleanupExpiredMessagesBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 
 	// Should not panic even with no topics
@@ -199,7 +199,7 @@ func TestCloseBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 
 	err = mq.Close()
@@ -224,7 +224,7 @@ func TestPublishBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -246,7 +246,7 @@ func TestConsumeBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -262,13 +262,12 @@ func TestAcknowledgeBasic(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	mq, err := NewMessageQueue()
+	mq, err := NewMessageQueue(context.Background())
 	require.NoError(t, err)
-	ctx := context.Background()
 
 	// Test with empty message list
 	messages := []*Message{}
-	acked, failed, err := mq.Acknowledge(ctx, "test-group", messages)
+	acked, failed, err := mq.Acknowledge(context.Background(), "test-group", messages)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(acked))
 	assert.Equal(t, 0, len(failed))

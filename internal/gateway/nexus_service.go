@@ -8,11 +8,9 @@ import (
 	"net/http"
 	_ "net/http/pprof" // register pprof handlers
 	"os"
-	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dilipmighty245/telemetry-pipeline/docs/generated"
@@ -20,6 +18,7 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/gorilla/websocket"
+
 	// nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -71,10 +70,7 @@ type TelemetryData struct {
 }
 
 // Run is the main entry point for the gateway service
-func (ng *NexusGatewayService) Run(args []string, stdout io.Writer) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
+func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io.Writer) error {
 	config, err := ng.parseConfig(args)
 	if err != nil {
 		return fmt.Errorf("failed to parse configuration: %w", err)
@@ -185,7 +181,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	}
 
 	// Test etcd connection
-	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	testCtx, testCancel := context.WithTimeout(ctx, 5*time.Second)
 	_, err = etcdClient.Status(testCtx, config.EtcdEndpoints[0])
 	testCancel()
 	if err != nil {
@@ -200,7 +196,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		EtcdEndpoints: config.EtcdEndpoints,
 		ClusterID:     config.ClusterID,
 	}
-	nexusService, err := nexus.NewTelemetryService(nexusConfig)
+	nexusService, err := nexus.NewTelemetryService(ctx, nexusConfig)
 	if err != nil {
 		if etcdClient != nil {
 			etcdClient.Close()
@@ -213,7 +209,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 	// var nexusGraphQLClient nexusgraphql.ServerClient
 
 	// Create message queue service
-	messageQueue, err := messagequeue.NewMessageQueueService()
+	messageQueue, err := messagequeue.NewMessageQueueService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize message queue: %w", err)
 	}
@@ -233,7 +229,6 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		port:         config.Port,
 		etcdClient:   etcdClient,
 		nexusService: nexusService,
-		// nexusGraphQL: nexusGraphQLClient, // Commented out due to nexus dependency issues
 		messageQueue: messageQueue,
 		echo:         e,
 		upgrader:     upgrader,
@@ -277,7 +272,7 @@ func (ng *NexusGatewayService) Start(ctx context.Context) error {
 		logging.Infof("Attempting graceful shutdown of HTTP server")
 
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {

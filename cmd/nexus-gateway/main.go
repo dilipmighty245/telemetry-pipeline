@@ -27,6 +27,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/gateway"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
@@ -51,6 +53,9 @@ func Run(args []string, stdout io.Writer) error {
 	// Create the gateway service
 	service := &gateway.NexusGatewayService{}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	// Run the service
-	return service.Run(args, stdout)
+	return service.Run(ctx, args, stdout)
 }

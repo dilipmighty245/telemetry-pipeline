@@ -111,8 +111,6 @@ func TestNewScalingCoordinator(t *testing.T) {
 				assert.Equal(t, tt.instanceID, sc.instanceID)
 				assert.Equal(t, client, sc.client)
 				assert.NotNil(t, sc.rules)
-				assert.NotNil(t, sc.ctx)
-				assert.NotNil(t, sc.cancel)
 
 				if tt.rules == nil {
 					// Check default rules
@@ -136,15 +134,16 @@ func TestScalingCoordinator_Start(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
+	ctx := context.Background()
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop()
+	defer sc.Stop(ctx)
 
-	err := sc.Start()
+	err := sc.Start(ctx)
 	assert.NoError(t, err)
 	assert.NotEqual(t, clientv3.LeaseID(0), sc.leaseID)
 
 	// Test starting again (should not error)
-	err = sc.Start()
+	err = sc.Start(ctx)
 	assert.NoError(t, err)
 }
 
@@ -152,10 +151,12 @@ func TestScalingCoordinator_ReportMetrics(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
-	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop()
+	ctx := context.Background()
 
-	err := sc.Start()
+	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
+	defer sc.Stop(ctx)
+
+	err := sc.Start(ctx)
 	require.NoError(t, err)
 
 	metrics := InstanceMetrics{
@@ -167,11 +168,11 @@ func TestScalingCoordinator_ReportMetrics(t *testing.T) {
 		Health:         "healthy",
 	}
 
-	err = sc.ReportMetrics(metrics)
+	err = sc.ReportMetrics(ctx, metrics)
 	assert.NoError(t, err)
 
 	// Verify metrics were stored
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	metricsKey := "/metrics/test-service/test-instance"
@@ -196,6 +197,9 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	rules := &ScalingRules{
 		MinInstances:       1,
 		MaxInstances:       5,
@@ -210,13 +214,13 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 	}
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
-	defer sc.Stop()
+	defer sc.Stop(ctx)
 
-	err := sc.Start()
+	err := sc.Start(ctx)
 	require.NoError(t, err)
 
 	t.Run("no metrics available", func(t *testing.T) {
-		decision, err := sc.GetScalingDecision()
+		decision, err := sc.GetScalingDecision(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, "no_action", decision.Action)
 		assert.Equal(t, 0, decision.CurrentCount)
@@ -232,10 +236,10 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 			QueueDepth:  100.0,
 			Health:      "healthy",
 		}
-		err := sc.ReportMetrics(highLoadMetrics)
+		err := sc.ReportMetrics(ctx, highLoadMetrics)
 		require.NoError(t, err)
 
-		decision, err := sc.GetScalingDecision()
+		decision, err := sc.GetScalingDecision(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, "scale_up", decision.Action)
 		assert.Equal(t, 1, decision.CurrentCount)
@@ -245,12 +249,14 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 	})
 
 	t.Run("scale down decision", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		// First, add multiple instances with low load
 		for i := 0; i < 3; i++ {
 			instanceSC := NewScalingCoordinator(client, "test-service", fmt.Sprintf("instance-%d", i), rules)
-			err := instanceSC.Start()
+			err := instanceSC.Start(ctx)
 			require.NoError(t, err)
-			defer instanceSC.Stop()
+			defer instanceSC.Stop(ctx)
 
 			lowLoadMetrics := InstanceMetrics{
 				CPUUsage:    0.1,
@@ -258,14 +264,14 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 				QueueDepth:  2.0,
 				Health:      "healthy",
 			}
-			err = instanceSC.ReportMetrics(lowLoadMetrics)
+			err = instanceSC.ReportMetrics(ctx, lowLoadMetrics)
 			require.NoError(t, err)
 		}
 
 		// Wait a bit for metrics to be stored
 		time.Sleep(100 * time.Millisecond)
 
-		decision, err := sc.GetScalingDecision()
+		decision, err := sc.GetScalingDecision(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, "scale_down", decision.Action)
 		assert.Greater(t, decision.CurrentCount, 1)
@@ -326,18 +332,21 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	rules := &ScalingRules{
 		CooldownPeriod: 1 * time.Minute,
 	}
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
-	defer sc.Stop()
+	defer sc.Stop(ctx)
 
-	err := sc.Start()
+	err := sc.Start(ctx)
 	require.NoError(t, err)
 
 	t.Run("no previous decision", func(t *testing.T) {
-		inCooldown := sc.isInCooldownPeriod()
+		inCooldown := sc.isInCooldownPeriod(ctx)
 		assert.False(t, inCooldown)
 	})
 
@@ -350,10 +359,10 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 			RecommendedCount: 2,
 			Timestamp:        time.Now(),
 		}
-		err := sc.PublishScalingDecision(decision)
+		err := sc.PublishScalingDecision(ctx, decision)
 		require.NoError(t, err)
 
-		inCooldown := sc.isInCooldownPeriod()
+		inCooldown := sc.isInCooldownPeriod(ctx)
 		assert.True(t, inCooldown)
 	})
 
@@ -366,10 +375,10 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 			RecommendedCount: 2,
 			Timestamp:        time.Now().Add(-2 * time.Minute), // Older than cooldown
 		}
-		err := sc.PublishScalingDecision(decision)
+		err := sc.PublishScalingDecision(ctx, decision)
 		require.NoError(t, err)
 
-		inCooldown := sc.isInCooldownPeriod()
+		inCooldown := sc.isInCooldownPeriod(ctx)
 		assert.False(t, inCooldown)
 	})
 
@@ -382,10 +391,10 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 			RecommendedCount: 2,
 			Timestamp:        time.Now(),
 		}
-		err := sc.PublishScalingDecision(decision)
+		err := sc.PublishScalingDecision(ctx, decision)
 		require.NoError(t, err)
 
-		inCooldown := sc.isInCooldownPeriod()
+		inCooldown := sc.isInCooldownPeriod(ctx)
 		assert.False(t, inCooldown)
 	})
 }
@@ -393,11 +402,13 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 func TestScalingCoordinator_PublishScalingDecision(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop()
+	defer sc.Stop(ctx)
 
-	err := sc.Start()
+	err := sc.Start(ctx)
 	require.NoError(t, err)
 
 	decision := &ScalingDecision{
@@ -410,12 +421,8 @@ func TestScalingCoordinator_PublishScalingDecision(t *testing.T) {
 		Timestamp:        time.Now(),
 	}
 
-	err = sc.PublishScalingDecision(decision)
+	err = sc.PublishScalingDecision(ctx, decision)
 	assert.NoError(t, err)
-
-	// Verify decision was stored
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	decisionKey := "/scaling/decisions/test-service"
 	resp, err := client.Get(ctx, decisionKey)
@@ -438,17 +445,20 @@ func TestScalingCoordinator_Stop(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
 
-	err := sc.Start()
+	err := sc.Start(ctx)
 	require.NoError(t, err)
 
 	// Stop should not error
-	err = sc.Stop()
+	err = sc.Stop(ctx)
 	assert.NoError(t, err)
 
 	// Stop again should not error
-	err = sc.Stop()
+	err = sc.Stop(ctx)
 	assert.NoError(t, err)
 }
 
@@ -456,22 +466,25 @@ func TestScalingCoordinator_TryAcquireLeadership(t *testing.T) {
 	_, client, cleanup := setupEtcdTestServer(t)
 	defer cleanup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	sc1 := NewScalingCoordinator(client, "test-service", "instance-1", nil)
 	sc2 := NewScalingCoordinator(client, "test-service", "instance-2", nil)
-	defer sc1.Stop()
-	defer sc2.Stop()
+	defer sc1.Stop(ctx)
+	defer sc2.Stop(ctx)
 
-	err := sc1.Start()
+	err := sc1.Start(ctx)
 	require.NoError(t, err)
-	err = sc2.Start()
+	err = sc2.Start(ctx)
 	require.NoError(t, err)
 
 	// First instance should acquire leadership
-	acquired1 := sc1.tryAcquireLeadership()
+	acquired1 := sc1.tryAcquireLeadership(ctx)
 	assert.True(t, acquired1)
 
 	// Second instance should not acquire leadership
-	acquired2 := sc2.tryAcquireLeadership()
+	acquired2 := sc2.tryAcquireLeadership(ctx)
 	assert.False(t, acquired2)
 }
 
