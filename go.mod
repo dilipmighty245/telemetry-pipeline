@@ -1,12 +1,12 @@
 module github.com/dilipmighty245/telemetry-pipeline
 
-go 1.23
+go 1.23.0
 
 require (
 	github.com/gorilla/websocket v1.5.3
 
 	// Nexus integration dependencies
-	github.com/intel-innersource/applications.development.nexus.core/nexus v0.0.0
+	// github.com/intel-innersource/applications.development.nexus.core/nexus v0.0.0
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggo/swag v1.16.6
@@ -20,6 +20,7 @@ require (
 
 require (
 	github.com/labstack/echo/v4 v4.13.4
+	github.com/swaggo/echo-swagger v1.4.1
 	go.etcd.io/etcd/server/v3 v3.5.10
 )
 
@@ -49,7 +50,6 @@ require (
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.11 // indirect
-	github.com/kr/pretty v0.3.1 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
@@ -66,7 +66,6 @@ require (
 	github.com/soheilhy/cmux v0.1.5 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/swaggo/echo-swagger v1.4.1 // indirect
 	github.com/swaggo/files/v2 v2.0.2 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect

@@ -1,6 +1,7 @@
 package messagequeue
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -41,7 +42,7 @@ func TestMessageQueueIntegration(t *testing.T) {
 }
 
 func testFullPipeline(t *testing.T, service *MessageQueueService) {
-	// ctx := context.Background() // Unused in current tests
+	ctx := context.Background() // Used in acknowledgment tests
 
 	t.Run("ProducerConsumerFlow", func(t *testing.T) {
 		const numMessages = 10
@@ -208,6 +209,8 @@ func TestMessageQueueFailover(t *testing.T) {
 	require.NoError(t, err, "Should start embedded etcd server")
 	defer cleanup()
 
+	ctx := context.Background()
+
 	service, err := NewMessageQueueService()
 	require.NoError(t, err)
 	defer service.Stop()
@@ -261,6 +264,8 @@ func BenchmarkMessageQueueIntegration(b *testing.B) {
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(b, err)
 	defer cleanup()
+
+	ctx := context.Background()
 
 	service, err := NewMessageQueueService()
 	require.NoError(b, err)

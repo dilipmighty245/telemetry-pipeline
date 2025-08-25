@@ -342,7 +342,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 	}
 
 	// Initialize streaming adapter (always enabled for performance)
-	streamer.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
+	streamer.streamAdapter = streaming.NewStreamAdapter(context.Background(), config.StreamingConfig, config.StreamDestination)
 
 	// Initialize rate limiter (always enabled for performance)
 	streamer.rateLimiter = &RateLimiter{
@@ -381,7 +381,7 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	logging.Infof("Starting enhanced etcd-based telemetry streaming")
 
 	// Start streaming adapter
-	err := ns.streamAdapter.Start()
+	err := ns.streamAdapter.Start(context.Background())
 	if err != nil {
 		logging.Errorf("Failed to start stream adapter: %v", err)
 		return err

@@ -20,7 +20,7 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/gorilla/websocket"
-	nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
+	// nexusgraphql "github.com/intel-innersource/applications.development.nexus.core/nexus/generated/graphql"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	echoSwagger "github.com/swaggo/echo-swagger"
@@ -37,7 +37,7 @@ type NexusGatewayService struct {
 	port         int
 	etcdClient   *clientv3.Client
 	nexusService *nexus.TelemetryService
-	nexusGraphQL nexusgraphql.ServerClient
+	// nexusGraphQL nexusgraphql.ServerClient
 	messageQueue *messagequeue.MessageQueueService
 	echo         *echo.Echo
 	upgrader     websocket.Upgrader
@@ -210,7 +210,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 
 	// Create Nexus GraphQL client (would connect to Nexus GraphQL server)
 	// For now, we'll use a mock/placeholder as we're integrating with existing Nexus
-	var nexusGraphQLClient nexusgraphql.ServerClient
+	// var nexusGraphQLClient nexusgraphql.ServerClient
 
 	// Create message queue service
 	messageQueue, err := messagequeue.NewMessageQueueService()
@@ -233,7 +233,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		port:         config.Port,
 		etcdClient:   etcdClient,
 		nexusService: nexusService,
-		nexusGraphQL: nexusGraphQLClient,
+		// nexusGraphQL: nexusGraphQLClient, // Commented out due to nexus dependency issues
 		messageQueue: messageQueue,
 		echo:         e,
 		upgrader:     upgrader,

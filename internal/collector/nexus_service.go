@@ -191,7 +191,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 	}
 
 	// Initialize streaming adapter (always enabled for performance)
-	collector.streamAdapter = streaming.NewStreamAdapter(config.StreamingConfig, config.StreamDestination)
+	collector.streamAdapter = streaming.NewStreamAdapter(context.Background(), config.StreamingConfig, config.StreamDestination)
 
 	// Initialize circuit breaker if enabled
 	if config.EnableCircuitBreaker {
@@ -315,7 +315,7 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 
 	// Start streaming adapter
 	if nc.streamAdapter != nil {
-		err := nc.streamAdapter.Start()
+		err := nc.streamAdapter.Start(context.Background())
 		if err != nil {
 			logging.Errorf("Failed to start stream adapter: %v", err)
 			return err

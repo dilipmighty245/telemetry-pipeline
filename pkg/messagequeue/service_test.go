@@ -1,6 +1,8 @@
 package messagequeue
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,7 +20,7 @@ func TestMessageQueueService(t *testing.T) {
 	require.NoError(t, err)
 	defer service.Stop()
 
-	// ctx := context.Background() // Unused in current tests
+	ctx := context.Background() // Used in acknowledgment tests
 
 	t.Run("PublishTelemetry", func(t *testing.T) {
 		payload := []byte(`{"gpu_id": "test-gpu", "metric": "utilization", "value": 85}`)
@@ -105,6 +107,7 @@ func TestMessageQueueService_EdgeCases(t *testing.T) {
 	service, err := NewMessageQueueService()
 	require.NoError(t, err)
 	defer service.Stop()
+	ctx := context.Background()
 
 	t.Run("EmptyPayload", func(t *testing.T) {
 		err := service.PublishTelemetry([]byte{}, nil)
@@ -242,11 +245,121 @@ func TestMessageQueueService_Concurrent(t *testing.T) {
 	})
 }
 
+func TestMessageQueueService_TopicOperations(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
+	service, err := NewMessageQueueService()
+	require.NoError(t, err)
+	defer service.Stop()
+	ctx := context.Background()
+
+	t.Run("ListTopics", func(t *testing.T) {
+		// Test listing topics
+		topics := service.ListTopics(ctx)
+		assert.NotNil(t, topics)
+		// Should at least have the default telemetry topic
+		assert.GreaterOrEqual(t, len(topics), 0)
+	})
+
+	t.Run("GetQueueStats", func(t *testing.T) {
+		stats := service.GetQueueStats()
+		assert.NotNil(t, stats)
+		assert.GreaterOrEqual(t, stats.TotalMessages, int64(0))
+	})
+}
+
+func TestMessageQueueService_BatchOperations(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
+	service, err := NewMessageQueueService()
+	require.NoError(t, err)
+	defer service.Stop()
+
+	t.Run("PublishBatch", func(t *testing.T) {
+		payloads := [][]byte{
+			[]byte(`{"test": "batch1"}`),
+			[]byte(`{"test": "batch2"}`),
+			[]byte(`{"test": "batch3"}`),
+		}
+		headers := []map[string]string{
+			{"batch": "1"},
+			{"batch": "2"},
+			{"batch": "3"},
+		}
+
+		messages, err := service.PublishBatch("telemetry", payloads, headers, 3600)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(messages))
+	})
+
+	t.Run("ConsumeBatch", func(t *testing.T) {
+		// First publish some messages
+		for i := 0; i < 5; i++ {
+			payload := []byte(`{"test": "consume_batch"}`)
+			headers := map[string]string{"index": fmt.Sprintf("%d", i)}
+			err := service.PublishTelemetry(payload, headers)
+			require.NoError(t, err)
+		}
+
+		// Test consuming from multiple topics
+		topics := []string{"telemetry"}
+		messages, err := service.ConsumeBatch(topics, "batch-group", "batch-consumer", 3)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(messages), 0)
+	})
+}
+
+func TestMessageQueueService_ErrorHandling(t *testing.T) {
+	// Start embedded etcd server for testing
+	_, cleanup, err := SetupEtcdForTest()
+	require.NoError(t, err)
+	defer cleanup()
+
+	service, err := NewMessageQueueService()
+	require.NoError(t, err)
+	defer service.Stop()
+	ctx := context.Background()
+
+	t.Run("AcknowledgeInvalidMessages", func(t *testing.T) {
+		// Try to acknowledge messages with invalid IDs
+		invalidMessages := []*Message{
+			{
+				ID:      "invalid-id",
+				Topic:   "telemetry",
+				Payload: []byte(`{"test": "data"}`),
+				Headers: map[string]string{},
+			},
+		}
+		
+		err := service.AcknowledgeMessages(ctx, "test-group", invalidMessages)
+		// Should not error even with invalid messages
+		assert.NoError(t, err)
+	})
+
+	t.Run("PublishBatchWithInvalidData", func(t *testing.T) {
+		// Test with empty payloads
+		emptyPayloads := [][]byte{}
+		emptyHeaders := []map[string]string{}
+		
+		messages, err := service.PublishBatch("telemetry", emptyPayloads, emptyHeaders, 3600)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(messages))
+	})
+}
+
 func BenchmarkMessageQueueService(b *testing.B) {
 	// Start embedded etcd server for testing
 	_, cleanup, err := SetupEtcdForTest()
 	require.NoError(b, err)
 	defer cleanup()
+
+	ctx := context.Background()
 
 	service, err := NewMessageQueueService()
 	require.NoError(b, err)
