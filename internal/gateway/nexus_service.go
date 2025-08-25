@@ -9,6 +9,7 @@ import (
 	_ "net/http/pprof" // register pprof handlers
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -614,16 +615,15 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 		}
 	}
 
-	// Sort by timestamp (most recent first)
-	for i := 0; i < len(telemetryData)-1; i++ {
-		for j := i + 1; j < len(telemetryData); j++ {
-			t1, _ := time.Parse(time.RFC3339, telemetryData[i].Timestamp)
-			t2, _ := time.Parse(time.RFC3339, telemetryData[j].Timestamp)
-			if t1.Before(t2) {
-				telemetryData[i], telemetryData[j] = telemetryData[j], telemetryData[i]
-			}
+	// Sort by timestamp (most recent first) using Go's efficient sort package
+	sort.Slice(telemetryData, func(i, j int) bool {
+		t1, err1 := time.Parse(time.RFC3339, telemetryData[i].Timestamp)
+		t2, err2 := time.Parse(time.RFC3339, telemetryData[j].Timestamp)
+		if err1 != nil || err2 != nil {
+			return false // Keep original order if parsing fails
 		}
-	}
+		return t1.After(t2) // Most recent first
+	})
 
 	// Apply limit
 	if len(telemetryData) > limit {

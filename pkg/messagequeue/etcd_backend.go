@@ -17,11 +17,9 @@ import (
 // EtcdBackend provides etcd-based message queue functionality with List & Watch patterns
 type EtcdBackend struct {
 	client      *clientv3.Client
-	ctx         context.Context // TODO ctx should be passed as argument to all functions, shouldnt be part of the struct
 	queuePrefix string
 	watchers    map[string]clientv3.WatchChan
 	watchersMu  sync.RWMutex
-	leaseID     clientv3.LeaseID // TODO: fix this
 }
 
 // NewEtcdBackend creates a new etcd backend if ETCD_ENDPOINTS is set
@@ -65,14 +63,13 @@ func NewEtcdBackend() (*EtcdBackend, error) {
 
 	return &EtcdBackend{
 		client:      client,
-		ctx:         context.Background(),
 		queuePrefix: queuePrefix,
 		watchers:    make(map[string]clientv3.WatchChan),
 	}, nil
 }
 
 // PublishMessage publishes a message to etcd
-func (eb *EtcdBackend) PublishMessage(topic string, message *Message) error {
+func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message *Message) error {
 	// Create unique key for the message
 	messageKey := fmt.Sprintf("%s/%s/%d_%s_%d",
 		eb.queuePrefix,
@@ -88,7 +85,7 @@ func (eb *EtcdBackend) PublishMessage(topic string, message *Message) error {
 	}
 
 	// Store message in etcd with TTL
-	ctx, cancel := context.WithTimeout(eb.ctx, 10*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Calculate TTL based on message expiration
@@ -98,13 +95,13 @@ func (eb *EtcdBackend) PublishMessage(topic string, message *Message) error {
 	}
 
 	// Create lease for TTL
-	lease, err := eb.client.Grant(ctx, ttl)
+	lease, err := eb.client.Grant(timeoutCtx, ttl)
 	if err != nil {
 		return fmt.Errorf("failed to create etcd lease: %w", err)
 	}
 
 	// Put message with lease
-	_, err = eb.client.Put(ctx, messageKey, string(data), clientv3.WithLease(lease.ID))
+	_, err = eb.client.Put(timeoutCtx, messageKey, string(data), clientv3.WithLease(lease.ID))
 	if err != nil {
 		return fmt.Errorf("failed to publish message to etcd: %w", err)
 	}
@@ -114,15 +111,15 @@ func (eb *EtcdBackend) PublishMessage(topic string, message *Message) error {
 }
 
 // ConsumeMessages consumes messages from etcd
-func (eb *EtcdBackend) ConsumeMessages(topic string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
+func (eb *EtcdBackend) ConsumeMessages(ctx context.Context, topic string, maxMessages int, timeoutSeconds int) ([]*Message, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	var messages []*Message
 
-	ctx, cancel := context.WithTimeout(eb.ctx, time.Duration(timeoutSeconds)*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
 	// Get all messages for the topic, sorted by key (which includes timestamp)
-	resp, err := eb.client.Get(ctx, topicPrefix,
+	resp, err := eb.client.Get(timeoutCtx, topicPrefix,
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(maxMessages)))
@@ -137,14 +134,14 @@ func (eb *EtcdBackend) ConsumeMessages(topic string, maxMessages int, timeoutSec
 		if err != nil {
 			logging.Errorf("Failed to deserialize message from key %s: %v", kv.Key, err)
 			// Delete invalid message
-			eb.client.Delete(eb.ctx, string(kv.Key))
+			eb.client.Delete(ctx, string(kv.Key))
 			continue
 		}
 
 		// Check if message has expired
 		if time.Now().After(message.ExpiresAt) {
 			// Delete expired message
-			eb.client.Delete(eb.ctx, string(kv.Key))
+			eb.client.Delete(ctx, string(kv.Key))
 			continue
 		}
 
@@ -160,13 +157,13 @@ func (eb *EtcdBackend) ConsumeMessages(topic string, maxMessages int, timeoutSec
 }
 
 // TopicExists checks if a topic exists (has messages)
-func (eb *EtcdBackend) TopicExists(topic string) bool {
+func (eb *EtcdBackend) TopicExists(ctx context.Context, topic string) bool {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
-	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	resp, err := eb.client.Get(ctx, topicPrefix,
+	resp, err := eb.client.Get(timeoutCtx, topicPrefix,
 		clientv3.WithPrefix(),
 		clientv3.WithCountOnly())
 
@@ -177,7 +174,7 @@ func (eb *EtcdBackend) TopicExists(topic string) bool {
 func (eb *EtcdBackend) GetTopicStats(topic string) (int64, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
-	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp, err := eb.client.Get(ctx, topicPrefix,
@@ -217,7 +214,7 @@ func (eb *EtcdBackend) AcknowledgeMessagesByKeys(consumerID string, messages []*
 	var acked []string
 	var failed []string
 
-	ctx, cancel := context.WithTimeout(eb.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Use transaction to delete multiple messages atomically
@@ -255,7 +252,7 @@ func (eb *EtcdBackend) AcknowledgeMessagesByKeys(consumerID string, messages []*
 
 // deleteMessageByID finds and deletes a message by its ID
 func (eb *EtcdBackend) deleteMessageByID(messageID string) error {
-	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Search for the message across all topics
@@ -287,7 +284,7 @@ func (eb *EtcdBackend) deleteMessageByID(messageID string) error {
 
 // ListTopics returns all topics that have messages
 func (eb *EtcdBackend) ListTopics() ([]string, error) {
-	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp, err := eb.client.Get(ctx, eb.queuePrefix,
@@ -323,7 +320,7 @@ func (eb *EtcdBackend) ListTopics() ([]string, error) {
 // Watch watches for changes in a topic
 func (eb *EtcdBackend) Watch(topic string) clientv3.WatchChan {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
-	return eb.client.Watch(eb.ctx, topicPrefix, clientv3.WithPrefix())
+	return eb.client.Watch(ctx, topicPrefix, clientv3.WithPrefix())
 }
 
 // ConsumeWithListWatch implements the List & Watch pattern for real-time message processing
@@ -336,13 +333,13 @@ func (eb *EtcdBackend) ConsumeWithListWatch(topic string, consumerID string) (<-
 
 		for {
 			select {
-			case <-eb.ctx.Done():
+			case <-ctx.Done():
 				return
 			default:
 			}
 
 			// Step 1: List - Get current state with revision
-			resp, err := eb.client.Get(eb.ctx, topicPrefix,
+			resp, err := eb.client.Get(ctx, topicPrefix,
 				clientv3.WithPrefix(),
 				clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
 			if err != nil {
@@ -359,14 +356,14 @@ func (eb *EtcdBackend) ConsumeWithListWatch(topic string, consumerID string) (<-
 				if msg := eb.parseMessage(kv); msg != nil {
 					select {
 					case messageChan <- msg:
-					case <-eb.ctx.Done():
+					case <-ctx.Done():
 						return
 					}
 				}
 			}
 
 			// Step 2: Watch - Monitor for new changes from next revision
-			watchCtx, watchCancel := context.WithCancel(eb.ctx)
+			watchCtx, watchCancel := context.WithCancel(ctx)
 			watchChan := eb.client.Watch(watchCtx, topicPrefix,
 				clientv3.WithPrefix(),
 				clientv3.WithRev(currentRev+1))
@@ -391,14 +388,14 @@ func (eb *EtcdBackend) ConsumeWithListWatch(topic string, consumerID string) (<-
 							if msg := eb.parseMessage(event.Kv); msg != nil {
 								select {
 								case messageChan <- msg:
-								case <-eb.ctx.Done():
+								case <-ctx.Done():
 									watchCancel()
 									return
 								}
 							}
 						}
 					}
-				case <-eb.ctx.Done():
+				case <-ctx.Done():
 					watchCancel()
 					return
 				}
@@ -417,7 +414,7 @@ func (eb *EtcdBackend) AtomicWorkClaim(topic, consumerID string, maxMessages int
 	workPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 	processingPrefix := fmt.Sprintf("/processing/%s/", consumerID)
 
-	ctx, cancel := context.WithTimeout(eb.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Get available work
@@ -477,14 +474,14 @@ func (eb *EtcdBackend) parseMessage(kv *mvccpb.KeyValue) *Message {
 	if err != nil {
 		logging.Errorf("Failed to deserialize message from key %s: %v", kv.Key, err)
 		// Clean up invalid message
-		eb.client.Delete(eb.ctx, string(kv.Key))
+		eb.client.Delete(ctx, string(kv.Key))
 		return nil
 	}
 
 	// Check if message has expired
 	if time.Now().After(message.ExpiresAt) {
 		// Delete expired message
-		eb.client.Delete(eb.ctx, string(kv.Key))
+		eb.client.Delete(ctx, string(kv.Key))
 		logging.Debugf("Deleted expired message %s", message.ID)
 		return nil
 	}
@@ -496,7 +493,7 @@ func (eb *EtcdBackend) parseMessage(kv *mvccpb.KeyValue) *Message {
 
 // RecoverOrphanedWork recovers work from dead consumers
 func (eb *EtcdBackend) RecoverOrphanedWork(maxAge time.Duration) error {
-	ctx, cancel := context.WithTimeout(eb.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Find all processing entries older than maxAge
@@ -543,7 +540,7 @@ func (eb *EtcdBackend) RecoverOrphanedWork(maxAge time.Duration) error {
 func (eb *EtcdBackend) GetQueueDepth(topic string) (int64, error) {
 	topicPrefix := fmt.Sprintf("%s/%s/", eb.queuePrefix, topic)
 
-	ctx, cancel := context.WithTimeout(eb.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp, err := eb.client.Get(ctx, topicPrefix,
