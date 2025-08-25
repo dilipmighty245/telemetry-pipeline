@@ -629,6 +629,7 @@ func (ng *NexusGatewayService) parseAndValidateTelemetryQuery(c echo.Context) (*
 // queryTelemetryFromEtcd queries telemetry data from etcd for a specific GPU
 func (ng *NexusGatewayService) queryTelemetryFromEtcd(ctx context.Context, params *TelemetryQueryParams) ([]TelemetryData, error) {
 	// Build the key pattern to search for telemetry data for this GPU
+	// Data is stored at: /telemetry/clusters/{cluster_id}/hosts/{host_id}/gpus/{gpu_id}/data/{telemetry_id}
 	keyPattern := fmt.Sprintf("/telemetry/clusters/%s/hosts/", ng.config.ClusterID)
 
 	resp, err := ng.etcdClient.Get(ctx, keyPattern, clientv3.WithPrefix())
@@ -640,16 +641,32 @@ func (ng *NexusGatewayService) queryTelemetryFromEtcd(ctx context.Context, param
 
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
-		// Look for telemetry data entries that contain our GPU ID
-		if ng.isValidTelemetryKey(key, params.GPUID) {
-			var data TelemetryData
-			if err := json.Unmarshal(kv.Value, &data); err != nil {
-				logging.Warnf("Failed to parse telemetry data from key %s: %v", key, err)
+		// Look for telemetry data entries in the /data/ path
+		if strings.Contains(key, "/data/") {
+			// Parse the Nexus TelemetryData structure
+			var nexusData nexus.TelemetryData
+			if err := json.Unmarshal(kv.Value, &nexusData); err != nil {
+				logging.Warnf("Failed to parse nexus telemetry data from key %s: %v", key, err)
 				continue // Skip invalid entries
 			}
 
 			// Filter by GPU ID (either by ID or UUID)
-			if ng.matchesGPUID(data.GPUID, params.GPUID) {
+			if ng.matchesGPUID(nexusData.GPUID, params.GPUID) || ng.matchesGPUID(nexusData.UUID, params.GPUID) {
+				// Convert Nexus TelemetryData to API TelemetryData format
+				data := TelemetryData{
+					Timestamp:         nexusData.Timestamp.Format(time.RFC3339),
+					GPUID:             nexusData.GPUID,
+					Hostname:          nexusData.Hostname,
+					GPUUtilization:    nexusData.GPUUtilization,
+					MemoryUtilization: nexusData.MemoryUtilization,
+					MemoryUsedMB:      nexusData.MemoryUsedMB,
+					MemoryFreeMB:      nexusData.MemoryFreeMB,
+					Temperature:       nexusData.Temperature,
+					PowerDraw:         nexusData.PowerDraw,
+					SMClockMHz:        nexusData.SMClockMHz,
+					MemoryClockMHz:    nexusData.MemoryClockMHz,
+				}
+
 				if ng.isWithinTimeRange(data.Timestamp, params.StartTime, params.EndTime) {
 					telemetryData = append(telemetryData, data)
 				}
@@ -660,14 +677,12 @@ func (ng *NexusGatewayService) queryTelemetryFromEtcd(ctx context.Context, param
 	return telemetryData, nil
 }
 
-// isValidTelemetryKey checks if a key represents telemetry data for the given GPU
-func (ng *NexusGatewayService) isValidTelemetryKey(key, gpuID string) bool {
-	return strings.Contains(key, "/data/") && 
-		(strings.Contains(key, gpuID) || strings.Contains(key, fmt.Sprintf("gpu_%s", gpuID)))
-}
-
 // matchesGPUID checks if the data GPU ID matches the requested GPU ID
 func (ng *NexusGatewayService) matchesGPUID(dataGPUID, requestedGPUID string) bool {
+	if dataGPUID == "" {
+		return false
+	}
+	// Exact match or partial match (case sensitive)
 	return dataGPUID == requestedGPUID || strings.Contains(dataGPUID, requestedGPUID)
 }
 

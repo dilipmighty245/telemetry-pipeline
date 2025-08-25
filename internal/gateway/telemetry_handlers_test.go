@@ -159,54 +159,8 @@ func TestNexusGatewayService_parseAndValidateTelemetryQuery(t *testing.T) {
 	}
 }
 
-func TestNexusGatewayService_isValidTelemetryKey(t *testing.T) {
-	gateway := &NexusGatewayService{}
-
-	tests := []struct {
-		name   string
-		key    string
-		gpuID  string
-		expect bool
-	}{
-		{
-			name:   "valid telemetry data key",
-			key:    "/telemetry/clusters/test/hosts/node1/gpus/gpu-0/data/2024-01-01T00:00:00Z",
-			gpuID:  "gpu-0",
-			expect: true,
-		},
-		{
-			name:   "valid telemetry data key with gpu_ prefix",
-			key:    "/telemetry/clusters/test/hosts/node1/gpus/gpu_0/data/2024-01-01T00:00:00Z",
-			gpuID:  "0",
-			expect: true,
-		},
-		{
-			name:   "GPU metadata key (not data)",
-			key:    "/telemetry/clusters/test/hosts/node1/gpus/gpu-0",
-			gpuID:  "gpu-0",
-			expect: false,
-		},
-		{
-			name:   "different GPU ID",
-			key:    "/telemetry/clusters/test/hosts/node1/gpus/gpu-1/data/2024-01-01T00:00:00Z",
-			gpuID:  "gpu-0",
-			expect: false,
-		},
-		{
-			name:   "no data path",
-			key:    "/telemetry/clusters/test/hosts/node1/gpus/gpu-0/metadata",
-			gpuID:  "gpu-0",
-			expect: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := gateway.isValidTelemetryKey(tt.key, tt.gpuID)
-			assert.Equal(t, tt.expect, result)
-		})
-	}
-}
+// TestNexusGatewayService_isValidTelemetryKey test removed as the method was refactored
+// The telemetry key validation is now handled directly in queryTelemetryFromEtcd
 
 func TestNexusGatewayService_matchesGPUID(t *testing.T) {
 	gateway := &NexusGatewayService{}

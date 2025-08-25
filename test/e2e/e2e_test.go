@@ -150,9 +150,9 @@ func testHealthChecks(t *testing.T, gatewayPort, streamerPort int) {
 }
 
 func testCSVUpload(t *testing.T, streamerPort int) {
-	// Create test CSV content
+	// Create test CSV content with the specific UUID that will be queried in the telemetry test
 	csvContent := `timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization,memory_used_mb,memory_free_mb,temperature,power_draw,sm_clock_mhz,memory_clock_mhz
-2023-01-01T00:00:00Z,0,test-host,GPU-12345,nvidia0,NVIDIA H100,85.5,60.2,8192,2048,72.0,350.5,1410,1215
+2023-01-01T00:00:00Z,0,test-host,GPU-8d277337-45c3-d0c3-d239-7bf69bd89319,nvidia0,NVIDIA H100,85.5,60.2,8192,2048,72.0,350.5,1410,1215
 2023-01-01T00:01:00Z,1,test-host,GPU-67890,nvidia1,NVIDIA H100,90.0,65.0,9000,1240,75.0,360.0,1420,1220`
 
 	// Create multipart form
@@ -192,7 +192,7 @@ func testCSVUpload(t *testing.T, streamerPort int) {
 
 func testTelemetryQuery(t *testing.T, gatewayPort int) {
 	// Wait a bit for data to be processed
-	time.Sleep(2 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// Query all GPUs
 	gpusURL := fmt.Sprintf("http://localhost:%d/api/v1/gpus", gatewayPort)
@@ -208,13 +208,38 @@ func testTelemetryQuery(t *testing.T, gatewayPort int) {
 
 	assert.True(t, gpusResp["success"].(bool))
 
-	// Query telemetry by GPU (should return empty for now since we need etcd integration)
-	telemetryURL := fmt.Sprintf("http://localhost:%d/api/v1/gpus/GPU-12345/telemetry", gatewayPort)
+	// Query telemetry by GPU - test the specific UUID from the user's request
+	telemetryURL := fmt.Sprintf("http://localhost:%d/api/v1/gpus/GPU-8d277337-45c3-d0c3-d239-7bf69bd89319/telemetry", gatewayPort)
 	resp, err = http.Get(telemetryURL)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var telemetryResp map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&telemetryResp)
+	require.NoError(t, err)
+
+	// Verify the response structure and that count is greater than 0
+	assert.True(t, telemetryResp["success"].(bool), "Telemetry query should be successful")
+	assert.NotNil(t, telemetryResp["count"], "Response should contain count field")
+	
+	count, ok := telemetryResp["count"].(float64)
+	require.True(t, ok, "Count should be a number")
+	assert.Greater(t, count, 0.0, "Telemetry count should be greater than 0")
+
+	// Verify data array exists and is not empty
+	data, exists := telemetryResp["data"]
+	assert.True(t, exists, "Response should contain data field")
+	
+	dataArray, ok := data.([]interface{})
+	require.True(t, ok, "Data should be an array")
+	assert.Greater(t, len(dataArray), 0, "Data array should not be empty")
+
+	// Verify GPU ID in response matches request
+	gpuID, exists := telemetryResp["gpu_id"]
+	assert.True(t, exists, "Response should contain gpu_id field")
+	assert.Equal(t, "GPU-8d277337-45c3-d0c3-d239-7bf69bd89319", gpuID, "GPU ID should match requested ID")
 }
 
 func testServiceIntegration(t *testing.T, gatewayPort, streamerPort int) {
