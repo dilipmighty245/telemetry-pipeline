@@ -60,7 +60,6 @@ type Topic struct {
 	Consumers map[string]*Consumer `json:"consumers"`
 	Config    map[string]string    `json:"config"`
 	CreatedAt time.Time            `json:"created_at"`
-	mu        sync.RWMutex
 	maxSize   int
 }
 
@@ -70,13 +69,11 @@ type Consumer struct {
 	Group        string    `json:"group"`
 	LastSeen     time.Time `json:"last_seen"`
 	ProcessedIDs []string  `json:"processed_ids"`
-	mu           sync.RWMutex
 }
 
 // MessageQueue represents the message queue (in-memory or etcd-backed)
 type MessageQueue struct {
 	topics      map[string]*Topic
-	mu          sync.RWMutex
 	stats       *QueueStats
 	etcdBackend *EtcdBackend // Primary etcd backend for distributed messaging
 }

@@ -447,11 +447,7 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	logging.Infof("Starting enhanced etcd-based telemetry streaming")
 
 	// Start streaming adapter
-	err := ns.streamAdapter.Start(ctx)
-	if err != nil {
-		logging.Errorf("Failed to start stream adapter: %v", err)
-		return err
-	}
+	ns.streamAdapter.Start(ctx)
 
 	// Start worker pool (parallel streaming always enabled)
 	for _, worker := range ns.workers {
@@ -516,7 +512,7 @@ func (ns *NexusStreamerService) Start(ctx context.Context) error {
 	})
 
 	// Wait for all goroutines to complete
-	err = g.Wait()
+	err := g.Wait()
 	if err != nil && err != context.Canceled {
 		return err
 	}
@@ -837,10 +833,7 @@ func (ns *NexusStreamerService) Close(ctx context.Context) error {
 // Stop stops enhanced streaming features
 func (ns *NexusStreamerService) Stop() error {
 	// Stop streaming adapter
-	err := ns.streamAdapter.Stop()
-	if err != nil {
-		logging.Errorf("Failed to stop stream adapter: %v", err)
-	}
+	ns.streamAdapter.Stop()
 
 	// Stop workers (parallel streaming always enabled)
 	for _, worker := range ns.workers {
@@ -1314,15 +1307,6 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if boolValue, err := strconv.ParseBool(value); err == nil {
-			return boolValue
 		}
 	}
 	return defaultValue

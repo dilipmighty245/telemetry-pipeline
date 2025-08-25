@@ -50,7 +50,6 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 		const numConsumers = 1
 
 		// Step 1: Produce telemetry messages
-		var producedMessages []MockTelemetryData
 		for i := 0; i < numMessages; i++ {
 			telemetryData := MockTelemetryData{
 				GPUID:      "GPU-12345",
@@ -59,7 +58,6 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 				Timestamp:  time.Now(),
 				Hostname:   "test-host",
 			}
-			producedMessages = append(producedMessages, telemetryData)
 
 			payload, err := json.Marshal(telemetryData)
 			require.NoError(t, err)
@@ -97,7 +95,6 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 					}
 
 					// Process messages
-					var processedTelemetry []MockTelemetryData
 					for _, msg := range messages {
 						var telemetry MockTelemetryData
 						err := json.Unmarshal(msg.Payload, &telemetry)
@@ -105,7 +102,6 @@ func testFullPipeline(t *testing.T, service *MessageQueueService) {
 							t.Errorf("Failed to unmarshal: %v", err)
 							continue
 						}
-						processedTelemetry = append(processedTelemetry, telemetry)
 						consumedMessages <- telemetry
 					}
 

@@ -280,7 +280,7 @@ func StartEndpoint(addr, path string) *http.Server {
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); !errors.Is(http.ErrServerClosed, err) {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			Errorf("logging server failed: %v", err)
 		}
 	}()

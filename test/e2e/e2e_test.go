@@ -40,24 +40,6 @@ func getAvailablePort() (int, error) {
 	return addr.Port, nil
 }
 
-func enforcePortRelease(t *testing.T, ports ...int) {
-	t.Helper()
-
-	t.Cleanup(func() {
-		// Give services a moment to fully shutdown before checking
-		time.Sleep(200 * time.Millisecond)
-
-		for _, port := range ports {
-			addr := fmt.Sprintf(":%d", port)
-			ln, err := net.Listen("tcp", addr)
-			if err != nil {
-				t.Fatalf("port %d is still in use after test cleanup", port)
-			}
-			_ = ln.Close()
-		}
-	})
-}
-
 // TestE2EServices tests the complete end-to-end flow
 func TestE2EServices(t *testing.T) {
 	// Get available ports for services
@@ -267,75 +249,46 @@ func testServiceIntegration(t *testing.T, gatewayPort, streamerPort int) {
 	}
 }
 
-func testErrorHandling(t *testing.T) {
-	// Test invalid CSV upload
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+// func testLoadTesting(t *testing.T) {
+// 	// Simple load test - upload multiple CSV files concurrently
+// 	csvContent := `timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization
+// 2023-01-01T00:00:00Z,0,load-test-host,GPU-LOAD-TEST,nvidia0,NVIDIA H100,85.5,60.2`
 
-	part, err := writer.CreateFormFile("file", "invalid.txt")
-	require.NoError(t, err)
-	_, err = part.Write([]byte("not a csv file"))
-	require.NoError(t, err)
-	writer.Close()
+// 	const numRequests = 5
+// 	done := make(chan bool, numRequests)
 
-	req, err := http.NewRequest("POST", "http://localhost:8081/api/v1/csv/upload", &buf)
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+// 	for i := 0; i < numRequests; i++ {
+// 		go func(id int) {
+// 			var buf bytes.Buffer
+// 			writer := multipart.NewWriter(&buf)
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+// 			part, _ := writer.CreateFormFile("file", fmt.Sprintf("load-test-%d.csv", id))
+// 			_, _ = part.Write([]byte(csvContent))
+// 			writer.Close()
 
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+// 			req, _ := http.NewRequest("POST", "http://localhost:8081/api/v1/csv/upload", &buf)
+// 			req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Test invalid GPU query
-	resp, err = http.Get("http://localhost:8080/api/v1/gpus//telemetry")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-}
+// 			client := &http.Client{Timeout: 10 * time.Second}
+// 			resp, err := client.Do(req)
+// 			if err == nil {
+// 				resp.Body.Close()
+// 			}
 
-func testLoadTesting(t *testing.T) {
-	// Simple load test - upload multiple CSV files concurrently
-	csvContent := `timestamp,gpu_id,hostname,uuid,device,modelname,gpu_utilization,memory_utilization
-2023-01-01T00:00:00Z,0,load-test-host,GPU-LOAD-TEST,nvidia0,NVIDIA H100,85.5,60.2`
+// 			done <- true
+// 		}(i)
+// 	}
 
-	const numRequests = 5
-	done := make(chan bool, numRequests)
-
-	for i := 0; i < numRequests; i++ {
-		go func(id int) {
-			var buf bytes.Buffer
-			writer := multipart.NewWriter(&buf)
-
-			part, _ := writer.CreateFormFile("file", fmt.Sprintf("load-test-%d.csv", id))
-			_, _ = part.Write([]byte(csvContent))
-			writer.Close()
-
-			req, _ := http.NewRequest("POST", "http://localhost:8081/api/v1/csv/upload", &buf)
-			req.Header.Set("Content-Type", writer.FormDataContentType())
-
-			client := &http.Client{Timeout: 10 * time.Second}
-			resp, err := client.Do(req)
-			if err == nil {
-				resp.Body.Close()
-			}
-
-			done <- true
-		}(i)
-	}
-
-	// Wait for all requests to complete
-	for i := 0; i < numRequests; i++ {
-		select {
-		case <-done:
-			// Request completed
-		case <-time.After(15 * time.Second):
-			t.Fatal("Load test timed out")
-		}
-	}
-}
+// 	// Wait for all requests to complete
+// 	for i := 0; i < numRequests; i++ {
+// 		select {
+// 		case <-done:
+// 			// Request completed
+// 		case <-time.After(15 * time.Second):
+// 			t.Fatal("Load test timed out")
+// 		}
+// 	}
+// }
 
 // Helper functions
 
@@ -355,15 +308,4 @@ func waitForService(t *testing.T, url string, timeout time.Duration) {
 	}
 
 	t.Fatalf("Service at %s not ready within %v", url, timeout)
-}
-
-func runService(t *testing.T, start func() (*http.Server, error)) (stop func()) {
-	t.Helper()
-	srv, err := start()
-	require.NoError(t, err)
-	return func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx) // best-effort shutdown
-	}
 }

@@ -468,7 +468,7 @@ func BenchmarkTelemetryDataBeforeCreate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data.BeforeCreate(nil)
+		_ = data.BeforeCreate(nil)
 	}
 }
 
@@ -480,6 +480,6 @@ func BenchmarkTelemetryDataBeforeUpdate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data.BeforeUpdate(nil)
+		_ = data.BeforeUpdate(nil)
 	}
 }

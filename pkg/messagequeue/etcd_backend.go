@@ -186,14 +186,14 @@ func (eb *EtcdBackend) ConsumeMessages(ctx context.Context, topic string, maxMes
 		if err != nil {
 			logging.Errorf("Failed to deserialize message from key %s: %v", kv.Key, err)
 			// Delete invalid message
-			eb.client.Delete(ctx, string(kv.Key))
+			_, _ = eb.client.Delete(ctx, string(kv.Key))
 			continue
 		}
 
 		// Check if message has expired
 		if time.Now().After(message.ExpiresAt) {
 			// Delete expired message
-			eb.client.Delete(ctx, string(kv.Key))
+			_, _ = eb.client.Delete(ctx, string(kv.Key))
 			continue
 		}
 
@@ -634,14 +634,14 @@ func (eb *EtcdBackend) parseMessage(ctx context.Context, kv *mvccpb.KeyValue) *M
 	if err != nil {
 		logging.Errorf("Failed to deserialize message from key %s: %v", kv.Key, err)
 		// Clean up invalid message
-		eb.client.Delete(ctx, string(kv.Key))
+		_, _ = eb.client.Delete(ctx, string(kv.Key))
 		return nil
 	}
 
 	// Check if message has expired
 	if time.Now().After(message.ExpiresAt) {
 		// Delete expired message
-		eb.client.Delete(ctx, string(kv.Key))
+		_, _ = eb.client.Delete(ctx, string(kv.Key))
 		logging.Debugf("Deleted expired message %s", message.ID)
 		return nil
 	}

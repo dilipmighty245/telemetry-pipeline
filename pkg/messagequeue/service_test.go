@@ -380,7 +380,7 @@ func BenchmarkMessageQueueService(b *testing.B) {
 	b.Run("ConsumeTelemetry", func(b *testing.B) {
 		// Pre-publish messages for consumption
 		for i := 0; i < b.N; i++ {
-			service.PublishTelemetry(ctx, payload, headers)
+			_ = service.PublishTelemetry(ctx, payload, headers)
 		}
 
 		b.ResetTimer()
@@ -391,7 +391,7 @@ func BenchmarkMessageQueueService(b *testing.B) {
 			}
 			if len(messages) > 0 {
 				// Acknowledge to clean up
-				service.AcknowledgeMessages(ctx, "bench-group", messages)
+				_ = service.AcknowledgeMessages(ctx, "bench-group", messages)
 			}
 		}
 	})

@@ -136,7 +136,7 @@ func TestScalingCoordinator_Start(t *testing.T) {
 
 	ctx := context.Background()
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop(ctx)
+	defer func() { _ = sc.Stop(ctx) }()
 
 	err := sc.Start(ctx)
 	assert.NoError(t, err)
@@ -154,7 +154,7 @@ func TestScalingCoordinator_ReportMetrics(t *testing.T) {
 	ctx := context.Background()
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop(ctx)
+	defer func() { _ = sc.Stop(ctx) }()
 
 	err := sc.Start(ctx)
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 	}
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
-	defer sc.Stop(ctx)
+	defer func() { _ = sc.Stop(ctx) }()
 
 	err := sc.Start(ctx)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestScalingCoordinator_GetScalingDecision(t *testing.T) {
 			instanceSC := NewScalingCoordinator(client, "test-service", fmt.Sprintf("instance-%d", i), rules)
 			err := instanceSC.Start(ctx)
 			require.NoError(t, err)
-			defer instanceSC.Stop(ctx)
+			defer func() { _ = instanceSC.Stop(ctx) }()
 
 			lowLoadMetrics := InstanceMetrics{
 				CPUUsage:    0.1,
@@ -340,7 +340,7 @@ func TestScalingCoordinator_IsInCooldownPeriod(t *testing.T) {
 	}
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", rules)
-	defer sc.Stop(ctx)
+	defer func() { _ = sc.Stop(ctx) }()
 
 	err := sc.Start(ctx)
 	require.NoError(t, err)
@@ -406,7 +406,7 @@ func TestScalingCoordinator_PublishScalingDecision(t *testing.T) {
 	defer cancel()
 
 	sc := NewScalingCoordinator(client, "test-service", "test-instance", nil)
-	defer sc.Stop(ctx)
+	defer func() { _ = sc.Stop(ctx) }()
 
 	err := sc.Start(ctx)
 	require.NoError(t, err)
@@ -471,8 +471,8 @@ func TestScalingCoordinator_TryAcquireLeadership(t *testing.T) {
 
 	sc1 := NewScalingCoordinator(client, "test-service", "instance-1", nil)
 	sc2 := NewScalingCoordinator(client, "test-service", "instance-2", nil)
-	defer sc1.Stop(ctx)
-	defer sc2.Stop(ctx)
+	defer func() { _ = sc1.Stop(ctx) }()
+	defer func() { _ = sc2.Stop(ctx) }()
 
 	err := sc1.Start(ctx)
 	require.NoError(t, err)

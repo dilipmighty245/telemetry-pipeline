@@ -125,12 +125,12 @@ func NewStreamAdapter(ctx context.Context, config *StreamAdapterConfig, destinat
 }
 
 // Start starts the streaming adapter with multiple workers
-func (sa *StreamAdapter) Start(ctx context.Context) error {
+func (sa *StreamAdapter) Start(ctx context.Context) {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
 
 	if sa.isRunning {
-		return nil
+		return
 	}
 
 	sa.isRunning = true
@@ -148,16 +148,15 @@ func (sa *StreamAdapter) Start(ctx context.Context) error {
 	}
 
 	logging.Infof("Started stream adapter with %d workers", sa.config.Workers)
-	return nil
 }
 
 // Stop gracefully stops the streaming adapter
-func (sa *StreamAdapter) Stop() error {
+func (sa *StreamAdapter) Stop() {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
 
 	if !sa.isRunning {
-		return nil
+		return
 	}
 
 	sa.isRunning = false
@@ -165,7 +164,6 @@ func (sa *StreamAdapter) Stop() error {
 	sa.wg.Wait()
 
 	logging.Infof("Stopped stream adapter")
-	return nil
 }
 
 // WriteTelemetry writes telemetry data to the streaming channel

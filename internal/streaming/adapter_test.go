@@ -222,7 +222,6 @@ func TestStreamAdapter_WriteTelemetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	adapter := NewStreamAdapter(ctx, config, server.URL)
 	adapter.Start(ctx)
-	defer adapter.Stop()
 	defer cancel()
 
 	// Write test data
@@ -496,7 +495,6 @@ func TestStreamAdapter_ErrorHandling(t *testing.T) {
 
 	adapter := NewStreamAdapter(ctx, config, server.URL)
 	adapter.Start(ctx)
-	defer adapter.Stop()
 	defer cancel()
 
 	// Write test data
@@ -542,7 +540,6 @@ func TestStreamAdapter_MetricsCollection(t *testing.T) {
 
 	adapter := NewStreamAdapter(ctx, config, server.URL)
 	adapter.Start(ctx)
-	defer adapter.Stop()
 	defer cancel()
 
 	// Write test data

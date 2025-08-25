@@ -24,11 +24,7 @@ import (
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/config"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/discovery"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sync/errgroup"
 )
@@ -59,14 +55,11 @@ type NexusCollectorConfig struct {
 	// Enhanced streaming features
 	StreamingConfig   *streaming.StreamAdapterConfig `json:"streaming_config"`
 	StreamDestination string                         `json:"stream_destination"`
-	EnableLoadBalancing  bool                           `json:"enable_load_balancing"`
 
 	// Logging
-	LogLevel string
+	LogLevel  string
 	Verbosity int
 }
-
-
 
 // CollectorWorker handles parallel processing of telemetry records.
 //
@@ -81,7 +74,6 @@ type CollectorWorker struct {
 	isActive bool
 	mu       sync.RWMutex
 }
-
 
 // TelemetryRecord represents a telemetry data record consumed from the message queue.
 //
@@ -115,16 +107,16 @@ type NexusCollectorService struct {
 	etcdClient   *clientv3.Client
 
 	// Enhanced etcd features
-	serviceRegistry *discovery.ServiceRegistry
-	configManager   *config.ConfigManager
-	scalingCoord    *scaling.ScalingCoordinator
-	etcdBackend     *messagequeue.EtcdBackend
+	// serviceRegistry *discovery.ServiceRegistry
+	// configManager   *config.ConfigManager
+	// scalingCoord    *scaling.ScalingCoordinator
+	// etcdBackend     *messagequeue.EtcdBackend
 
 	// Enhanced streaming features
 	streamAdapter *streaming.StreamAdapter
-	workers         []*CollectorWorker
-	workerPool      chan *CollectorWorker
-	isEnhanced      bool
+	workers       []*CollectorWorker
+	workerPool    chan *CollectorWorker
+	isEnhanced    bool
 
 	hostRegistry   map[string]bool
 	gpuRegistry    map[string]bool
@@ -170,8 +162,6 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		}
 	}
 
-
-
 	collector := &NexusCollectorService{
 		config:         config,
 		hostRegistry:   make(map[string]bool),
@@ -183,13 +173,6 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 
 	// Initialize streaming adapter (always enabled for performance)
 	collector.streamAdapter = streaming.NewStreamAdapter(ctx, config.StreamingConfig, config.StreamDestination)
-
-
-	// Enable load balancing by default
-	if !config.EnableLoadBalancing {
-		config.EnableLoadBalancing = true
-		logging.Infof("Load balancing enabled by default")
-	}
 
 	// Initialize worker pool (always enabled with load balancing)
 	collector.workerPool = make(chan *CollectorWorker, config.Workers)
@@ -219,11 +202,6 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
 	}
 	collector.nexusService = nexusService
-
-	logging.Infof("Nexus integration enabled")
-
-	logging.Infof("Created enhanced collector service with streaming=true, load_balancing=%v",
-		config.EnableLoadBalancing)
 
 	// Initialize etcd client for message queue
 	etcdClient, err := clientv3.New(clientv3.Config{
@@ -320,21 +298,17 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 
 	// Start streaming adapter
 	if nc.streamAdapter != nil {
-		err := nc.streamAdapter.Start(ctx)
-		if err != nil {
-			logging.Errorf("Failed to start stream adapter: %v", err)
-			return err
-		}
+		return fmt.Errorf("stream adapter is not initialized")
 	}
+
+	nc.streamAdapter.Start(ctx)
 
 	g, gCtx := errgroup.WithContext(ctx)
 
 	// Start worker pool if load balancing is enabled
-	if nc.config.EnableLoadBalancing {
-		logging.Infof("Starting load balancing workers")
-		for _, worker := range nc.workers {
-			worker.start(gCtx)
-		}
+	logging.Infof("Starting load balancing workers")
+	for _, worker := range nc.workers {
+		worker.start(gCtx)
 	}
 
 	// Setup watch API (always enabled)
@@ -342,21 +316,9 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 		logging.Errorf("Failed to setup watch API: %v", err)
 	}
 
-	// Start worker goroutines for processing
-	if nc.config.EnableLoadBalancing {
-		// Use worker pool for load balancing
-		g.Go(func() error {
-			return nc.workerPoolProcessor(gCtx)
-		})
-	} else {
-		// Use direct processing workers
-		for i := 0; i < nc.config.Workers; i++ {
-			workerID := i
-			g.Go(func() error {
-				return nc.processingWorker(gCtx, workerID)
-			})
-		}
-	}
+	g.Go(func() error {
+		return nc.workerPoolProcessor(gCtx)
+	})
 
 	// Start message queue consumer (only process records from streamer queue)
 	g.Go(func() error {
@@ -537,37 +499,6 @@ func (nc *NexusCollectorService) workerPoolProcessor(ctx context.Context) error 
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-		}
-	}
-}
-
-// processingWorker is a worker goroutine that processes telemetry records from the processing channel.
-//
-// This worker continuously reads records from the processingChan and processes them
-// using the processRecord method. It handles graceful shutdown when the context is
-// canceled and logs processing statistics.
-//
-// Parameters:
-//   - ctx: Context for the worker operations
-//   - workerID: Unique identifier for this worker instance
-//
-// Returns:
-//   - error: Any error that occurred during worker execution
-//
-// The worker runs until the context is canceled or the processing channel is closed.
-// It handles individual record processing errors gracefully without stopping the worker.
-func (nc *NexusCollectorService) processingWorker(ctx context.Context, workerID int) error {
-	logging.Infof("Starting processing worker %d", workerID)
-
-	for {
-		select {
-		case record := <-nc.processingChan:
-			if err := nc.processRecord(ctx, record); err != nil {
-				logging.Errorf("Worker %d failed to process record: %v", workerID, err)
-			}
-		case <-ctx.Done():
-			logging.Infof("Stopping processing worker %d", workerID)
-			return ctx.Err()
 		}
 	}
 }
@@ -823,7 +754,7 @@ func (nc *NexusCollectorService) storeInNexus(ctx context.Context, record *Telem
 //
 // The method should be called when the collector is no longer needed to prevent
 // resource leaks and ensure proper cleanup of all connections and goroutines.
-func (nc *NexusCollectorService) Close() error {
+func (nc *NexusCollectorService) Close() {
 	logging.Infof("Closing enhanced Nexus collector")
 
 	// Stop enhanced features
@@ -840,7 +771,6 @@ func (nc *NexusCollectorService) Close() error {
 	}
 
 	logging.Infof("Nexus collector closed successfully")
-	return nil
 }
 
 // parseConfig parses command line flags and environment variables to create collector configuration.
@@ -953,20 +883,15 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
+		} else {
+			return defaultValue
 		}
+	} else {
+		return defaultValue
 	}
-	return defaultValue
 }
 
 // Enhanced methods for streaming capabilities
-
-// getBatchSize returns the configured batch size for processing.
-//
-// Returns:
-//   - int: The batch size to use for processing
-func (nc *NexusCollectorService) getBatchSize() int {
-	return nc.config.BatchSize
-}
 
 // GetEnhancedMetrics returns comprehensive metrics including streaming, circuit breaker, and adaptive batching status.
 //
@@ -975,14 +900,14 @@ func (nc *NexusCollectorService) getBatchSize() int {
 //
 // Returns:
 //   - map[string]interface{}: A map containing various metrics including:
-//     - is_enhanced: Whether enhanced features are enabled
-//     - message_count: Total number of messages processed
-//     - uptime: Service uptime duration
-//     - collector_id: Unique collector identifier
-//     - cluster_id: Nexus cluster identifier
-//     - streaming_metrics: Streaming adapter metrics (if available)
-//     - circuit_breaker: Circuit breaker status (if enabled)
-//     - adaptive_batcher: Adaptive batching status (if enabled)
+//   - is_enhanced: Whether enhanced features are enabled
+//   - message_count: Total number of messages processed
+//   - uptime: Service uptime duration
+//   - collector_id: Unique collector identifier
+//   - cluster_id: Nexus cluster identifier
+//   - streaming_metrics: Streaming adapter metrics (if available)
+//   - circuit_breaker: Circuit breaker status (if enabled)
+//   - adaptive_batcher: Adaptive batching status (if enabled)
 func (nc *NexusCollectorService) GetEnhancedMetrics() map[string]interface{} {
 	enhanced := map[string]interface{}{
 		"is_enhanced":   nc.isEnhanced,
@@ -995,8 +920,6 @@ func (nc *NexusCollectorService) GetEnhancedMetrics() map[string]interface{} {
 	if nc.streamAdapter != nil {
 		enhanced["streaming_metrics"] = nc.streamAdapter.GetMetrics()
 	}
-
-
 
 	return enhanced
 }
@@ -1015,12 +938,12 @@ func (cw *CollectorWorker) start(ctx context.Context) {
 	cw.mu.Lock()
 	cw.isActive = true
 	cw.mu.Unlock()
-	
+
 	cw.wg.Add(1)
 	go func() {
 		defer cw.wg.Done()
 		logging.Infof("Started collector worker %d", cw.id)
-		
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -1031,7 +954,7 @@ func (cw *CollectorWorker) start(ctx context.Context) {
 					logging.Infof("Collector worker %d stopping due to channel closure", cw.id)
 					return
 				}
-				
+
 				if err := cw.service.processRecord(ctx, record); err != nil {
 					logging.Errorf("Worker %d failed to process record: %v", cw.id, err)
 				}
@@ -1057,7 +980,6 @@ func (cw *CollectorWorker) stop() {
 
 }
 
-
 // StopStreaming stops enhanced collector service features including streaming and load balancing.
 //
 // This method gracefully shuts down:
@@ -1070,22 +992,15 @@ func (cw *CollectorWorker) stop() {
 //
 // The method logs the shutdown process and handles errors gracefully to ensure
 // proper cleanup even if some components fail to stop cleanly.
-func (nc *NexusCollectorService) StopStreaming() error {
+func (nc *NexusCollectorService) StopStreaming() {
 	// Stop streaming adapter
 	if nc.streamAdapter != nil {
-		err := nc.streamAdapter.Stop()
-		if err != nil {
-			logging.Errorf("Failed to stop stream adapter: %v", err)
-		}
+		nc.streamAdapter.Stop()
 	}
 
 	// Stop enhanced features
-	if nc.config.EnableLoadBalancing {
-		logging.Infof("Stopping load balancing workers")
-		for _, worker := range nc.workers {
-			worker.stop()
-		}
+	logging.Infof("Stopping load balancing workers")
+	for _, worker := range nc.workers {
+		worker.stop()
 	}
-
-	return nil
 }

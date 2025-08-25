@@ -504,7 +504,7 @@ func TestServiceRegistry_LeaseExpiration(t *testing.T) {
 	require.Len(t, resp.Kvs, 1)
 
 	// Stop the service registry to stop lease renewal
-	sr.Deregister(ctx)
+	_ = sr.Deregister(ctx)
 
 	// Wait for lease to expire (though it's already removed by Deregister)
 	time.Sleep(4 * time.Second)

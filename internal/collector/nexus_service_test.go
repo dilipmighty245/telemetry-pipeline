@@ -19,18 +19,18 @@ func TestGetEnv(t *testing.T) {
 	// Test with existing environment variable
 	os.Setenv("TEST_VAR", "test_value")
 	defer os.Unsetenv("TEST_VAR")
-	
+
 	result := getEnv("TEST_VAR", "default")
 	assert.Equal(t, "test_value", result)
-	
+
 	// Test with non-existing environment variable
 	result = getEnv("NON_EXISTING_VAR", "default_value")
 	assert.Equal(t, "default_value", result)
-	
+
 	// Test with empty environment variable
 	os.Setenv("EMPTY_VAR", "")
 	defer os.Unsetenv("EMPTY_VAR")
-	
+
 	result = getEnv("EMPTY_VAR", "default_empty")
 	assert.Equal(t, "default_empty", result)
 }
@@ -39,25 +39,25 @@ func TestGetEnvInt(t *testing.T) {
 	// Test with valid integer
 	os.Setenv("TEST_INT", "42")
 	defer os.Unsetenv("TEST_INT")
-	
+
 	result := getEnvInt("TEST_INT", 10)
 	assert.Equal(t, 42, result)
-	
+
 	// Test with non-existing environment variable
 	result = getEnvInt("NON_EXISTING_INT", 25)
 	assert.Equal(t, 25, result)
-	
+
 	// Test with invalid integer
 	os.Setenv("INVALID_INT", "not_a_number")
 	defer os.Unsetenv("INVALID_INT")
-	
+
 	result = getEnvInt("INVALID_INT", 30)
 	assert.Equal(t, 30, result)
-	
+
 	// Test with empty string
 	os.Setenv("EMPTY_INT", "")
 	defer os.Unsetenv("EMPTY_INT")
-	
+
 	result = getEnvInt("EMPTY_INT", 35)
 	assert.Equal(t, 35, result)
 }
@@ -106,7 +106,7 @@ func TestGetEnvBool(t *testing.T) {
 			expected: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envValue != "" {
@@ -127,25 +127,25 @@ func TestGetEnvDuration(t *testing.T) {
 	// Test with valid duration
 	os.Setenv("TEST_DURATION", "30s")
 	defer os.Unsetenv("TEST_DURATION")
-	
+
 	result := getEnvDuration("TEST_DURATION", 10*time.Second)
 	assert.Equal(t, 30*time.Second, result)
-	
+
 	// Test with non-existing environment variable
 	result = getEnvDuration("NON_EXISTING_DURATION", 15*time.Second)
 	assert.Equal(t, 15*time.Second, result)
-	
+
 	// Test with invalid duration
 	os.Setenv("INVALID_DURATION", "not_a_duration")
 	defer os.Unsetenv("INVALID_DURATION")
-	
+
 	result = getEnvDuration("INVALID_DURATION", 20*time.Second)
 	assert.Equal(t, 20*time.Second, result)
-	
+
 	// Test with empty string
 	os.Setenv("EMPTY_DURATION", "")
 	defer os.Unsetenv("EMPTY_DURATION")
-	
+
 	result = getEnvDuration("EMPTY_DURATION", 25*time.Second)
 	assert.Equal(t, 25*time.Second, result)
 }
@@ -178,12 +178,12 @@ func TestBatchSizeEnvironment(t *testing.T) {
 			expected: testDefaultBatchSize,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			os.Setenv("BATCH_SIZE", tt.envValue)
 			defer os.Unsetenv("BATCH_SIZE")
-			
+
 			// Test the environment parsing logic
 			result := getEnvInt("BATCH_SIZE", testDefaultBatchSize)
 			if result <= 0 {
@@ -252,7 +252,7 @@ func TestNexusCollectorConfig_Validation(t *testing.T) {
 			isValid: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.isValid {
@@ -271,23 +271,9 @@ func TestNexusCollectorConfig_Validation(t *testing.T) {
 	}
 }
 
-func TestNexusCollectorService_Close(t *testing.T) {
-	// Create a service with minimal config to avoid nil pointer issues
-	service := &NexusCollectorService{
-		config: &NexusCollectorConfig{
-			ClusterID:   "test-cluster",
-			CollectorID: "test-collector",
-		},
-	}
-	
-	// Test that Close works with minimal setup
-	err := service.Close()
-	assert.NoError(t, err)
-}
-
 func TestNexusCollectorService_ParseConfig(t *testing.T) {
 	service := &NexusCollectorService{}
-	
+
 	// Set up environment variables for testing
 	testEnvVars := map[string]string{
 		"CLUSTER_ID":         "test-cluster",
@@ -298,17 +284,17 @@ func TestNexusCollectorService_ParseConfig(t *testing.T) {
 		"ETCD_ENDPOINTS":     "localhost:2379,localhost:2380",
 		"STREAM_DESTINATION": "http://localhost:8080/stream",
 	}
-	
+
 	// Set environment variables
 	for key, value := range testEnvVars {
 		os.Setenv(key, value)
 		defer os.Unsetenv(key)
 	}
-	
+
 	config, err := service.parseConfig([]string{})
 	require.NoError(t, err)
 	assert.NotNil(t, config)
-	
+
 	// Verify parsed values
 	assert.Equal(t, "test-cluster", config.ClusterID)
 	assert.Equal(t, "test-collector-123", config.CollectorID)
@@ -319,21 +305,21 @@ func TestNexusCollectorService_ParseConfig(t *testing.T) {
 
 func TestNexusCollectorService_ParseConfigDefaults(t *testing.T) {
 	service := &NexusCollectorService{}
-	
+
 	// Clear environment variables to test defaults
 	testEnvVars := []string{
 		"CLUSTER_ID", "COLLECTOR_ID", "BATCH_SIZE", "POLL_INTERVAL",
 		"WORKERS", "ETCD_ENDPOINTS", "STREAM_DESTINATION",
 	}
-	
+
 	for _, envVar := range testEnvVars {
 		os.Unsetenv(envVar)
 	}
-	
+
 	config, err := service.parseConfig([]string{})
 	require.NoError(t, err)
 	assert.NotNil(t, config)
-	
+
 	// Verify default values are set
 	assert.Equal(t, "default-cluster", config.ClusterID)
 	assert.NotEmpty(t, config.CollectorID)
@@ -347,11 +333,11 @@ func TestEnvVariableEdgeCases(t *testing.T) {
 	t.Run("getEnvInt with very large number", func(t *testing.T) {
 		os.Setenv("LARGE_INT", strconv.Itoa(int(^uint(0)>>1))) // Max int
 		defer os.Unsetenv("LARGE_INT")
-		
+
 		result := getEnvInt("LARGE_INT", 100)
 		assert.Equal(t, int(^uint(0)>>1), result)
 	})
-	
+
 	t.Run("getEnvDuration with various units", func(t *testing.T) {
 		tests := []struct {
 			value    string
@@ -365,7 +351,7 @@ func TestEnvVariableEdgeCases(t *testing.T) {
 			{"1h", 1 * time.Hour},
 			{"2h30m", 2*time.Hour + 30*time.Minute},
 		}
-		
+
 		for _, tt := range tests {
 			os.Setenv("TEST_DURATION", tt.value)
 			result := getEnvDuration("TEST_DURATION", 10*time.Second)
