@@ -903,8 +903,12 @@ func BenchmarkTelemetryGPU_JSONMarshal(b *testing.B) {
 }
 
 func BenchmarkNewTelemetryService(b *testing.B) {
+	// Setup embedded etcd server for benchmark
+	clientURL, cleanup := SetupTestEtcd(b)
+	defer cleanup()
+
 	config := &ServiceConfig{
-		EtcdEndpoints:  []string{"localhost:2379"},
+		EtcdEndpoints:  []string{clientURL},
 		ClusterID:      "benchmark-cluster",
 		ServiceID:      "benchmark-service",
 		UpdateInterval: 30 * time.Second,

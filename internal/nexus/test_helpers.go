@@ -18,7 +18,7 @@ type EmbeddedEtcdServer struct {
 }
 
 // NewEmbeddedEtcdServer creates and starts an embedded etcd server for testing
-func NewEmbeddedEtcdServer(t *testing.T) *EmbeddedEtcdServer {
+func NewEmbeddedEtcdServer(t testing.TB) *EmbeddedEtcdServer {
 	// Create temporary directory for etcd data
 	dataDir, err := os.MkdirTemp("", "etcd-test-*")
 	if err != nil {
@@ -99,7 +99,7 @@ func (e *EmbeddedEtcdServer) Close() {
 }
 
 // SetupTestEtcd creates an embedded etcd server for testing and returns cleanup function
-func SetupTestEtcd(t *testing.T) (clientURL string, cleanup func()) {
+func SetupTestEtcd(t testing.TB) (clientURL string, cleanup func()) {
 	server := NewEmbeddedEtcdServer(t)
 
 	return server.GetClientURL(), func() {
