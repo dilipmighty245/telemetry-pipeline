@@ -21,17 +21,7 @@ var (
 	ClusterIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
-// ValidationError represents a validation error
-type ValidationError struct {
-	Field   string `json:"field"`
-	Value   string `json:"value"`
-	Message string `json:"message"`
-}
-
-// Error implements the error interface
-func (e ValidationError) Error() string {
-	return fmt.Sprintf("validation error on field '%s': %s", e.Field, e.Message)
-}
+// Note: ValidationError is defined in csv_validator.go to avoid duplication
 
 // Validator provides validation methods
 type Validator struct{}

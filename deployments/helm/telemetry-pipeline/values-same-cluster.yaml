@@ -193,40 +193,35 @@ apiGateway:
 
 
 
-# External Redis Configuration - DISABLED for same cluster (using embedded Redis)
-externalRedis:
+# etcd Configuration - ENABLED for same cluster
+etcd:
+  enabled: true
+  auth:
+    rbac:
+      create: true
+      rootPassword: "etcd-root-password"
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  replicaCount: 3
+
+# External etcd Configuration - DISABLED for same cluster
+externalEtcd:
   enabled: false
-  host: ""
-  port: 6379
-  password: ""
-  database: 0
-  tls:
-    enabled: false
-    skipVerify: false
-    caCert: ""
+  endpoints: []
   auth:
     enabled: false
+    username: ""
+    password: ""
     existingSecret: ""
     existingSecretPasswordKey: "password"
-
-# Redis Configuration - ENABLED for same cluster
-redis:
-  enabled: true
-  architecture: standalone
-  auth:
-    enabled: true
-    password: "redis-password"
-  master:
-    persistence:
-      enabled: true
-      size: 8Gi
-    resources:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 250m
-        memory: 256Mi
 
 # Monitoring - Standard monitoring for same cluster
 monitoring:
@@ -285,9 +280,8 @@ extraManifests:
   data:
     cluster-type: "same-cluster"
     role: "all-in-one"
-    components: "streamer,collector,api-gateway,database,redis"
-    redis-endpoint: "{{ include "telemetry-pipeline.fullname" . }}-redis:6379"
-    database-endpoint: "{{ include "telemetry-pipeline.databaseHost" . }}:{{ include "telemetry-pipeline.databasePort" . }}"
+    components: "streamer,collector,api-gateway,etcd"
+    etcd-endpoint: "{{ include "telemetry-pipeline.fullname" . }}-etcd:2379"
     deployment-mode: "monolithic"
 
 # Resource quotas for same cluster (moderate limits)

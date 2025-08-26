@@ -701,7 +701,7 @@ func (ng *NexusGatewayService) isWithinTimeRange(timestampStr string, startTime,
 	if endTime != nil && timestamp.After(*endTime) {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -733,7 +733,7 @@ func (ng *NexusGatewayService) formatValidationError(err error) map[string]inter
 			"error":   validationErr.Message,
 		}
 	}
-	
+
 	return map[string]interface{}{
 		"success": false,
 		"error":   err.Error(),
@@ -798,7 +798,6 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 	})
 }
 
-
 // listClustersHandler godoc
 // @Summary List all clusters
 // @Description Return a list of all clusters
@@ -810,9 +809,9 @@ func (ng *NexusGatewayService) queryTelemetryByGPUHandler(c echo.Context) error 
 func (ng *NexusGatewayService) listClustersHandler(c echo.Context) error {
 	if ng.etcdClient == nil || ng.config == nil {
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"success": true,
-			"data":    []interface{}{},
-			"count":   0,
+			"success":  true,
+			"data":     []interface{}{},
+			"count":    0,
 			"clusters": []interface{}{}, // For backward compatibility
 		})
 	}
@@ -841,7 +840,7 @@ func (ng *NexusGatewayService) listClustersHandler(c echo.Context) error {
 	}
 
 	clusters := make(map[string]Cluster)
-	
+
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		// Extract cluster ID from key
@@ -928,7 +927,7 @@ func (ng *NexusGatewayService) getClusterHandler(c echo.Context) error {
 	// Count hosts and GPUs in this cluster
 	hostCount := 0
 	gpuCount := 0
-	
+
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		if strings.Contains(key, "/hosts/") {
@@ -986,15 +985,15 @@ func (ng *NexusGatewayService) getClusterStatsHandler(c echo.Context) error {
 	}
 
 	stats := map[string]interface{}{
-		"cluster_id":         clusterID,
-		"total_hosts":        0,
-		"total_gpus":         0,
-		"active_gpus":        0,
-		"telemetry_records":  0,
-		"last_updated":       time.Now().Format(time.RFC3339),
-		"status":             "healthy",
-		"uptime_percentage":  99.9,
-		"average_gpu_util":   0.0,
+		"cluster_id":          clusterID,
+		"total_hosts":         0,
+		"total_gpus":          0,
+		"active_gpus":         0,
+		"telemetry_records":   0,
+		"last_updated":        time.Now().Format(time.RFC3339),
+		"status":              "healthy",
+		"uptime_percentage":   99.9,
+		"average_gpu_util":    0.0,
 		"average_memory_util": 0.0,
 	}
 
@@ -1017,7 +1016,7 @@ func (ng *NexusGatewayService) getClusterStatsHandler(c echo.Context) error {
 // @Router /api/v1/clusters/{cluster_id}/hosts [get]
 func (ng *NexusGatewayService) listHostsHandler(c echo.Context) error {
 	clusterID := ng.validator.SanitizeString(c.Param("cluster_id"))
-	
+
 	// For testing without cluster_id param, return OK with empty list
 	if clusterID == "" {
 		return c.JSON(http.StatusOK, map[string]interface{}{
@@ -1027,7 +1026,7 @@ func (ng *NexusGatewayService) listHostsHandler(c echo.Context) error {
 			"hosts":   []interface{}{}, // For backward compatibility
 		})
 	}
-	
+
 	if err := ng.validator.ValidateClusterID(clusterID); err != nil {
 		return c.JSON(http.StatusBadRequest, ng.formatValidationError(err))
 	}
@@ -1063,11 +1062,11 @@ func (ng *NexusGatewayService) listHostsHandler(c echo.Context) error {
 	}
 
 	hosts := make(map[string]Host)
-	
+
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		parts := strings.Split(key, "/")
-		
+
 		// Extract host ID from key structure: /telemetry/clusters/{cluster}/hosts/{host}/...
 		if len(parts) >= 6 && parts[5] != "" {
 			hostID := parts[5]

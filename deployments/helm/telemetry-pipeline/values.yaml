@@ -206,40 +206,166 @@ commonLabels: {}
 # Common annotations
 commonAnnotations: {}
 
-# External Redis Configuration (for cross-cluster deployment)
-externalRedis:
+# etcd Configuration - Primary message queue and data storage
+etcd:
+  enabled: true
+  auth:
+    rbac:
+      create: true
+      rootPassword: "etcd-root-password"
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  replicaCount: 3
+  
+# External etcd Configuration (for cross-cluster deployment)
+externalEtcd:
   enabled: false
-  host: ""
-  port: 6379
-  password: ""
-  database: 0
-  tls:
-    enabled: false
-    skipVerify: false
-    caCert: ""
+  endpoints: []
   auth:
     enabled: false
+    username: ""
+    password: ""
     existingSecret: ""
     existingSecretPasswordKey: "password"
 
-# Redis Configuration (embedded, disabled when externalRedis.enabled = true)
-redis:
-  enabled: true
-  architecture: standalone
-  auth:
+# Nexus Streamer Configuration (alternative to regular streamer)
+nexusStreamer:
+  enabled: false
+  replicaCount: 2
+  
+  image:
+    repository: nexus-streamer
+    tag: ""
+    pullPolicy: ""
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    LOG_LEVEL: "info"
+    BATCH_SIZE: "100"
+    STREAM_INTERVAL: "1s"
+    CSV_FILE: "/app/data/dcgm_metrics_20250718_134233.csv"
+    HTTP_PORT: "8081"
+    ENABLE_HTTP: "true"
+    UPLOAD_DIR: "/tmp/telemetry-uploads"
+    MAX_UPLOAD_SIZE: "104857600"
+    MAX_MEMORY: "33554432"
+  
+  service:
     enabled: true
-    password: "redis-password"
-  master:
-    persistence:
-      enabled: true
-      size: 8Gi
-    resources:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 250m
-        memory: 256Mi
+    type: ClusterIP
+    port: 8081
+    targetPort: 8081
+    annotations: {}
+  
+  csvData:
+    configMap:
+      enabled: false
+      name: "telemetry-csv-data"
+    persistentVolume:
+      enabled: false
+      size: "10Gi"
+      storageClass: "standard"
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
+
+# Nexus Collector Configuration
+nexusCollector:
+  enabled: false
+  replicaCount: 2
+  
+  image:
+    repository: nexus-collector
+    tag: ""
+    pullPolicy: ""
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  env:
+    LOG_LEVEL: "info"
+    BATCH_SIZE: "50"
+    PROCESSING_INTERVAL: "5s"
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
+
+# Nexus Gateway Configuration
+nexusGateway:
+  enabled: false
+  replicaCount: 2
+  
+  image:
+    repository: nexus-gateway
+    tag: ""
+    pullPolicy: ""
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    annotations: {}
+  
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: telemetry-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  env:
+    LOG_LEVEL: "info"
+    ENABLE_GRAPHQL: "true"
+    ENABLE_WEBSOCKET: "true"
+    ENABLE_CORS: "true"
+    PORT: "8080"
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  podAnnotations: {}
+  podLabels: {}
 
 # Extra manifests to deploy
 extraManifests: []

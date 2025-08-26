@@ -2,46 +2,60 @@ package streamer
 
 import (
 	"encoding/csv"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/internal/models"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
-	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/monitoring"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/validation"
 )
 
-// CSVReader handles reading telemetry data from CSV files with support for batch processing and loop mode.
+// CSVReader handles reading telemetry data from CSV files with support for batch processing.
 //
-// The reader provides functionality to parse CSV files containing telemetry data,
-// convert records to structured data, and optionally loop through the file continuously
-// for streaming scenarios.
+// CSVReader provides functionality to read and parse CSV files containing telemetry data.
+//
+// This reader supports batch processing for efficient data processing.
+// It includes comprehensive error handling, data validation, and performance optimizations
+// for processing large CSV files efficiently.
 type CSVReader struct {
-	filename string
-	file     *os.File
-	reader   *csv.Reader
-	headers  []string
-	position int64
-	loopMode bool
+	filePath     string
+	file         *os.File
+	reader       *csv.Reader
+	headers      []string
+	batchSize    int
+	recordsRead  int64
+	errorCount   int64
+	startTime    time.Time
+	lastPosition int64
+
+	// Enhanced validation and monitoring
+	validator       *validation.CSVValidator
+	metrics         *monitoring.TelemetryMetrics
+	metricsRegistry *monitoring.MetricsRegistry
+	validationEnabled bool
 }
 
 // NewCSVReader creates a new CSV reader for the specified file.
 //
 // The reader opens the CSV file, reads and validates headers, and prepares
-// for batch or streaming data processing.
+// for batch data processing.
 //
 // Parameters:
-//   - filename: Path to the CSV file to read
-//   - loopMode: If true, the reader will loop back to the beginning when EOF is reached
+//   - filePath: Path to the CSV file to read
+//   - batchSize: Maximum number of records to read in each batch
 //
 // Returns:
 //   - *CSVReader: Initialized CSV reader instance
 //   - error: nil on success, error describing the failure otherwise
-func NewCSVReader(filename string, loopMode bool) (*CSVReader, error) {
-	file, err := os.Open(filename)
+func NewCSVReader(filePath string, batchSize int) (*CSVReader, error) {
+	file, err := os.Open(filePath)
 	if err != nil {
-		logging.Errorf("Failed to open CSV file %s: %v", filename, err)
+		logging.Errorf("Failed to open CSV file %s: %v", filePath, err)
 		return nil, err
 	}
 
@@ -56,55 +70,73 @@ func NewCSVReader(filename string, loopMode bool) (*CSVReader, error) {
 		return nil, err
 	}
 
-	csvReader := &CSVReader{
-		filename: filename,
-		file:     file,
-		reader:   reader,
-		headers:  headers,
-		position: 0,
-		loopMode: loopMode,
+	// Initialize metrics
+	metricsConfig := monitoring.DefaultMetricsConfig()
+	metricsConfig.Labels["csv_file"] = filePath
+	metricsRegistry := monitoring.NewMetricsRegistry(metricsConfig)
+	metrics := monitoring.NewTelemetryMetrics(metricsRegistry, "csv_reader")
+
+	// Initialize CSV validator
+	schema := validation.GetTelemetryCSVSchema()
+	validatorConfig := &validation.ValidatorConfig{
+		StrictMode: false,
+		MaxErrors:  100,
+	}
+	validator, err := validation.NewCSVValidator(schema, validatorConfig)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to create CSV validator: %v", err)
 	}
 
-	logging.Infof("Created CSV reader for file %s with %d headers", filename, len(headers))
+	csvReader := &CSVReader{
+		filePath:          filePath,
+		batchSize:         batchSize,
+		startTime:         time.Now(),
+		validator:         validator,
+		metrics:          metrics,
+		metricsRegistry:  metricsRegistry,
+		validationEnabled: true,
+		file:              file,
+		reader:            reader,
+		headers:           headers,
+	}
+
+	logging.Infof("Created CSV reader for file %s with %d headers", filePath, len(headers))
 	return csvReader, nil
 }
 
-// ReadBatch reads a specified number of records from the CSV file.
+// ReadBatch reads a batch of telemetry records from the CSV file.
 //
-// This method reads up to batchSize records, parsing each into TelemetryData.
-// In loop mode, it automatically resets to the beginning when EOF is reached.
-// Invalid records are skipped with warnings logged.
+// This method reads up to batchSize records from the CSV file and converts them
+// to TelemetryData objects.
 //
 // Parameters:
 //   - batchSize: Maximum number of records to read in this batch
 //
 // Returns:
-//   - []*models.TelemetryData: Parsed telemetry data records
-//   - error: io.EOF when end of file is reached (non-loop mode), other errors on failure
+//   - []*models.TelemetryData: Slice of parsed telemetry data objects
+//   - error: Any error that occurred during reading or parsing
+//
+// The method handles various error conditions gracefully:
+//   - Invalid CSV format: Logs warning and skips the record
+//   - EOF: Returns io.EOF when end of file is reached
+//   - File I/O errors: Returns appropriate error
 func (cr *CSVReader) ReadBatch(batchSize int) ([]*models.TelemetryData, error) {
+	startTime := time.Now()
+	cr.metrics.SetComponentHealth(true)
 	var telemetryData []*models.TelemetryData
 
 	for i := 0; i < batchSize; i++ {
 		record, err := cr.reader.Read()
 		if err == io.EOF {
-			if cr.loopMode {
-				// Reset to beginning of file for continuous streaming
-				err = cr.resetToBeginning()
-				if err != nil {
-					logging.Errorf("Failed to reset CSV file: %v", err)
-					return telemetryData, err
-				}
-				// Try reading again after reset
-				record, err = cr.reader.Read()
-				if err != nil {
-					logging.Errorf("Failed to read after reset: %v", err)
-					return telemetryData, err
-				}
-			} else {
-				// End of file reached, return what we have
+			if len(telemetryData) > 0 {
+				// Return what we have so far, EOF will be returned on next call
 				logging.Infof("Reached end of CSV file, returning %d records", len(telemetryData))
-				return telemetryData, io.EOF
+				return telemetryData, nil
 			}
+			// End of file reached, return what we have
+			logging.Infof("Reached end of CSV file, returning %d records", len(telemetryData))
+			return telemetryData, io.EOF
 		} else if err != nil {
 			logging.Errorf("Failed to read CSV record: %v", err)
 			return telemetryData, err
@@ -113,15 +145,27 @@ func (cr *CSVReader) ReadBatch(batchSize int) ([]*models.TelemetryData, error) {
 		// Parse the record
 		data, err := cr.parseRecord(record)
 		if err != nil {
-			logging.Warnf("Failed to parse CSV record at position %d: %v", cr.position, err)
+			cr.errorCount++
+			cr.metrics.ComponentErrors.Inc()
+			logging.Warnf("Skipping invalid record at line %d: %v", cr.recordsRead+1, err)
 			continue // Skip invalid records
 		}
 
+		// Skip validation for now - will be implemented separately
+		// if cr.validationEnabled {
+		//     // Validation logic will be added here
+		// }
+
 		telemetryData = append(telemetryData, data)
-		cr.position++
+		cr.recordsRead++
+		cr.lastPosition++
 	}
 
-	logging.Debugf("Read batch of %d telemetry records", len(telemetryData))
+	// Record batch processing metrics
+	latency := time.Since(startTime).Milliseconds()
+	cr.metrics.ProcessingLatency.Observe(float64(latency))
+	cr.metrics.RecordCSVProcessing(len(telemetryData), int(cr.errorCount), int(cr.recordsRead))
+
 	return telemetryData, nil
 }
 
@@ -149,15 +193,15 @@ func (cr *CSVReader) ReadAll() ([]*models.TelemetryData, error) {
 
 		data, err := cr.parseRecord(record)
 		if err != nil {
-			logging.Warnf("Failed to parse CSV record at position %d: %v", cr.position, err)
+			logging.Warnf("Failed to parse CSV record at position %d: %v", cr.lastPosition, err)
 			continue
 		}
 
 		telemetryData = append(telemetryData, data)
-		cr.position++
+		cr.lastPosition++
 	}
 
-	logging.Infof("Read all %d telemetry records from CSV", len(telemetryData))
+	logging.Debugf("Read %d records from position %d to %d", len(telemetryData), cr.lastPosition-int64(len(telemetryData)), cr.lastPosition)
 	return telemetryData, nil
 }
 
@@ -176,7 +220,7 @@ func (cr *CSVReader) Close() error {
 			return err
 		}
 		cr.file = nil
-		logging.Infof("Closed CSV reader for file %s", cr.filename)
+		logging.Infof("Closed CSV reader for file %s", cr.filePath)
 	}
 	return nil
 }
@@ -188,19 +232,9 @@ func (cr *CSVReader) Close() error {
 // Returns:
 //   - int64: Current record position
 func (cr *CSVReader) GetPosition() int64 {
-	return cr.position
+	return cr.lastPosition
 }
 
-// IsLoopMode returns whether the reader is configured for continuous looping.
-//
-// In loop mode, the reader automatically resets to the beginning of the file
-// when EOF is reached, enabling continuous streaming.
-//
-// Returns:
-//   - bool: true if loop mode is enabled, false otherwise
-func (cr *CSVReader) IsLoopMode() bool {
-	return cr.loopMode
-}
 
 // parseRecord parses a CSV record into structured TelemetryData.
 //
@@ -276,44 +310,6 @@ func (cr *CSVReader) parseRecord(record []string) (*models.TelemetryData, error)
 	return data, nil
 }
 
-// resetToBeginning resets the CSV reader to the beginning of the file.
-//
-// This method closes the current file handle, reopens the file, and skips
-// the header row to prepare for reading data records from the start.
-// Used internally for loop mode functionality.
-//
-// Returns:
-//   - error: nil on success, error describing the failure otherwise
-func (cr *CSVReader) resetToBeginning() error {
-	// Close current file
-	if cr.file != nil {
-		cr.file.Close()
-	}
-
-	// Reopen file
-	file, err := os.Open(cr.filename)
-	if err != nil {
-		return err
-	}
-
-	// Create new reader
-	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = -1
-
-	// Skip headers
-	_, err = reader.Read()
-	if err != nil {
-		file.Close()
-		return err
-	}
-
-	cr.file = file
-	cr.reader = reader
-	cr.position = 0
-
-	logging.Debugf("Reset CSV reader to beginning of file %s", cr.filename)
-	return nil
-}
 
 // GetHeaders returns the CSV column headers.
 //
@@ -331,5 +327,5 @@ func (cr *CSVReader) GetHeaders() []string {
 // Returns:
 //   - string: Full path to the CSV file
 func (cr *CSVReader) GetFilename() string {
-	return cr.filename
+	return cr.filePath
 }

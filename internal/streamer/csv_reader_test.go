@@ -1,8 +1,10 @@
 package streamer
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,12 +34,11 @@ func TestNewCSVReader(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	require.NotNil(t, reader)
 
 	assert.Equal(t, filename, reader.GetFilename())
-	assert.False(t, reader.IsLoopMode())
 	assert.Equal(t, int64(0), reader.GetPosition())
 
 	headers := reader.GetHeaders()
@@ -49,7 +50,7 @@ func TestNewCSVReader(t *testing.T) {
 }
 
 func TestNewCSVReaderFileNotFound(t *testing.T) {
-	_, err := NewCSVReader("non-existent-file.csv", false)
+	_, err := NewCSVReader("nonexistent.csv", 100)
 	assert.Error(t, err)
 }
 
@@ -62,7 +63,7 @@ func TestCSVReaderReadBatch(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -111,7 +112,7 @@ func TestCSVReaderReadAll(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -123,34 +124,6 @@ func TestCSVReaderReadAll(t *testing.T) {
 	assert.Equal(t, "DCGM_FI_DEV_GPU_TEMP", data[1].MetricName)
 }
 
-func TestCSVReaderLoopMode(t *testing.T) {
-	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
-2025-07-18T20:42:34Z,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host1,,,,"85.5","key=value"`
-
-	filename := createTestCSV(t, csvContent)
-	defer os.Remove(filename)
-
-	reader, err := NewCSVReader(filename, true)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	assert.True(t, reader.IsLoopMode())
-
-	// Read the single record
-	batch1, err := reader.ReadBatch(1)
-	assert.NoError(t, err)
-	assert.Len(t, batch1, 1)
-	assert.Equal(t, "DCGM_FI_DEV_GPU_UTIL", batch1[0].MetricName)
-
-	// In loop mode, should reset and read again
-	batch2, err := reader.ReadBatch(1)
-	assert.NoError(t, err)
-	assert.Len(t, batch2, 1)
-	assert.Equal(t, "DCGM_FI_DEV_GPU_UTIL", batch2[0].MetricName)
-
-	// Position should reset to 1 (after reading one record again)
-	assert.Equal(t, int64(1), reader.GetPosition())
-}
 
 func TestCSVReaderParseRecord(t *testing.T) {
 	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
@@ -159,7 +132,7 @@ func TestCSVReaderParseRecord(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -191,7 +164,7 @@ invalid-timestamp,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host1,,,,
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -211,7 +184,7 @@ func TestCSVReaderInvalidValue(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -231,7 +204,7 @@ func TestCSVReaderMissingFields(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -255,7 +228,7 @@ func TestCSVReaderPosition(t *testing.T) {
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -272,12 +245,12 @@ func TestCSVReaderPosition(t *testing.T) {
 
 func TestCSVReaderClose(t *testing.T) {
 	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
-2025-07-18T20:42:34Z,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host1,,,,"85.5","key=value"`
+2025-07-18T20:42:34Z,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host1,,,,,"85.5","key=value"`
 
 	filename := createTestCSV(t, csvContent)
 	defer os.Remove(filename)
 
-	reader, err := NewCSVReader(filename, false)
+	reader, err := NewCSVReader(filename, 100)
 	require.NoError(t, err)
 
 	err = reader.Close()
@@ -286,4 +259,123 @@ func TestCSVReaderClose(t *testing.T) {
 	// Calling close again should not error
 	err = reader.Close()
 	assert.NoError(t, err)
+}
+
+func TestCSVReaderEmptyFile(t *testing.T) {
+	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw`
+
+	filename := createTestCSV(t, csvContent)
+	defer os.Remove(filename)
+
+	reader, err := NewCSVReader(filename, 100)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// Try to read from empty file (only headers)
+	_, err = reader.ReadBatch(1)
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestCSVReaderLargeBatch(t *testing.T) {
+	var csvLines []string
+	csvLines = append(csvLines, "timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw")
+
+	// Add 1000 records
+	for i := 0; i < 1000; i++ {
+		csvLines = append(csvLines, fmt.Sprintf("2025-07-18T20:42:%02dZ,DCGM_FI_DEV_GPU_UTIL,%d,nvidia%d,GPU-%d,NVIDIA H100,host1,,,,%f,key=value", i%60, i, i, i, 85.5))
+	}
+
+	csvContent := strings.Join(csvLines, "\n")
+	filename := createTestCSV(t, csvContent)
+	defer os.Remove(filename)
+
+	reader, err := NewCSVReader(filename, 1000)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	allData, err := reader.ReadAll()
+	assert.NoError(t, err)
+	assert.Len(t, allData, 1000)
+
+	// Verify first record
+	assert.Equal(t, "0", allData[0].GPUID)
+	assert.Equal(t, 85.5, allData[0].Value)
+}
+
+func TestCSVReaderBatchSizeLimit(t *testing.T) {
+	var csvLines []string
+	csvLines = append(csvLines, "timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw")
+	
+	// Add 10 records
+	for i := 0; i < 10; i++ {
+		csvLines = append(csvLines, fmt.Sprintf("2025-07-18T20:42:%02dZ,DCGM_FI_DEV_GPU_UTIL,%d,nvidia%d,GPU-%d,NVIDIA H100,host1,,,,%f,key=value", i%60, i, i, i, 85.5))
+	}
+	
+	csvContent := strings.Join(csvLines, "\n")
+	filename := createTestCSV(t, csvContent)
+	defer os.Remove(filename)
+
+	reader, err := NewCSVReader(filename, 1000) // Large batch size
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// First batch should have 5 records when requesting 5
+	batch1, err := reader.ReadBatch(5)
+	assert.NoError(t, err)
+	assert.Len(t, batch1, 5)
+
+	// Second batch should have remaining 5
+	batch2, err := reader.ReadBatch(5)
+	if err == io.EOF {
+		assert.Len(t, batch2, 5) // Should get remaining 5
+	} else {
+		assert.NoError(t, err)
+		assert.Len(t, batch2, 5)
+	}
+}
+
+func TestCSVReaderSpecialCharacters(t *testing.T) {
+	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+2025-07-18T20:42:34Z,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host-with-dashes,container-name,pod-name,namespace-name,85.5,key=value`
+
+	filename := createTestCSV(t, csvContent)
+	defer os.Remove(filename)
+
+	reader, err := NewCSVReader(filename, 100)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	batch, err := reader.ReadBatch(1)
+	assert.NoError(t, err)
+	assert.Len(t, batch, 1)
+
+	data := batch[0]
+	assert.Equal(t, "host-with-dashes", data.Hostname)
+	assert.Equal(t, "container-name", data.Container)
+	assert.Equal(t, "pod-name", data.Pod)
+	assert.Equal(t, "namespace-name", data.Namespace)
+	assert.Equal(t, "key=value", data.LabelsRaw)
+}
+
+func TestCSVReaderCorruptedData(t *testing.T) {
+	csvContent := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+2025-07-18T20:42:34Z,DCGM_FI_DEV_GPU_UTIL,0,nvidia0,GPU-12345,NVIDIA H100,host1
+"unclosed quote,METRIC,1,device`
+
+	filename := createTestCSV(t, csvContent)
+	defer os.Remove(filename)
+
+	reader, err := NewCSVReader(filename, 100)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// Should handle first valid record
+	batch, err := reader.ReadBatch(1)
+	assert.NoError(t, err)
+	assert.Len(t, batch, 1)
+
+	// Second record should cause error or be skipped
+	_, err = reader.ReadBatch(1)
+	// Error is expected due to malformed CSV
+	assert.Error(t, err)
 }

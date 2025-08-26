@@ -161,21 +161,25 @@ apiGateway:
 
 
 
-# External Redis Configuration - REQUIRED for cross-cluster
-externalRedis:
+# External etcd Configuration - REQUIRED for cross-cluster
+externalEtcd:
   enabled: true
-  host: "redis.shared-infra.company.com"  # Replace with actual Redis host
-  port: 6379
-  password: ""  # Set via --set or external secret
-  database: 0
+  endpoints:
+    - "etcd.shared-infra.company.com:2379"  # Replace with actual etcd endpoints
+  auth:
+    enabled: true
+    username: "telemetry-user"
+    password: ""  # Set via --set or external secret
+    existingSecret: "etcd-auth"
+    existingSecretPasswordKey: "password"
   tls:
     enabled: true
     skipVerify: false
     caCert: ""  # CA certificate for TLS verification
-  auth:
-    enabled: true
-    existingSecret: "redis-auth"
-    existingSecretPasswordKey: "password"
+
+# etcd Configuration - DISABLED for central cluster (using external etcd)
+etcd:
+  enabled: false
 
 # Monitoring - Comprehensive monitoring for central cluster
 monitoring:
@@ -219,29 +223,24 @@ podDisruptionBudget:
 networkPolicy:
   enabled: true
   ingress:
-  # Allow ingress from edge clusters (streamers via Redis)
+  # Allow ingress from edge clusters (streamers via etcd)
   - from: []
     ports:
     - protocol: TCP
-      port: 6379
+      port: 2379
   # Allow ingress to API Gateway
   - from: []
     ports:
     - protocol: TCP
       port: 8080
   egress:
-  # Allow egress to external Redis
+  # Allow egress to external etcd
   - to: []
     ports:
     - protocol: TCP
-      port: 6379
+      port: 2379
     - protocol: TCP
-      port: 6380  # Redis Sentinel port
-  # Allow egress to database
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 5432
+      port: 2380  # etcd peer port
   # Allow DNS resolution
   - to: []
     ports:
@@ -270,9 +269,8 @@ extraManifests:
   data:
     cluster-type: "central"
     role: "data-processing"
-    components: "collector,api-gateway,database"
-    redis-endpoint: "{{ .Values.externalRedis.host }}:{{ .Values.externalRedis.port }}"
-    database-endpoint: "{{ include "telemetry-pipeline.databaseHost" . }}:{{ include "telemetry-pipeline.databasePort" . }}"
+    components: "collector,api-gateway,etcd"
+    etcd-endpoint: "{{ index .Values.externalEtcd.endpoints 0 }}"
 
 # Backup configuration for central cluster
 backup:
