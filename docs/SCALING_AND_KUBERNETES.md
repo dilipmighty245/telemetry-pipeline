@@ -117,6 +117,54 @@ helm upgrade --install telemetry-pipeline deployments/helm/telemetry-pipeline \
 - **Persistent Volumes** - CSV data storage
 - **Ingress** - External access configuration
 
+## 🌐 Multi-Cluster Deployments
+
+In multi-cluster setups, streamers may run in edge clusters while collectors and gateways run centrally. Ensure cross-cluster reachability and correct service address registration.
+
+### Service Address Resolution (Priority)
+
+1. `SERVICE_ADDRESS` (explicit override)
+2. `EXTERNAL_SERVICE_ADDRESS` (recommended for cross-cluster)
+3. Pod IP (`POD_IP` via Downward API)
+4. Kubernetes hostname resolution
+5. First non-loopback IPv4
+6. Localhost (dev only)
+
+### Deployment Options
+
+- **LoadBalancer (recommended)**: Assign external IP to `nexus-streamer` and set `EXTERNAL_SERVICE_ADDRESS`.
+- **NodePort**: Expose a stable port on nodes and publish the node external IP.
+- **Ingress + DNS**: Publish a DNS hostname and set `EXTERNAL_SERVICE_ADDRESS` accordingly.
+
+### Core Environment Variables
+
+```bash
+CLUSTER_ID=cluster-a
+ETCD_ENDPOINTS=etcd-cluster.shared.svc.cluster.local:2379
+EXTERNAL_SERVICE_ADDRESS=203.0.113.50  # or streamer.cluster-a.example.com
+HTTP_PORT=8081
+POD_IP=$(status.podIP)
+```
+
+### Troubleshooting
+
+```bash
+# Verify service registered address in logs
+kubectl logs deployment/nexus-streamer | grep "Service will register with address"
+
+# Inspect service discovery in etcd
+etcdctl get /services/nexus-streamer/ --prefix
+
+# Test cross-cluster reachability
+curl -I http://203.0.113.50:8081/health
+```
+
+### Security & Performance Notes
+
+- Use TLS for cross-cluster traffic and secure etcd access.
+- Apply network policies to restrict etcd ports (2379/2380).
+- Place etcd centrally with low-latency connectivity; monitor consensus latency.
+
 ## 📊 Architecture Components & Scaling Strategies
 
 ### Nexus Streamer
@@ -421,7 +469,7 @@ ab -n 1000 -c 10 http://localhost:8080/api/v1/gpus
 
 - [API Specification](API_SPECIFICATION.md) - REST API documentation
 - [Nexus Integration Guide](NEXUS_INTEGRATION_GUIDE.md) - Nexus framework details
-- [Deployment Guide](CONSOLIDATED_SETUP_COMMANDS.md) - Setup instructions
+- [Production Deployment in README](../README.md#production-deployment) - Setup instructions
 
 ## 🚀 Quick Reference
 

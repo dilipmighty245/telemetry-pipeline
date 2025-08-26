@@ -4,6 +4,8 @@
 
 This guide covers the implementation and usage of the Nexus-enhanced telemetry pipeline, which integrates distributed coordination, event-driven architecture, and multi-protocol APIs into the existing telemetry system.
 
+> Note: This project is standardized on etcd-only (queue + storage). GraphQL and WebSocket are planned features and not enabled by default. References to Redis and a separate "nexus-api" have been removed/updated to reflect the current components: `nexus-streamer`, `nexus-collector`, and `nexus-gateway`.
+
 ## 📋 **Table of Contents**
 
 1. [Overview](#overview)
@@ -105,14 +107,12 @@ open http://localhost:8082                 # Database UI
 # 1. Setup infrastructure
 make setup-etcd
 
-make setup-db
-
 # 2. Start Nexus components
 make run-nexus-collector &
-make run-nexus-api &
+make run-nexus-gateway &
 
-# 3. Start traditional streamer
-make run-streamer &
+# 3. Start streamer
+make run-nexus-streamer &
 ```
 
 ### **Option 3: Kubernetes**
@@ -144,25 +144,23 @@ ETCD_ENDPOINTS=localhost:2379
 REDIS_URL=redis://localhost:6379
 ```
 
-### **2. Nexus API Server** (`cmd/nexus-api`)
+### **2. Nexus Gateway** (`cmd/nexus-gateway`)
 
-Multi-protocol API server providing REST, GraphQL, and WebSocket endpoints.
+API server providing REST endpoints. GraphQL and WebSocket are planned.
 
 **Key Features:**
-- RESTful API (backward compatible)
-- GraphQL queries and subscriptions
-- WebSocket real-time updates
+- RESTful API
+- GraphQL (planned)
+- WebSocket (planned)
 - CORS support
 - Health monitoring
 
-**Endpoints:**
+**Endpoints (current):**
 ```
 GET  /health                                    # Health check
-GET  /api/v1/clusters                          # List clusters
-GET  /api/v1/clusters/{id}/hosts               # List hosts
-GET  /api/v1/clusters/{id}/hosts/{id}/gpus     # List GPUs
-POST /graphql                                  # GraphQL queries
-WS   /ws                                       # WebSocket connection
+GET  /api/v1/gpus                               # List GPUs
+GET  /api/v1/gpus/{id}/telemetry                # GPU telemetry
+GET  /api/v1/hosts                              # List hosts
 ```
 
 ### **3. Nexus Telemetry Service** (`internal/nexus`)
@@ -269,19 +267,13 @@ ws.send(JSON.stringify({type: 'ping'}));
 
 ### **Environment Variables**
 
-#### **Nexus Collector**
+#### **Nexus Configuration:**
 ```bash
+# Environment variables
 # Core configuration
 CLUSTER_ID=my-cluster                    # Unique cluster identifier
 COLLECTOR_ID=collector-1                # Unique collector identifier
 ETCD_ENDPOINTS=localhost:2379           # etcd endpoints (comma-separated)
-
-# Redis (backward compatibility)
-REDIS_URL=redis://localhost:6379       # Redis connection URL
-REDIS_TOPICS=telemetry                  # Topics to consume (comma-separated)
-
-
-
 # Features
 
 # Performance
@@ -315,13 +307,12 @@ LOG_LEVEL=info                          # Log level
 
 ### **Docker Compose Configuration**
 
-The `docker-compose.nexus.yml` file provides a complete environment with:
+The docker environment provides a complete stack with:
 
 - **etcd**: Distributed coordination and data storage
-- **Redis**: Message queue (backward compatibility)
-- **Nexus Collector**: Enhanced data collection
-- **Nexus API**: Multi-protocol API server
-- **Traditional Components**: Streamer and API (for comparison)
+- **Nexus Collector**: Data collection
+- **Nexus Gateway**: REST API server
+- **Nexus Streamer**: CSV ingestion
 
 ## 🚀 **Deployment**
 
@@ -356,12 +347,11 @@ make stop-nexus-docker
 ### **Kubernetes**
 
 ```bash
-# Deploy etcd cluster
-kubectl apply -f deployments/k8s/etcd-cluster.yaml
-
-# Deploy Nexus components
-kubectl apply -f deployments/k8s/nexus-collector.yaml
-kubectl apply -f deployments/k8s/nexus-api.yaml
+# Deploy via Helm (recommended)
+helm upgrade --install telemetry-pipeline deployments/helm/telemetry-pipeline \
+  --namespace telemetry-system \
+  --create-namespace \
+  --values deployments/helm/telemetry-pipeline/values-nexus.yaml
 
 # Check deployment
 kubectl get pods -n telemetry-system
@@ -376,7 +366,7 @@ kubectl get pods -n telemetry-system
 make health-nexus
 
 # Individual health checks
-curl http://localhost:8080/health        # Nexus API
+curl http://localhost:8080/health        # Nexus Gateway
 docker exec telemetry-etcd etcdctl endpoint health  # etcd
 ```
 
@@ -426,11 +416,8 @@ docker restart telemetry-etcd
 
 #### **2. Nexus Collector Not Consuming**
 ```bash
-# Check Redis connectivity
-redis-cli -h localhost -p 6379 ping
-
-# Check topic contents
-redis-cli -h localhost -p 6379 llen telemetry
+# Verify etcd queue has data
+etcdctl --endpoints=localhost:2379 get --prefix "/messagequeue/" --keys-only | head -10
 
 # View collector logs
 make nexus-logs-collector

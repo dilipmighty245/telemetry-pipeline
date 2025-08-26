@@ -138,7 +138,7 @@ Client Request → Nexus Gateway → etcd Data Query → Response Formatting →
 
 **Key Structure**:
 ```
-/telemetry/queue/{cluster-id}/{timestamp}_{hostname}_{gpu_id}_{sequence}
+/messagequeue/telemetry/{cluster-id}/{timestamp}_{hostname}_{gpu_id}_{sequence}
 ```
 
 **Message Format**:
@@ -155,6 +155,48 @@ Client Request → Nexus Gateway → etcd Data Query → Response Formatting →
   "temperature": 65.0,
   "power_draw": 350.5
 }
+```
+
+### How It Works (High-Level)
+
+- **Publishing (Streamer → etcd)**: Streamers write JSON messages under `"/messagequeue/telemetry/{cluster-id}/..."` with a TTL lease (e.g., 1 hour) to avoid queue buildup.
+- **Consumption (etcd → Collector)**: Collectors list keys by prefix sorted ascending to process oldest-first, then ACK by deleting keys. Use small batches (e.g., 50).
+- **Storage (Collector → etcd)**: Processed telemetry is stored persistently under `"/telemetry/clusters/{cluster-id}/hosts/{hostname}/gpus/{gpu_id}/data/{telemetry_id}"`.
+
+### Key Prefixes
+
+- **Queue (temporary)**: `"/messagequeue/telemetry/"`
+- **Storage (persistent)**: `"/telemetry/clusters/"`
+
+### Core Features
+
+- **Ordered processing**: Keys encode time (`timestamp`), enabling key-ordered scans.
+- **Atomic ops**: Use etcd transactions (Txn) for consume-and-delete.
+- **TTL leases**: Messages auto-expire via leases to prevent buildup.
+- **Watch notifications**: Collectors can watch the queue prefix for new messages.
+- **Distributed coordination**: Optional etcd mutex/leases for exclusive processing.
+
+### Debugging Tips
+
+```bash
+# Queue depth (count messages)
+etcdctl get --prefix "/messagequeue/" --keys-only | wc -l
+
+# Inspect a few queued messages
+etcdctl get --prefix "/messagequeue/telemetry/" --print-value-only | head -5
+
+# Watch incoming messages
+etcdctl watch --prefix "/messagequeue/telemetry/"
+```
+
+### Configuration (Env Vars)
+
+```bash
+ETCD_ENDPOINTS=localhost:2379
+MESSAGE_QUEUE_PREFIX=/messagequeue/telemetry
+BATCH_SIZE=50
+POLL_INTERVAL=5s
+MESSAGE_TTL=3600
 ```
 
 ## Scaling Architecture

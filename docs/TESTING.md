@@ -22,23 +22,12 @@ The telemetry-pipeline project includes multiple types of tests:
 - **Command**: `make test-unit`
 - **Coverage**: Measures code coverage at the function level
 
-### 2. Integration Tests
-- **Location**: `test/integration/`
-- **Purpose**: Test component interactions and service integration
-- **Command**: `make test-integration`
-- **Requirements**: Docker (for etcd and other services)
-- **Build Tag**: `integration`
-
-### 3. End-to-End (E2E) Tests
+### 2. End-to-End (E2E) Tests
 - **Location**: `test/e2e/`
 - **Purpose**: Test complete workflows and user scenarios
 - **Command**: `make test-e2e`
 - **Requirements**: etcd binary
 
-### 4. Benchmark Tests
-- **Purpose**: Performance testing and regression detection
-- **Command**: `go test -bench=. ./...`
-- **Output**: `benchmark-results.txt`
 
 ## 🎯 Coverage Goals
 

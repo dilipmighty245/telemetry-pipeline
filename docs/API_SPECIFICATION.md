@@ -112,6 +112,41 @@ GET /api/v1/gpus/GPU-12345/telemetry?start_time=2024-01-01T00:00:00Z&end_time=20
 - `end_time` (query): End time filter
 - `limit` (query): Maximum results
 
+## Time Semantics and Ordering
+
+### Supported Time Formats
+
+- **RFC3339 (UTC)**: `2025-01-18T10:00:00Z` (preferred)
+- **Relative expressions**: `now`, `now-5m`, `now-1h`, `now-2d`
+  - Format: `now[+/-]<number><unit>` where unit ∈ {`s`,`m`,`h`,`d`}
+
+### Semantics
+
+- **Two timestamps** exist in the system:
+  - **Original timestamp**: From CSV payload; preserved when valid.
+  - **Processing timestamp**: When the system ingests/processes the record.
+- API time filters (`start_time`, `end_time`) apply to the stored telemetry timestamp used for querying and ordering.
+
+### Ordering Guarantees
+
+- Results are returned in ascending time order.
+- Message queue and storage keys encode time to maintain ordering across distributed collectors.
+
+### Examples
+
+```bash
+# Last 5 minutes
+GET /api/v1/gpus/GPU-12345/telemetry?start_time=now-5m&end_time=now
+
+# Specific window
+GET /api/v1/gpus/GPU-12345/telemetry?start_time=2025-01-18T10:00:00Z&end_time=2025-01-18T11:00:00Z
+```
+
+### Validation and Errors
+
+- Invalid timestamps return `400 Bad Request` with `code: "INVALID_TIMESTAMP"`.
+- Always use UTC; the service normalizes inputs to UTC.
+
 ## Auto-Generated OpenAPI Documentation
 
 The OpenAPI specification is automatically generated and available at:

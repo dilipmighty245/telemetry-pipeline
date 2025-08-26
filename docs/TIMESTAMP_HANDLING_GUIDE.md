@@ -242,7 +242,7 @@ func ValidateAndNormalizeTimestamp(timestampStr string) (time.Time, error) {
 // Use nanosecond precision for unique, ordered keys
 func GenerateOrderedKey(topic, messageID string) string {
     now := time.Now()
-    return fmt.Sprintf("/telemetry/queue/%s/%d_%s_%d",
+    return fmt.Sprintf("/messagequeue/telemetry/%s/%d_%s_%d",
         topic,
         now.UnixNano(),  // Ensures chronological ordering
         messageID,
