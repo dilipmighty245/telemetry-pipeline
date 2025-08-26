@@ -54,8 +54,6 @@ spec:
               value: {{ .Values.config.etcd.endpoints | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.nexusStreamer.env.LOG_LEVEL | default (.Values.dev.enabled | ternary .Values.dev.logLevel "info") | quote }}
-            - name: CSV_FILE
-              value: {{ .Values.nexusStreamer.env.CSV_FILE | quote }}
             - name: BATCH_SIZE
               value: {{ .Values.nexusStreamer.env.BATCH_SIZE | quote }}
             - name: STREAM_INTERVAL

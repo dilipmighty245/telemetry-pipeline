@@ -212,13 +212,16 @@ run-nexus-collector: build-nexus-collector ## Run Nexus collector locally
 run-nexus-streamer: build-nexus-streamer ## Run Nexus streamer locally (etcd-based)
 	@echo "Starting Nexus streamer (etcd-based)..."
 	@echo "Ensure etcd is running: make setup-etcd"
-	@echo "This streams CSV data directly to etcd message queue"
+	@echo "This streams CSV data uploaded via HTTP to the etcd message queue"
 	CLUSTER_ID=local-cluster \
 	ETCD_ENDPOINTS=localhost:2379 \
-	CSV_FILE=dcgm_metrics_20250718_134233.csv \
 	BATCH_SIZE=100 \
 	STREAM_INTERVAL=3s \
-	LOOP_MODE=true \
+	ENABLE_HTTP=true \
+	HTTP_PORT=8081 \
+	UPLOAD_DIR=/tmp/telemetry-uploads \
+	MAX_UPLOAD_SIZE=104857600 \
+	MAX_MEMORY=33554432 \
 	LOG_LEVEL=info \
 	./$(BINARY_DIR)/nexus-streamer
 

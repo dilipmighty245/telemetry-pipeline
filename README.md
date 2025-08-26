@@ -361,10 +361,15 @@ make benchmark           # Benchmark tests
 
 **Streamer:**
 ```bash
-CSV_FILE=data.csv         # CSV file path
-BATCH_SIZE=100           # Records per batch
-STREAM_INTERVAL=1s       # Streaming interval
-HTTP_PORT=8081          # HTTP server port
+# CSVs are uploaded via HTTP: POST /api/v1/csv/upload
+# These variables control processing and the upload server.
+BATCH_SIZE=100            # Records per batch
+STREAM_INTERVAL=1s        # Streaming interval
+ENABLE_HTTP=true          # Enable HTTP server for uploads
+HTTP_PORT=8081            # HTTP server port
+UPLOAD_DIR=/tmp/uploads   # Temp dir for uploaded CSVs
+MAX_UPLOAD_SIZE=50MB      # Max upload size per request
+MAX_MEMORY=32MB           # Memory limit for multipart parsing
 ```
 
 **Collector:**

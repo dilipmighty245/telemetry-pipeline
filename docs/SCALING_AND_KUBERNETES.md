@@ -114,7 +114,7 @@ helm upgrade --install telemetry-pipeline deployments/helm/telemetry-pipeline \
 - **Health Checks** - Liveness and readiness probes
 - **Service Discovery** - Automatic load balancing
 - **ConfigMaps** - Configuration management
-- **Persistent Volumes** - CSV data storage
+- **Persistent Volumes** - Upload storage for CSV files (optional)
 - **Ingress** - External access configuration
 
 ## 🌐 Multi-Cluster Deployments
@@ -168,13 +168,13 @@ curl -I http://203.0.113.50:8081/health
 ## 📊 Architecture Components & Scaling Strategies
 
 ### Nexus Streamer
-- **Purpose**: Reads CSV data and streams to etcd message queue
+- **Purpose**: Ingests CSV data uploaded via HTTP and streams to etcd message queue
 - **Scaling Strategy**: 
   - **Horizontal**: 1-10 instances (per requirements)
-  - **Load Distribution**: Each instance processes different CSV files or file segments
-  - **Resource Pattern**: CPU-intensive during CSV parsing, memory for file buffering
-  - **Bottlenecks**: File I/O, CSV parsing, network to etcd
-- **Configuration**: Batch size (100-1000), streaming interval (1-5s), CSV source
+  - **Load Distribution**: Each instance processes different upload streams or chunked batches
+  - **Resource Pattern**: CPU-intensive during CSV parsing, memory for buffering uploads
+  - **Bottlenecks**: Upload I/O, CSV parsing, network to etcd
+- **Configuration**: Batch size (100-1000), streaming interval (1-5s), HTTP upload settings
 - **Scaling Metrics**: CPU usage >70%, memory >80%, message queue depth
 
 ### Nexus Collector  
@@ -223,9 +223,13 @@ LOG_LEVEL=info                  # Logging level
 
 **Streamer:**
 ```bash
-CSV_FILE=/data/telemetry.csv    # CSV data source
-BATCH_SIZE=100                  # Records per batch
-STREAM_INTERVAL=1s              # Streaming frequency
+ENABLE_HTTP=true               # Enable HTTP upload server (API-only mode)
+HTTP_PORT=8081                 # Upload server port
+UPLOAD_DIR=/tmp/telemetry-uploads  # Temporary upload storage
+MAX_UPLOAD_SIZE=104857600      # Max upload size (bytes)
+MAX_MEMORY=33554432            # Max in-memory form parsing (bytes)
+BATCH_SIZE=100                 # Records per batch
+STREAM_INTERVAL=1s             # Streaming frequency
 ```
 
 **Collector:**
