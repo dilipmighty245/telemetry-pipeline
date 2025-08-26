@@ -23,11 +23,6 @@ This project leveraged AI extensively to accelerate development while maintainin
 - Complex error handling and recovery logic
 - Kubernetes configuration and RBAC policies
 
-### Transparency
-
-All AI prompts and responses are documented in:
-- `/docs/ai-prompts.md` - Complete list of prompts used
-- `/docs/ai-transcripts/` - Key AI responses and adaptations
 
 ### Result
 
@@ -72,15 +67,14 @@ graph TB
     end
     
     subgraph "🌐 Nexus Gateway Cluster (2-5 instances)"
-        NG1["🌐 Gateway-1<br/>Port: 8080<br/>• GET /api/v1/gpus<br/>• GET /api/v1/gpus/{id}/telemetry<br/>• GraphQL & WebSocket"]
+        NG1["🌐 Gateway-1<br/>Port: 8080<br/>• GET /api/v1/gpus<br/>• GET /api/v1/gpus/{id}/telemetry<br/>• REST API"]
         NG2["🌐 Gateway-2<br/>Load Balanced<br/>• /swagger/ documentation<br/>• Health checks"]
         NGN["🌐 Gateway-N<br/>..."]
     end
     
     subgraph "🔌 Client Applications"
         REST["🔗 REST Clients<br/>curl, Postman, etc."]
-        GQL["📊 GraphQL Clients<br/>Apollo, Relay, etc."]
-        WS["⚡ WebSocket Clients<br/>Real-time dashboards"]
+        WS["⚡ WebSocket Clients<br/>Real-time dashboards (TODO: Future Implementation)"]
         DOCS["📚 Swagger UI<br/>Interactive API docs"]
     end
     
@@ -112,12 +106,10 @@ graph TB
     DS --> NGN
     
     NG1 --> REST
-    NG1 --> GQL
     NG1 --> WS
     NG1 --> DOCS
     
     NG2 --> REST
-    NG2 --> GQL
     NGN --> REST
     
     %% etcd Internal Connections
@@ -171,7 +163,7 @@ graph TB
 
 - **🔄 Nexus Streamer** - Ingests CSV files via HTTP API and streams data to message queue
 - **⚙️ Nexus Collector** - Processes messages and persists telemetry data  
-- **🌐 Nexus Gateway** - Serves REST/GraphQL/WebSocket APIs for data queries
+- **🌐 Nexus Gateway** - Serves REST APIs for data queries
 - **🗄️ etcd** - Unified message queue and data storage backend
 
 ## ✨ Key Features
@@ -190,9 +182,9 @@ graph TB
 
 ### 🔌 API Features
 - **REST API**: Required endpoints (`/api/v1/gpus`, `/api/v1/gpus/{id}/telemetry`)
-- **GraphQL**: Flexible query interface
-- **WebSocket**: Real-time data streaming
 - **OpenAPI**: Auto-generated documentation at `/swagger/`
+- **WebSocket**: Real-time data streaming (TODO: Future Implementation)
+- **GraphQL**: Flexible query interface (TODO: Future Implementation)
 
 ## 🚀 Quick Start
 
@@ -389,8 +381,8 @@ WORKERS=8               # Processing workers
 **Gateway:**
 ```bash
 PORT=8080               # HTTP server port
-ENABLE_GRAPHQL=true     # Enable GraphQL
-ENABLE_WEBSOCKET=true   # Enable WebSocket
+# ENABLE_GRAPHQL=true     # TODO: Enable GraphQL (Future Implementation)
+# ENABLE_WEBSOCKET=true   # TODO: Enable WebSocket (Future Implementation)
 ```
 
 ## 🚀 Future Development
