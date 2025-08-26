@@ -25,6 +25,7 @@ import (
 
 	"github.com/dilipmighty245/telemetry-pipeline/docs/generated"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/messagequeue"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/validation"
@@ -112,7 +113,7 @@ type TelemetryData struct {
 func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io.Writer) error {
 	config, err := ng.parseConfig(args)
 	if err != nil {
-		return fmt.Errorf("failed to parse configuration: %w", err)
+		return errors.NewConfigurationError("failed to parse configuration", err)
 	}
 
 	// Set log level
@@ -125,13 +126,13 @@ func (ng *NexusGatewayService) Run(ctx context.Context, args []string, stdout io
 	// Create and start the gateway
 	gateway, err := NewNexusGatewayService(ctx, config)
 	if err != nil {
-		return fmt.Errorf("failed to create gateway: %w", err)
+		return errors.NewConfigurationError("failed to create gateway", err)
 	}
 	defer gateway.Close()
 
 	// Start the gateway
 	if err := gateway.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start gateway: %w", err)
+		return errors.NewInternalError("failed to start gateway", err)
 	}
 
 	logging.Infof("Nexus Gateway Service started successfully")
@@ -261,7 +262,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, errors.NewConnectionError("failed to create etcd client", err)
 	}
 
 	// Test etcd connection
@@ -272,7 +273,7 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		if etcdClient != nil {
 			etcdClient.Close()
 		}
-		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
+		return nil, errors.NewConnectionError("failed to connect to etcd", err)
 	}
 
 	// Create Nexus service
@@ -285,13 +286,13 @@ func NewNexusGatewayService(ctx context.Context, config *GatewayConfig) (*NexusG
 		if etcdClient != nil {
 			etcdClient.Close()
 		}
-		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
+		return nil, errors.NewConnectionError("failed to create Nexus service", err)
 	}
 
 	// Create message queue service
 	messageQueue, err := messagequeue.NewMessageQueueService(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize message queue: %w", err)
+		return nil, errors.NewConnectionError("failed to initialize message queue", err)
 	}
 
 	// Create Echo instance
@@ -634,7 +635,7 @@ func (ng *NexusGatewayService) queryTelemetryFromEtcd(ctx context.Context, param
 
 	resp, err := ng.etcdClient.Get(ctx, keyPattern, clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("failed to query telemetry data from etcd: %w", err)
+		return nil, errors.NewConnectionError("failed to query telemetry data from etcd", err)
 	}
 
 	var telemetryData []TelemetryData

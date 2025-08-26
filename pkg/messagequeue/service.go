@@ -2,9 +2,9 @@ package messagequeue
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 )
 
@@ -18,7 +18,7 @@ type MessageQueueService struct {
 func NewMessageQueueService(ctx context.Context) (*MessageQueueService, error) {
 	queue, err := NewMessageQueue(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create message queue: %w", err)
+		return nil, errors.NewConnectionError("failed to create message queue", err)
 	}
 
 	service := &MessageQueueService{

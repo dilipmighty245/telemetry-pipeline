@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -163,7 +164,7 @@ func (cm *ConfigManager) GetBool(key string, defaultValue bool) bool {
 func (cm *ConfigManager) Set(key string, value interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config value: %w", err)
+		return errors.NewProcessingError("failed to marshal config value", err)
 	}
 
 	configKey := fmt.Sprintf("/config/%s", key)
@@ -172,7 +173,7 @@ func (cm *ConfigManager) Set(key string, value interface{}) error {
 
 	_, err = cm.client.Put(ctx, configKey, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to store config: %w", err)
+		return errors.NewConnectionError("failed to store config", err)
 	}
 
 	// Update local cache
@@ -196,7 +197,7 @@ func (cm *ConfigManager) LoadInitialConfig() error {
 
 	resp, err := cm.client.Get(ctx, "/config/", clientv3.WithPrefix())
 	if err != nil {
-		return fmt.Errorf("failed to load initial config: %w", err)
+		return errors.NewConnectionError("failed to load initial config", err)
 	}
 
 	cm.mu.Lock()
@@ -372,7 +373,7 @@ func (cm *ConfigManager) SetDefaults(defaults map[string]interface{}) error {
 	for key, value := range defaults {
 		if _, exists := cm.Get(key); !exists {
 			if err := cm.Set(key, value); err != nil {
-				return fmt.Errorf("failed to set default for %s: %w", key, err)
+				return errors.NewConfigurationError(fmt.Sprintf("failed to set default for %s", key), err)
 			}
 		}
 	}

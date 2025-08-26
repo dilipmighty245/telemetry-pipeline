@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -185,7 +186,7 @@ type ClusterMetadata struct {
 //   - error: nil on success, error describing the failure otherwise
 func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*TelemetryService, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config cannot be nil")
+		return nil, errors.NewValidationError("config cannot be nil", nil)
 	}
 
 	// Create etcd client
@@ -194,7 +195,7 @@ func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*Telemetry
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, errors.NewConnectionError("failed to create etcd client", err)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -209,7 +210,7 @@ func NewTelemetryService(ctx context.Context, config *ServiceConfig) (*Telemetry
 	// Initialize cluster node in etcd
 	if err := service.initializeCluster(); err != nil {
 		service.Close()
-		return nil, fmt.Errorf("failed to initialize cluster: %w", err)
+		return nil, errors.NewConfigurationError("failed to initialize cluster", err)
 	}
 
 	logging.Infof("Nexus-style telemetry service initialized for cluster: %s", config.ClusterID)
@@ -253,12 +254,12 @@ func (ts *TelemetryService) initializeCluster() error {
 	key := fmt.Sprintf("/telemetry/clusters/%s", ts.config.ClusterID)
 	data, err := json.Marshal(cluster)
 	if err != nil {
-		return fmt.Errorf("failed to marshal cluster data: %w", err)
+		return errors.NewProcessingError("failed to marshal cluster data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, key, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to store cluster data: %w", err)
+		return errors.NewConnectionError("failed to store cluster data", err)
 	}
 
 	logging.Infof("Cluster initialized in etcd: %s", ts.config.ClusterID)
@@ -293,12 +294,12 @@ func (ts *TelemetryService) RegisterHost(hostInfo *TelemetryHost) error {
 	key := fmt.Sprintf("/telemetry/clusters/%s/hosts/%s", ts.config.ClusterID, hostInfo.HostID)
 	data, err := json.Marshal(hostInfo)
 	if err != nil {
-		return fmt.Errorf("failed to marshal host data: %w", err)
+		return errors.NewProcessingError("failed to marshal host data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, key, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to register host: %w", err)
+		return errors.NewConnectionError("failed to register host", err)
 	}
 
 	// Update cluster metadata
@@ -340,12 +341,12 @@ func (ts *TelemetryService) RegisterGPU(hostID string, gpuInfo *TelemetryGPU) er
 	key := fmt.Sprintf("/telemetry/clusters/%s/hosts/%s/gpus/%s", ts.config.ClusterID, hostID, gpuInfo.GPUID)
 	data, err := json.Marshal(gpuInfo)
 	if err != nil {
-		return fmt.Errorf("failed to marshal GPU data: %w", err)
+		return errors.NewProcessingError("failed to marshal GPU data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, key, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to register GPU: %w", err)
+		return errors.NewConnectionError("failed to register GPU", err)
 	}
 
 	// Update cluster metadata
@@ -379,12 +380,12 @@ func (ts *TelemetryService) StoreTelemetryData(hostID, gpuID string, telemetryDa
 
 	data, err := json.Marshal(telemetryData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal telemetry data: %w", err)
+		return errors.NewProcessingError("failed to marshal telemetry data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, key, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to store telemetry data: %w", err)
+		return errors.NewConnectionError("failed to store telemetry data", err)
 	}
 
 	// Update GPU status
@@ -424,16 +425,16 @@ func (ts *TelemetryService) updateGPUStatus(hostID, gpuID string, data *Telemetr
 	// Get existing GPU data
 	resp, err := ts.etcdClient.Get(ts.ctx, gpuKey)
 	if err != nil {
-		return fmt.Errorf("failed to get GPU data: %w", err)
+		return errors.NewConnectionError("failed to get GPU data", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return fmt.Errorf("GPU not found: %s", gpuID)
+		return errors.NewValidationError(fmt.Sprintf("GPU not found: %s", gpuID), nil)
 	}
 
 	var gpu TelemetryGPU
 	if err := json.Unmarshal(resp.Kvs[0].Value, &gpu); err != nil {
-		return fmt.Errorf("failed to unmarshal GPU data: %w", err)
+		return errors.NewProcessingError("failed to unmarshal GPU data", err)
 	}
 
 	// Update status and timestamp
@@ -443,12 +444,12 @@ func (ts *TelemetryService) updateGPUStatus(hostID, gpuID string, data *Telemetr
 	// Store updated GPU data
 	updatedData, err := json.Marshal(gpu)
 	if err != nil {
-		return fmt.Errorf("failed to marshal updated GPU data: %w", err)
+		return errors.NewProcessingError("failed to marshal updated GPU data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, gpuKey, string(updatedData))
 	if err != nil {
-		return fmt.Errorf("failed to update GPU status: %w", err)
+		return errors.NewConnectionError("failed to update GPU status", err)
 	}
 
 	return nil
@@ -467,7 +468,7 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 
 	hostsResp, err := ts.etcdClient.Get(ts.ctx, hostsKey, clientv3.WithPrefix())
 	if err != nil {
-		return fmt.Errorf("failed to query hosts: %w", err)
+		return errors.NewConnectionError("failed to query hosts", err)
 	}
 
 	totalHosts := 0
@@ -519,16 +520,16 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 	// Get existing cluster data
 	clusterResp, err := ts.etcdClient.Get(ts.ctx, clusterKey)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster data: %w", err)
+		return errors.NewConnectionError("failed to get cluster data", err)
 	}
 
 	if len(clusterResp.Kvs) == 0 {
-		return fmt.Errorf("cluster not found: %s", ts.config.ClusterID)
+		return errors.NewValidationError(fmt.Sprintf("cluster not found: %s", ts.config.ClusterID), nil)
 	}
 
 	var cluster TelemetryCluster
 	if err := json.Unmarshal(clusterResp.Kvs[0].Value, &cluster); err != nil {
-		return fmt.Errorf("failed to unmarshal cluster data: %w", err)
+		return errors.NewProcessingError("failed to unmarshal cluster data", err)
 	}
 
 	// Update metadata
@@ -549,12 +550,12 @@ func (ts *TelemetryService) updateClusterMetadata() error {
 	// Store updated cluster data
 	updatedData, err := json.Marshal(cluster)
 	if err != nil {
-		return fmt.Errorf("failed to marshal updated cluster data: %w", err)
+		return errors.NewProcessingError("failed to marshal updated cluster data", err)
 	}
 
 	_, err = ts.etcdClient.Put(ts.ctx, clusterKey, string(updatedData))
 	if err != nil {
-		return fmt.Errorf("failed to update cluster metadata: %w", err)
+		return errors.NewConnectionError("failed to update cluster metadata", err)
 	}
 
 	return nil
@@ -573,16 +574,16 @@ func (ts *TelemetryService) GetClusterInfo() (*TelemetryCluster, error) {
 
 	resp, err := ts.etcdClient.Get(ts.ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster info: %w", err)
+		return nil, errors.NewConnectionError("failed to get cluster info", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, fmt.Errorf("cluster not found: %s", ts.config.ClusterID)
+		return nil, errors.NewValidationError(fmt.Sprintf("cluster not found: %s", ts.config.ClusterID), nil)
 	}
 
 	var cluster TelemetryCluster
 	if err := json.Unmarshal(resp.Kvs[0].Value, &cluster); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cluster data: %w", err)
+		return nil, errors.NewProcessingError("failed to unmarshal cluster data", err)
 	}
 
 	return &cluster, nil
@@ -604,16 +605,16 @@ func (ts *TelemetryService) GetHostInfo(hostID string) (*TelemetryHost, error) {
 
 	resp, err := ts.etcdClient.Get(ts.ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get host info: %w", err)
+		return nil, errors.NewConnectionError("failed to get host info", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, fmt.Errorf("host not found: %s", hostID)
+		return nil, errors.NewValidationError(fmt.Sprintf("host not found: %s", hostID), nil)
 	}
 
 	var host TelemetryHost
 	if err := json.Unmarshal(resp.Kvs[0].Value, &host); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal host data: %w", err)
+		return nil, errors.NewProcessingError("failed to unmarshal host data", err)
 	}
 
 	return &host, nil
@@ -639,7 +640,7 @@ func (ts *TelemetryService) GetGPUTelemetryData(hostID, gpuID string, startTime,
 
 	resp, err := ts.etcdClient.Get(ts.ctx, key, clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get GPU telemetry data: %w", err)
+		return nil, errors.NewConnectionError("failed to get GPU telemetry data", err)
 	}
 
 	var telemetryData []*TelemetryData

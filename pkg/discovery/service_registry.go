@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -72,7 +73,7 @@ func (sr *ServiceRegistry) Register(ctx context.Context, service ServiceInfo) er
 	// Create lease for heartbeat
 	lease, err := sr.client.Grant(ctx, sr.ttl)
 	if err != nil {
-		return fmt.Errorf("failed to create lease: %w", err)
+		return errors.NewConnectionError("failed to create lease", err)
 	}
 	sr.leaseID = lease.ID
 
@@ -85,20 +86,20 @@ func (sr *ServiceRegistry) Register(ctx context.Context, service ServiceInfo) er
 	// Serialize service info
 	data, err := json.Marshal(service)
 	if err != nil {
-		return fmt.Errorf("failed to serialize service info: %w", err)
+		return errors.NewProcessingError("failed to serialize service info", err)
 	}
 
 	// Register service
 	sr.serviceKey = fmt.Sprintf("/services/%s/%s", service.Type, service.ID)
 	_, err = sr.client.Put(ctx, sr.serviceKey, string(data), clientv3.WithLease(sr.leaseID))
 	if err != nil {
-		return fmt.Errorf("failed to register service: %w", err)
+		return errors.NewConnectionError("failed to register service", err)
 	}
 
 	// Keep lease alive
 	ch, err := sr.client.KeepAlive(ctx, sr.leaseID)
 	if err != nil {
-		return fmt.Errorf("failed to start keep alive: %w", err)
+		return errors.NewConnectionError("failed to start keep alive", err)
 	}
 
 	go func() {
@@ -130,7 +131,7 @@ func (sr *ServiceRegistry) Discover(ctx context.Context, serviceType string) ([]
 	resp, err := sr.client.Get(ctx, fmt.Sprintf("/services/%s/", serviceType),
 		clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover services: %w", err)
+		return nil, errors.NewConnectionError("failed to discover services", err)
 	}
 
 	var services []ServiceInfo
@@ -208,22 +209,22 @@ func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) erro
 	sr.mu.RUnlock()
 
 	if serviceKey == "" {
-		return fmt.Errorf("service not registered")
+		return errors.NewValidationError("service not registered", nil)
 	}
 
 	// Get current service info
 	resp, err := sr.client.Get(ctx, serviceKey)
 	if err != nil {
-		return fmt.Errorf("failed to get service info: %w", err)
+		return errors.NewConnectionError("failed to get service info", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return fmt.Errorf("service not found")
+		return errors.NewValidationError("service not found", nil)
 	}
 
 	var service ServiceInfo
 	if err := json.Unmarshal(resp.Kvs[0].Value, &service); err != nil {
-		return fmt.Errorf("failed to unmarshal service info: %w", err)
+		return errors.NewProcessingError("failed to unmarshal service info", err)
 	}
 
 	// Update health
@@ -232,7 +233,7 @@ func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) erro
 	// Serialize and update
 	data, err := json.Marshal(service)
 	if err != nil {
-		return fmt.Errorf("failed to serialize service info: %w", err)
+		return errors.NewProcessingError("failed to serialize service info", err)
 	}
 
 	_, err = sr.client.Put(ctx, serviceKey, string(data), clientv3.WithLease(sr.leaseID))
@@ -240,9 +241,9 @@ func (sr *ServiceRegistry) UpdateHealth(ctx context.Context, health string) erro
 		// Check if it's a lease not found error
 		if strings.Contains(err.Error(), "lease not found") {
 			logging.Warnf("Lease expired for service %s, health update failed - service should re-register", serviceKey)
-			return fmt.Errorf("service lease expired, re-registration required: %w", err)
+			return errors.NewConnectionError("service lease expired, re-registration required", err)
 		}
-		return fmt.Errorf("failed to update service health: %w", err)
+		return errors.NewConnectionError("failed to update service health", err)
 	}
 
 	logging.Debugf("Updated service health to %s", health)
@@ -304,16 +305,16 @@ func (sr *ServiceRegistry) GetServiceByID(ctx context.Context, serviceType, serv
 
 	resp, err := sr.client.Get(ctx, serviceKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get service: %w", err)
+		return nil, errors.NewConnectionError("failed to get service", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, fmt.Errorf("service not found: %s/%s", serviceType, serviceID)
+		return nil, errors.NewValidationError(fmt.Sprintf("service not found: %s/%s", serviceType, serviceID), nil)
 	}
 
 	var service ServiceInfo
 	if err := json.Unmarshal(resp.Kvs[0].Value, &service); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal service info: %w", err)
+		return nil, errors.NewProcessingError("failed to unmarshal service info", err)
 	}
 
 	return &service, nil

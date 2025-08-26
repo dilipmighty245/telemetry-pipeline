@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	pkgerrors "github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 )
 
@@ -113,7 +114,7 @@ func NewMessageQueue(ctx context.Context) (*MessageQueue, error) {
 	if err != nil {
 		logging.Errorf("Failed to initialize etcd backend: %v", err)
 		logging.Errorf("etcd backend is required - application cannot start without it")
-		return nil, fmt.Errorf("etcd backend initialization failed: %w", err)
+		return nil, pkgerrors.NewConnectionError("etcd backend initialization failed", err)
 	}
 
 	mq.etcdBackend = etcdBackend

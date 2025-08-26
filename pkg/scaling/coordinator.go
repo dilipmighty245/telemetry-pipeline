@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -108,7 +109,7 @@ func NewScalingCoordinator(client *clientv3.Client, serviceType, instanceID stri
 func (sc *ScalingCoordinator) Start(ctx context.Context) error {
 	// Create initial lease for metrics reporting
 	if err := sc.recreateLease(ctx); err != nil {
-		return fmt.Errorf("failed to create initial lease: %w", err)
+		return errors.NewConnectionError("failed to create initial lease", err)
 	}
 
 	// Start metrics reporting
@@ -137,7 +138,7 @@ func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics Instanc
 
 	data, err := json.Marshal(metrics)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metrics: %w", err)
+		return errors.NewProcessingError("failed to marshal metrics", err)
 	}
 
 	metricsKey := fmt.Sprintf("/metrics/%s/%s", sc.serviceType, sc.instanceID)
@@ -165,7 +166,7 @@ func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics Instanc
 
 			// Recreate lease
 			if recreateErr := sc.recreateLease(ctx); recreateErr != nil {
-				return fmt.Errorf("failed to recreate lease after expiration: %w", recreateErr)
+				return errors.NewConnectionError("failed to recreate lease after expiration", recreateErr)
 			}
 
 			// Retry with new lease
@@ -175,7 +176,7 @@ func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics Instanc
 
 			_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(newLeaseID))
 			if err != nil {
-				return fmt.Errorf("failed to report metrics after lease recreation: %w", err)
+				return errors.NewConnectionError("failed to report metrics after lease recreation", err)
 			}
 
 			logging.Infof("Successfully reported metrics after lease recreation for %s/%s", sc.serviceType, sc.instanceID)
@@ -185,12 +186,12 @@ func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics Instanc
 		}
 
 		// Other error, return it
-		return fmt.Errorf("failed to report metrics: %w", err)
+		return errors.NewConnectionError("failed to report metrics", err)
 	}
 
 	// No lease available, create one
 	if err := sc.recreateLease(ctx); err != nil {
-		return fmt.Errorf("failed to create initial lease: %w", err)
+		return errors.NewConnectionError("failed to create initial lease", err)
 	}
 
 	// Retry with new lease
@@ -200,7 +201,7 @@ func (sc *ScalingCoordinator) ReportMetrics(ctx context.Context, metrics Instanc
 
 	_, err = sc.client.Put(ctx, metricsKey, string(data), clientv3.WithLease(newLeaseID))
 	if err != nil {
-		return fmt.Errorf("failed to report metrics with new lease: %w", err)
+		return errors.NewConnectionError("failed to report metrics with new lease", err)
 	}
 
 	logging.Debugf("Reported metrics for %s: CPU=%.2f%%, Memory=%.2f%%, Queue=%.0f",
@@ -216,14 +217,14 @@ func (sc *ScalingCoordinator) recreateLease(ctx context.Context) error {
 	// Create new lease
 	lease, err := sc.client.Grant(ctx, 60) // 60 second TTL
 	if err != nil {
-		return fmt.Errorf("failed to create lease: %w", err)
+		return errors.NewConnectionError("failed to create lease", err)
 	}
 	sc.leaseID = lease.ID
 
 	// Start keep-alive for the new lease
 	ch, err := sc.client.KeepAlive(ctx, sc.leaseID)
 	if err != nil {
-		return fmt.Errorf("failed to start keep alive: %w", err)
+		return errors.NewConnectionError("failed to start keep alive", err)
 	}
 
 	go func() {
@@ -258,7 +259,7 @@ func (sc *ScalingCoordinator) GetScalingDecision(ctx context.Context) (*ScalingD
 	resp, err := sc.client.Get(ctx, fmt.Sprintf("/metrics/%s/", sc.serviceType),
 		clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get metrics: %w", err)
+		return nil, errors.NewConnectionError("failed to get metrics", err)
 	}
 
 	if len(resp.Kvs) == 0 {
@@ -422,7 +423,7 @@ func (sc *ScalingCoordinator) isInCooldownPeriod(ctx context.Context) bool {
 func (sc *ScalingCoordinator) PublishScalingDecision(ctx context.Context, decision *ScalingDecision) error {
 	data, err := json.Marshal(decision)
 	if err != nil {
-		return fmt.Errorf("failed to marshal scaling decision: %w", err)
+		return errors.NewProcessingError("failed to marshal scaling decision", err)
 	}
 
 	decisionKey := fmt.Sprintf("/scaling/decisions/%s", sc.serviceType)
@@ -432,7 +433,7 @@ func (sc *ScalingCoordinator) PublishScalingDecision(ctx context.Context, decisi
 
 	_, err = sc.client.Put(ctx, decisionKey, string(data))
 	if err != nil {
-		return fmt.Errorf("failed to publish scaling decision: %w", err)
+		return errors.NewConnectionError("failed to publish scaling decision", err)
 	}
 
 	logging.Infof("Published scaling decision for %s: %s (%d -> %d)",

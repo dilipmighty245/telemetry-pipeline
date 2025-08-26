@@ -31,6 +31,7 @@ import (
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
 	configpkg "github.com/dilipmighty245/telemetry-pipeline/pkg/config"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/discovery"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/scaling"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/utils"
@@ -205,7 +206,7 @@ type CSVUploadResponse struct {
 func (ns *NexusStreamerService) Run(ctx context.Context, args []string, _ io.Writer) error {
 	cfg, err := ns.parseConfig(args)
 	if err != nil {
-		return fmt.Errorf("failed to parse configuration: %w", err)
+		return errors.NewConfigurationError("failed to parse configuration", err)
 	}
 
 	// Set log level
@@ -221,13 +222,13 @@ func (ns *NexusStreamerService) Run(ctx context.Context, args []string, _ io.Wri
 	// Create and start the streamer
 	streamer, err := NewNexusStreamerService(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create streamer: %w", err)
+		return errors.NewConfigurationError("failed to create streamer", err)
 	}
 	defer streamer.Close(ctx)
 
 	// Start streaming
 	if err := streamer.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start streamer: %w", err)
+		return errors.NewInternalError("failed to start streamer", err)
 	}
 
 	logging.Infof("Nexus Streamer started successfully")
@@ -360,7 +361,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, errors.NewConnectionError("failed to create etcd client", err)
 	}
 	etcdClient := client
 
@@ -372,7 +373,7 @@ func NewNexusStreamerService(ctx context.Context, config *NexusStreamerConfig) (
 		if etcdClient != nil {
 			etcdClient.Close()
 		}
-		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
+		return nil, errors.NewConnectionError("failed to connect to etcd", err)
 	}
 
 	// Initialize enhanced etcd features
@@ -579,7 +580,7 @@ func (ns *NexusStreamerService) parseCSVRecord(record []string, columnMap map[st
 
 	// Validate required fields
 	if tr.GPUID == "" || tr.Hostname == "" {
-		return nil, fmt.Errorf("missing required fields: gpu_id=%s, hostname=%s", tr.GPUID, tr.Hostname)
+		return nil, errors.NewValidationError(fmt.Sprintf("missing required fields: gpu_id=%s, hostname=%s", tr.GPUID, tr.Hostname), nil)
 	}
 
 	return tr, nil
@@ -706,7 +707,7 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 	}
 
 	if len(ops) == 0 {
-		return fmt.Errorf("no valid records in batch")
+		return errors.NewValidationError("no valid records in batch", nil)
 	}
 
 	// Execute transaction
@@ -715,17 +716,17 @@ func (ns *NexusStreamerService) publishBatchEnhanced(ctx context.Context, batch 
 
 	// Check if context is already canceled before attempting transaction
 	if ctx.Err() != nil {
-		return fmt.Errorf("context canceled before etcd transaction: %w", ctx.Err())
+		return errors.NewInternalError("context canceled before etcd transaction", ctx.Err())
 	}
 
 	logging.Debugf("Executing etcd transaction with %d operations", len(ops))
 	txnResp, err := ns.etcdClient.Txn(txnCtx).Then(ops...).Commit()
 	if err != nil {
-		return fmt.Errorf("failed to publish batch to etcd: %w", err)
+		return errors.NewConnectionError("failed to publish batch to etcd", err)
 	}
 
 	if !txnResp.Succeeded {
-		return fmt.Errorf("etcd transaction failed")
+		return errors.NewInternalError("etcd transaction failed", nil)
 	}
 
 	logging.Infof("Published batch of %d telemetry records to etcd queue (revision: %d)", len(batch), txnResp.Header.Revision)
@@ -1201,7 +1202,7 @@ func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to open CSV file: %w", err)
+		return 0, 0, nil, errors.NewProcessingError("failed to open CSV file", err)
 	}
 	defer file.Close()
 
@@ -1211,11 +1212,11 @@ func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath
 	// Read header
 	headers, err := reader.Read()
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to read CSV header: %w", err)
+		return 0, 0, nil, errors.NewProcessingError("failed to read CSV header", err)
 	}
 
 	if len(headers) == 0 {
-		return 0, 0, nil, fmt.Errorf("CSV file has no headers")
+		return 0, 0, nil, errors.NewValidationError("CSV file has no headers", nil)
 	}
 
 	// Validate required headers for telemetry data
@@ -1233,7 +1234,7 @@ func (ns *NexusStreamerService) processUploadedCSV(ctx context.Context, filePath
 	}
 
 	if len(missingHeaders) > 0 {
-		return 0, 0, headers, fmt.Errorf("missing required headers: %v", missingHeaders)
+		return 0, 0, headers, errors.NewValidationError(fmt.Sprintf("missing required headers: %v", missingHeaders), nil)
 	}
 
 	logging.Infof("CSV validation successful: %d headers found, starting record processing", len(headers))

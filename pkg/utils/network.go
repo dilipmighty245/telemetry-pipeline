@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 )
 
 // GetServiceAddress determines the appropriate network address for service registration
@@ -134,7 +136,7 @@ func GetServiceAddressWithFallback(fallback string) string {
 func ValidateServiceAddress(address string, port int) error {
 	conn, err := net.Dial("tcp", net.JoinHostPort(address, fmt.Sprintf("%d", port)))
 	if err != nil {
-		return fmt.Errorf("cannot connect to %s:%d - %w", address, port, err)
+		return errors.NewConnectionError(fmt.Sprintf("cannot connect to %s:%d", address, port), err)
 	}
 	conn.Close()
 	return nil
@@ -175,7 +177,7 @@ func GetPublicIP() (string, error) {
 	// Try to connect to a well-known service to determine our external IP
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return "", fmt.Errorf("failed to determine public IP: %w", err)
+		return "", errors.NewConnectionError("failed to determine public IP", err)
 	}
 	defer conn.Close()
 

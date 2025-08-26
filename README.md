@@ -2,6 +2,37 @@
 
 A scalable, high-performance telemetry pipeline for AI clusters that ingests GPU metrics from CSV files and serves them via REST APIs. Built with Go and etcd for production reliability.
 
+## 🤖 AI-Assisted Development
+
+This project leveraged AI extensively to accelerate development while maintaining production quality. We used AI as a coding partner—generating drafts and suggestions that were carefully reviewed, adapted, and tested by our engineering team.
+
+### How We Used AI
+
+**AI accelerated our development** across the project lifecycle, but all critical design decisions, concurrency implementations, and production hardening were handled manually.
+
+#### Key Areas Where AI Helped:
+- **Project Bootstrap**: Go module structure, Makefiles, Dockerfiles, Helm charts
+- **Architecture Design**: Messaging patterns, scaling strategies, etcd integration concepts
+- **Code Scaffolding**: Service boilerplate, HTTP handlers, API models, test structures
+- **Documentation**: README sections, API examples, deployment guides
+
+#### Where Human Engineering Was Essential:
+- Concurrency and thread safety implementation
+- Production security and hardening
+- Performance optimization and resource tuning
+- Complex error handling and recovery logic
+- Kubernetes configuration and RBAC policies
+
+### Transparency
+
+All AI prompts and responses are documented in:
+- `/docs/ai-prompts.md` - Complete list of prompts used
+- `/docs/ai-transcripts/` - Key AI responses and adaptations
+
+### Result
+
+AI helped us build faster, human engineering made it production-ready. The combination delivered a comprehensive, scalable telemetry pipeline that meets enterprise requirements while maintaining high code quality standards.
+
 ## 🏗️ Architecture
 
 The system consists of three main components connected by an etcd-based message queue:
@@ -361,6 +392,25 @@ PORT=8080               # HTTP server port
 ENABLE_GRAPHQL=true     # Enable GraphQL
 ENABLE_WEBSOCKET=true   # Enable WebSocket
 ```
+
+## 🚀 Future Development
+
+### Planned Enhancements
+
+#### Security & Access Control
+- **Authentication and Authorization**: Implement comprehensive security layer including:
+  - JWT-based API authentication
+  - Role-based access control (RBAC) for different user types
+  - Service-to-service authentication with mTLS
+  - API rate limiting per user/service
+  - Audit logging for security events
+
+#### Additional Features
+- **Enhanced Monitoring**: Prometheus metrics, Grafana dashboards, alerting
+- **Data Retention Policies**: Automated cleanup and archival strategies
+- **Multi-tenancy Support**: Isolated data access per organization/team
+- **Advanced Analytics**: Real-time anomaly detection, predictive insights
+- **Backup & Recovery**: Automated etcd backup and disaster recovery procedures
 
 ## 🤝 Contributing
 

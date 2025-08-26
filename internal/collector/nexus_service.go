@@ -24,6 +24,7 @@ import (
 
 	"github.com/dilipmighty245/telemetry-pipeline/internal/nexus"
 	"github.com/dilipmighty245/telemetry-pipeline/internal/streaming"
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sync/errgroup"
@@ -105,12 +106,6 @@ type NexusCollectorService struct {
 	config       *NexusCollectorConfig
 	nexusService *nexus.TelemetryService
 	etcdClient   *clientv3.Client
-
-	// Enhanced etcd features
-	// serviceRegistry *discovery.ServiceRegistry
-	// configManager   *config.ConfigManager
-	// scalingCoord    *scaling.ScalingCoordinator
-	// etcdBackend     *messagequeue.EtcdBackend
 
 	// Enhanced streaming features
 	streamAdapter *streaming.StreamAdapter
@@ -199,7 +194,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 
 	nexusService, err := nexus.NewTelemetryService(ctx, nexusConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Nexus service: %w", err)
+		return nil, errors.NewConnectionError("failed to create Nexus service", err)
 	}
 	collector.nexusService = nexusService
 
@@ -209,7 +204,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, errors.NewConnectionError("failed to create etcd client", err)
 	}
 	collector.etcdClient = etcdClient
 
@@ -221,7 +216,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 		if etcdClient != nil {
 			etcdClient.Close()
 		}
-		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
+		return nil, errors.NewConnectionError("failed to connect to etcd", err)
 	}
 
 	return collector, nil
@@ -246,7 +241,7 @@ func NewNexusCollectorService(ctx context.Context, config *NexusCollectorConfig)
 func (nc *NexusCollectorService) Run(ctx context.Context, args []string, _ io.Writer) error {
 	config, err := nc.parseConfig(args)
 	if err != nil {
-		return fmt.Errorf("failed to parse configuration: %w", err)
+		return errors.NewConfigurationError("failed to parse configuration", err)
 	}
 
 	// Set log level
@@ -261,13 +256,13 @@ func (nc *NexusCollectorService) Run(ctx context.Context, args []string, _ io.Wr
 	// Create and start the collector
 	collector, err := NewNexusCollectorService(ctx, config)
 	if err != nil {
-		return fmt.Errorf("failed to create collector: %w", err)
+		return errors.NewConfigurationError("failed to create collector", err)
 	}
 	defer collector.Close()
 
 	// Start the collector
 	if err := collector.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start collector: %w", err)
+		return errors.NewInternalError("failed to start collector", err)
 	}
 
 	logging.Infof("Nexus Collector started successfully")
@@ -298,7 +293,7 @@ func (nc *NexusCollectorService) Start(ctx context.Context) error {
 
 	// Start streaming adapter
 	if nc.streamAdapter == nil {
-		return fmt.Errorf("stream adapter is not initialized")
+		return errors.NewConfigurationError("stream adapter is not initialized", nil)
 	}
 
 	nc.streamAdapter.Start(ctx)
@@ -377,7 +372,7 @@ func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error
 	logging.Infof("Starting message queue consumer (etcd Watch API)")
 
 	queueKey := nc.config.MessageQueuePrefix + "/telemetry"
-	
+
 	// First, process any existing messages
 	if err := nc.processExistingMessages(ctx); err != nil {
 		logging.Warnf("Error processing existing messages: %v", err)
@@ -385,7 +380,7 @@ func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error
 
 	// Start watching for new messages
 	watchChan := nc.etcdClient.Watch(ctx, queueKey+"/", clientv3.WithPrefix())
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -398,7 +393,7 @@ func (nc *NexusCollectorService) messageQueueConsumer(ctx context.Context) error
 				watchChan = nc.etcdClient.Watch(ctx, queueKey+"/", clientv3.WithPrefix())
 				continue
 			}
-			
+
 			for _, event := range watchResp.Events {
 				if event.Type == clientv3.EventTypePut {
 					if err := nc.processWatchEvent(ctx, event); err != nil {
@@ -429,7 +424,7 @@ func (nc *NexusCollectorService) processExistingMessages(ctx context.Context) er
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(nc.config.BatchSize)))
 	if err != nil {
-		return fmt.Errorf("failed to get existing messages from etcd: %w", err)
+		return errors.NewConnectionError("failed to get existing messages from etcd", err)
 	}
 
 	if len(resp.Kvs) == 0 {
@@ -484,7 +479,7 @@ func (nc *NexusCollectorService) processMessage(ctx context.Context, key []byte,
 		if _, delErr := nc.etcdClient.Delete(ctx, string(key)); delErr != nil {
 			logging.Warnf("Failed to delete malformed message: %v", delErr)
 		}
-		return fmt.Errorf("failed to unmarshal message: %w", err)
+		return errors.NewProcessingError("failed to unmarshal message", err)
 	}
 
 	// Send to processing channel (non-blocking)
@@ -496,18 +491,17 @@ func (nc *NexusCollectorService) processMessage(ctx context.Context, key []byte,
 		return ctx.Err()
 	default:
 		logging.Warnf("Processing channel full, dropping message: %s", string(key))
-		return fmt.Errorf("processing channel full")
+		return errors.NewInternalError("processing channel full", nil)
 	}
 
 	// Delete message after queuing for processing (acknowledgment)
 	if _, err := nc.etcdClient.Delete(ctx, string(key)); err != nil {
 		logging.Warnf("Failed to delete processed message: %v", err)
-		return fmt.Errorf("failed to delete message: %w", err)
+		return errors.NewConnectionError("failed to delete message", err)
 	}
 
 	return nil
 }
-
 
 // workerPoolProcessor manages the worker pool for load-balanced processing.
 //
@@ -608,7 +602,7 @@ func (nc *NexusCollectorService) processRecord(ctx context.Context, record *Tele
 
 		// For now, we'll skip the streaming call until we have proper integration
 		// err := nc.streamAdapter.WriteTelemetry(telemetryData, headers)
-		err := fmt.Errorf("streaming integration pending")
+		err := errors.NewInternalError("streaming integration pending", nil)
 		if nc.streamAdapter != nil {
 			logging.Debugf("Would stream telemetry data: %+v", telemetryData)
 			err = nil // Simulate success for now

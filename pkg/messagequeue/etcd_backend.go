@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -54,7 +55,7 @@ type EtcdBackend struct {
 func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 	etcdEndpoints := os.Getenv("ETCD_ENDPOINTS")
 	if etcdEndpoints == "" {
-		return nil, fmt.Errorf("ETCD_ENDPOINTS environment variable not set")
+		return nil, errors.NewConfigurationError("ETCD_ENDPOINTS environment variable not set", nil)
 	}
 
 	queuePrefix := os.Getenv("MESSAGE_QUEUE_PREFIX")
@@ -72,7 +73,7 @@ func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 		DialTimeout: 10 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, errors.NewConnectionError("failed to create etcd client", err)
 	}
 
 	// Test connection
@@ -82,7 +83,7 @@ func NewEtcdBackend(ctx context.Context) (*EtcdBackend, error) {
 	if err != nil {
 		client.Close()
 		logging.Errorf("Failed to connect to etcd at %v: %v", endpoints, err)
-		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
+		return nil, errors.NewConnectionError("failed to connect to etcd", err)
 	}
 
 	logging.Infof("Connected to etcd message queue backend at %v (prefix: %s)", endpoints, queuePrefix)
@@ -119,7 +120,7 @@ func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message
 	// Serialize message to JSON
 	data, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("failed to serialize message: %w", err)
+		return errors.NewProcessingError("failed to serialize message", err)
 	}
 
 	// Store message in etcd with TTL
@@ -135,13 +136,13 @@ func (eb *EtcdBackend) PublishMessage(ctx context.Context, topic string, message
 	// Create lease for TTL
 	lease, err := eb.client.Grant(timeoutCtx, ttl)
 	if err != nil {
-		return fmt.Errorf("failed to create etcd lease: %w", err)
+		return errors.NewConnectionError("failed to create etcd lease", err)
 	}
 
 	// Put message with lease
 	_, err = eb.client.Put(timeoutCtx, messageKey, string(data), clientv3.WithLease(lease.ID))
 	if err != nil {
-		return fmt.Errorf("failed to publish message to etcd: %w", err)
+		return errors.NewConnectionError("failed to publish message to etcd", err)
 	}
 
 	logging.Debugf("Published message %s to etcd topic %s (key: %s)", message.ID, topic, messageKey)
@@ -176,7 +177,7 @@ func (eb *EtcdBackend) ConsumeMessages(ctx context.Context, topic string, maxMes
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(maxMessages)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to consume from etcd: %w", err)
+		return nil, errors.NewProcessingError("failed to consume from etcd", err)
 	}
 
 	// Process each message
@@ -329,7 +330,7 @@ func (eb *EtcdBackend) AcknowledgeMessagesByKeys(ctx context.Context, consumerID
 	txnResp, err := eb.client.Txn(ctx).Then(ops...).Commit()
 	if err != nil {
 		// If transaction fails, mark all as failed
-		return acked, messageIDs, fmt.Errorf("failed to acknowledge messages: %w", err)
+		return acked, messageIDs, errors.NewConnectionError("failed to acknowledge messages", err)
 	}
 
 	if txnResp.Succeeded {
@@ -361,7 +362,7 @@ func (eb *EtcdBackend) deleteMessageByID(ctx context.Context, messageID string) 
 	// Search for the message across all topics
 	resp, err := eb.client.Get(ctx, eb.queuePrefix, clientv3.WithPrefix())
 	if err != nil {
-		return fmt.Errorf("failed to search for message: %w", err)
+		return errors.NewConnectionError("failed to search for message", err)
 	}
 
 	// Find the message with matching ID
@@ -375,14 +376,14 @@ func (eb *EtcdBackend) deleteMessageByID(ctx context.Context, messageID string) 
 			// Delete the message
 			_, err := eb.client.Delete(ctx, string(kv.Key))
 			if err != nil {
-				return fmt.Errorf("failed to delete message: %w", err)
+				return errors.NewConnectionError("failed to delete message", err)
 			}
 			logging.Debugf("Deleted message %s from etcd (key: %s)", messageID, kv.Key)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("message %s not found", messageID)
+	return errors.NewValidationError(fmt.Sprintf("message %s not found", messageID), nil)
 }
 
 // ListTopics returns all topics that currently have messages.
@@ -404,7 +405,7 @@ func (eb *EtcdBackend) ListTopics(ctx context.Context) ([]string, error) {
 		clientv3.WithPrefix(),
 		clientv3.WithKeysOnly())
 	if err != nil {
-		return nil, fmt.Errorf("failed to list topics: %w", err)
+		return nil, errors.NewProcessingError("failed to list topics", err)
 	}
 
 	topicSet := make(map[string]bool)
@@ -573,7 +574,7 @@ func (eb *EtcdBackend) AtomicWorkClaim(ctx context.Context, topic, consumerID st
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 		clientv3.WithLimit(int64(maxMessages)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to get work: %w", err)
+		return nil, errors.NewProcessingError("failed to get work", err)
 	}
 
 	if len(resp.Kvs) == 0 {
@@ -606,11 +607,11 @@ func (eb *EtcdBackend) AtomicWorkClaim(ctx context.Context, topic, consumerID st
 	// Execute atomic transaction
 	txnResp, err := eb.client.Txn(ctx).Then(ops...).Commit()
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute transaction: %w", err)
+		return nil, errors.NewProcessingError("failed to execute transaction", err)
 	}
 
 	if !txnResp.Succeeded {
-		return nil, fmt.Errorf("transaction failed - work may have been claimed by another consumer")
+		return nil, errors.NewProcessingError("transaction failed - work may have been claimed by another consumer", nil)
 	}
 
 	logging.Infof("Consumer %s atomically claimed %d messages", consumerID, len(messages))
@@ -670,7 +671,7 @@ func (eb *EtcdBackend) RecoverOrphanedWork(ctx context.Context, maxAge time.Dura
 	// Find all processing entries older than maxAge
 	resp, err := eb.client.Get(ctx, "/processing/", clientv3.WithPrefix())
 	if err != nil {
-		return fmt.Errorf("failed to get processing entries: %w", err)
+		return errors.NewConnectionError("failed to get processing entries", err)
 	}
 
 	var recoveryOps []clientv3.Op
@@ -699,7 +700,7 @@ func (eb *EtcdBackend) RecoverOrphanedWork(ctx context.Context, maxAge time.Dura
 	if len(recoveryOps) > 0 {
 		_, err := eb.client.Txn(ctx).Then(recoveryOps...).Commit()
 		if err != nil {
-			return fmt.Errorf("failed to recover orphaned work: %w", err)
+			return errors.NewConnectionError("failed to recover orphaned work", err)
 		}
 		logging.Infof("Recovered %d orphaned messages", recoveredCount)
 	}
@@ -729,7 +730,7 @@ func (eb *EtcdBackend) GetQueueDepth(ctx context.Context, topic string) (int64, 
 		clientv3.WithPrefix(),
 		clientv3.WithCountOnly())
 	if err != nil {
-		return 0, fmt.Errorf("failed to get queue depth: %w", err)
+		return 0, errors.NewConnectionError("failed to get queue depth", err)
 	}
 
 	return resp.Count, nil

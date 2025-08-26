@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dilipmighty245/telemetry-pipeline/pkg/errors"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/logging"
 	"github.com/dilipmighty245/telemetry-pipeline/pkg/models"
 )
@@ -179,10 +180,10 @@ func (sa *StreamAdapter) WriteTelemetry(ctx context.Context, data *models.Teleme
 	}:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("stream adapter is shutting down")
+		return errors.NewInternalError("stream adapter is shutting down", nil)
 	default:
 		// Channel is full, could implement backpressure here
-		return fmt.Errorf("channel is full")
+		return errors.NewInternalError("channel is full", nil)
 	}
 }
 
@@ -279,7 +280,7 @@ func (sa *StreamAdapter) sendBatch(partition string, records []*models.Telemetry
 	})
 	if err != nil {
 		sa.updateMetrics(0, 0, 1)
-		return fmt.Errorf("failed to marshal batch: %v", err)
+		return errors.NewProcessingError("failed to marshal batch", err)
 	}
 
 	// Retry logic similar to prtc's postRequest
@@ -298,7 +299,7 @@ func (sa *StreamAdapter) sendBatch(partition string, records []*models.Telemetry
 				logging.Debugf("Worker %d sent batch of %d records for partition %s", workerID, len(records), partition)
 				return nil
 			}
-			lastErr = fmt.Errorf("HTTP error: %d", resp.StatusCode)
+			lastErr = errors.NewConnectionError(fmt.Sprintf("HTTP error: %d", resp.StatusCode), nil)
 		} else {
 			lastErr = err
 		}
@@ -309,7 +310,7 @@ func (sa *StreamAdapter) sendBatch(partition string, records []*models.Telemetry
 	}
 
 	sa.updateMetrics(0, 0, 1)
-	return fmt.Errorf("failed after %d attempts: %v", sa.config.MaxRetries, lastErr)
+	return errors.NewConnectionError(fmt.Sprintf("failed after %d attempts", sa.config.MaxRetries), lastErr)
 }
 
 // updateMetrics updates performance metrics
