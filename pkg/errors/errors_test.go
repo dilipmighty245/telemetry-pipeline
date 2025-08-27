@@ -111,7 +111,7 @@ func TestTelemetryError_WithContext(t *testing.T) {
 	assert.Equal(t, "username", err.Context["field"])
 	
 	// Add more context
-	err.WithContext("value", "invalid@email").WithContext("rule", "email_format")
+	err = err.WithContext("value", "invalid@email").WithContext("rule", "email_format")
 	assert.Equal(t, "invalid@email", err.Context["value"])
 	assert.Equal(t, "email_format", err.Context["rule"])
 	assert.Len(t, err.Context, 3)

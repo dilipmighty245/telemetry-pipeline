@@ -47,7 +47,6 @@ type Counter struct {
 	description string
 	labels      map[string]string
 	value       int64
-	mu          sync.RWMutex
 }
 
 // NewCounter creates a new counter metric
@@ -96,7 +95,6 @@ type Gauge struct {
 	description string
 	labels      map[string]string
 	value       int64 // Using int64 for atomic operations, will convert to float64
-	mu          sync.RWMutex
 }
 
 // NewGauge creates a new gauge metric
